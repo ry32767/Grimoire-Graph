@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Ally, AllyCast, BattleState, Vec2 } from './game/types'
 import { createBattleState, prepareTurn, resolveAllyCasts } from './game/battle'
 import { planEnemyShot, enemyFlight } from './game/enemyAI'
+import { zfieldAt } from './game/attribute'
 import { recommendCast } from './game/recommend'
 import { ROTATE_PRESETS, defaultCoeffs } from './game/functions'
 import { ZFIELD_PRESETS, defaultZCoeffs } from './game/zfields'
@@ -214,7 +215,12 @@ export default function App() {
         orbits.push({ ring: s.path, hitEnemyIds: s.sweptEnemyIds })
       } else if (s.flight) {
         bullets.push({
-          samples: s.flight.samples.map((x) => ({ pos: x.pos, speed: x.speed, arcLen: x.arcLen })),
+          samples: s.flight.samples.map((x, i) => ({
+            pos: x.pos,
+            speed: x.speed,
+            arcLen: x.arcLen,
+            z: s.path[i]?.z ?? 0, // 発射時の色/形（#21）
+          })),
           side: 'ally',
           misfirePos: s.misfirePos,
           carves: s.carves,
@@ -224,7 +230,12 @@ export default function App() {
     }
     for (const es of resolution.enemyShots) {
       bullets.push({
-        samples: es.flight.samples.map((x) => ({ pos: x.pos, speed: x.speed, arcLen: x.arcLen })),
+        samples: es.flight.samples.map((x) => ({
+          pos: x.pos,
+          speed: x.speed,
+          arcLen: x.arcLen,
+          z: zfieldAt(es.traj, x.pos), // 敵弾も z 場で色/形が決まる（#28）
+        })),
         side: 'enemy',
         misfirePos: null,
         carves: es.carves,

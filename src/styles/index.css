@@ -757,3 +757,10 @@ code {
   color: var(--text-dim);
   text-align: center;
 }
+
+/* 属性 z 場の入力セクション（#30/#21） */
+.zfield-section {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--panel-bevel);
+}

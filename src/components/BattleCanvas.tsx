@@ -10,6 +10,7 @@ import {
   drawMisfire,
   drawCarveBurst,
   strokeZPath,
+  bulletColorOf,
   type SceneParams,
 } from '../render/draw'
 import { COLORS } from '../render/theme'
@@ -24,11 +25,13 @@ function zColor(z: number): string {
 const INTERNAL = 520
 const VP: Viewport = { width: INTERNAL, height: INTERNAL, unitsRadius: FIELD.rField }
 
-/** 弾の1サンプル（位置・速度・弧長）。速度で演出のペースを物理に一致させる（#7）。 */
+/** 弾の1サンプル（位置・速度・弧長・z）。速度で演出のペースを物理に一致させる（#7）。 */
 export interface AnimSample {
   pos: Vec2
   speed: number
   arcLen: number
+  /** その点の z（属性の高さ）。発射時の色/形に使う（#21） */
+  z: number
 }
 
 /** 命中した対象（赤フラッシュ＋揺れ・#20）。弾がこの弧長に達した瞬間に対象が反応する。 */
@@ -274,15 +277,16 @@ export default function BattleCanvas(props: Props) {
         if (!st) return
         const tl = timelines[i]
         const { pos, idx } = st
-        const color = b.side === 'ally' ? COLORS.light1 : COLORS.dark1
-        const core = b.side === 'ally' ? COLORS.light2 : '#cdbbf2'
+        // 発射されたら z 場の値で色/形が決まる（#21）。属性で色、強度で大きさ・棘。
+        const z = b.samples[idx]?.z ?? 0
+        const color = bulletColorOf(z)
         // 暴発：弾が終端へ到達してから余韻いっぱいまで爆発を進める（実時間ベース）
         const arrivalMs = maxTotal > 0 ? (tl.total / maxTotal) * flightMs : 0
         const exploding = b.misfirePos && elapsed >= arrivalMs
         if (!exploding) {
           const trail = b.samples.slice(Math.max(0, idx - 9), idx + 1).map((s) => s.pos)
           drawTrail(ctx, trail, color, VP)
-          drawBullet(ctx, pos, core, VP, phase)
+          drawBullet(ctx, pos, z, VP, phase)
         }
         if (b.misfirePos && exploding) {
           const mp = Math.min(1, (elapsed - arrivalMs) / Math.max(1, realMs - arrivalMs))

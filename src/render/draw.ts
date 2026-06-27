@@ -451,35 +451,50 @@ export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
   drawCasters(ctx, p.allies, p.vp, p.activeAllyId, p.flash, p.shakePhase)
 }
 
-/** 飛行中の弾（多層グロー＋脈動コア＋回転スパーク・#11）。phase で煌めきを変える。 */
+/** z（属性の高さ）から弾の色を選ぶ。光=金・闇=紫・中立=淡い白。 */
+export function bulletColorOf(z: number): string {
+  const a = attributeOf(z)
+  return a === 'light' ? COLORS.light1 : a === 'dark' ? COLORS.dark1 : '#d9d4ea'
+}
+
+/**
+ * 飛行中の弾（多層グロー＋脈動コア＋回転スパーク・#11/#21）。
+ * 発射されると z 場の値で色と形が変わる：属性で色、強度(|z|→V付近で最大)でグロー半径・スパーク数が増える。
+ */
 export function drawBullet(
   ctx: CanvasRenderingContext2D,
   pos: Vec2,
-  color: string,
+  z: number,
   vp: Viewport,
   phase = 0,
 ): void {
   const c = toScreen(pos, vp)
+  const color = bulletColorOf(z)
+  const strength = strengthOf(z) // 0..sMax
+  const sFrac = Math.min(1, strength / FIELD.sMax) // 0..1
   const pulse = 1 + Math.sin(phase * 1.7) * 0.25
+  // 強いほど大きく・棘が多い（#21：形が z で変わる）
+  const glowR = (12 + sFrac * 10) * pulse
+  const spikes = 4 + Math.round(sFrac * 4)
+  const coreR = (2.6 + sFrac * 1.6) * pulse
   ctx.save()
-  // 外側グロー
-  const glow = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, 14 * pulse)
+  const glow = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, glowR)
   glow.addColorStop(0, color)
   glow.addColorStop(1, 'rgba(0,0,0,0)')
-  ctx.globalAlpha = 0.5
+  ctx.globalAlpha = 0.5 + sFrac * 0.25
   ctx.fillStyle = glow
   ctx.beginPath()
-  ctx.arc(c.x, c.y, 14 * pulse, 0, Math.PI * 2)
+  ctx.arc(c.x, c.y, glowR, 0, Math.PI * 2)
   ctx.fill()
   ctx.globalAlpha = 1
   ctx.shadowColor = color
-  ctx.shadowBlur = 14
-  // 回転スパーク（4方向＋斜め）
+  ctx.shadowBlur = 12 + sFrac * 10
+  // 回転スパーク（強度で本数が増える）
   ctx.strokeStyle = color
   ctx.lineWidth = 2
-  const len = 7 + Math.sin(phase) * 2.5
-  for (let i = 0; i < 4; i++) {
-    const a = phase * 0.5 + (i * Math.PI) / 2
+  const len = 6 + sFrac * 5 + Math.sin(phase) * 2.5
+  for (let i = 0; i < spikes; i++) {
+    const a = phase * 0.5 + (i * Math.PI * 2) / spikes
     ctx.beginPath()
     ctx.moveTo(c.x, c.y)
     ctx.lineTo(c.x + Math.cos(a) * len, c.y + Math.sin(a) * len)
@@ -488,7 +503,7 @@ export function drawBullet(
   // コア
   ctx.fillStyle = '#fff8e1'
   ctx.beginPath()
-  ctx.arc(c.x, c.y, 3.2 * pulse, 0, Math.PI * 2)
+  ctx.arc(c.x, c.y, coreR, 0, Math.PI * 2)
   ctx.fill()
   ctx.restore()
 }
