@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Ally, AllyCast, BattleState, Vec2 } from './game/types'
 import { createBattleState, prepareTurn, resolveAllyCasts } from './game/battle'
 import { planEnemyShot, enemyFlight } from './game/enemyAI'
@@ -19,6 +19,16 @@ import { TitleScreen, StoryScreen, ResultScreen } from './components/screens'
 import { ensureAudio, playSfx, startMusic, toggleMuted, type SfxKind } from './audio/sound'
 
 type Screen = 'title' | 'prologue' | 'stageIntro' | 'battle' | 'stageClear' | 'gameover' | 'ending'
+
+/** 開発時のみ：URL の ?stage=N（1始まり）で指定ステージへ直行（通常プレイ＝本番ビルドでは無効・#33）。 */
+const DEV = import.meta.env.DEV
+function devStageFromUrl(): number | null {
+  if (!DEV || typeof window === 'undefined') return null
+  const raw = new URLSearchParams(window.location.search).get('stage')
+  if (!raw) return null
+  const n = Number.parseInt(raw, 10)
+  return Number.isFinite(n) && n >= 1 && n <= STAGES.length ? n - 1 : null
+}
 
 /** from→to を a 直線で狙う角度。 */
 function aimAngle(from: Vec2, to: Vec2, a: number): number {
@@ -55,8 +65,9 @@ function initComposers(party: Ally[]): Record<string, ComposerState> {
 }
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>('title')
-  const [stageIndex, setStageIndex] = useState(0)
+  const devStage = devStageFromUrl()
+  const [screen, setScreen] = useState<Screen>(devStage !== null ? 'stageIntro' : 'title')
+  const [stageIndex, setStageIndex] = useState(devStage ?? 0)
   const [battle, setBattle] = useState<BattleState | null>(null)
   const [castingIds, setCastingIds] = useState<string[]>([])
   const [impairedIds, setImpairedIds] = useState<string[]>([])
@@ -117,6 +128,22 @@ export default function App() {
 
   const onChange = (patch: Partial<ComposerState>) =>
     setComposers((m) => ({ ...m, [activeAllyId]: { ...m[activeAllyId], ...patch } }))
+
+  // 開発ジャンプ時はクリアタイム計測の起点を初期化（#33）
+  useEffect(() => {
+    if (devStage !== null && runStartMs === null) setRunStartMs(performance.now())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /** 開発用：指定ステージのイントロへ直行する（DEV のみ・#33）。 */
+  const devJumpToStage = (i: number) => {
+    setStageIndex(i)
+    setBattle(null)
+    setAnimation(null)
+    setPendingState(null)
+    if (runStartMs === null) setRunStartMs(performance.now())
+    setScreen('stageIntro')
+  }
 
   // ===== 画面遷移 =====
   const startBattle = () => {
@@ -259,6 +286,16 @@ export default function App() {
           onGuide={() => setGuideOpen(true)}
         />
         {guideOpen && <Guide onClose={() => setGuideOpen(false)} />}
+        {DEV && (
+          <div className="dev-stage-jump">
+            <span>DEV ステージ直行：</span>
+            {STAGES.map((s, i) => (
+              <button key={s.name} className="btn small" onClick={() => devJumpToStage(i)}>
+                {i + 1}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     )
   }
