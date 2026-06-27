@@ -55,14 +55,21 @@ export function ResultScreen({
   title,
   lines,
   actions,
+  time,
 }: {
   title: string
   lines: string[]
   actions: { label: string; onClick: () => void; primary?: boolean }[]
+  time?: { label: string; value: string }
 }) {
   return (
     <div className="screen-center">
       <h2>{title}</h2>
+      {time && (
+        <div className="clear-time">
+          {time.label}: <span className="time-value">{time.value}</span>
+        </div>
+      )}
       <div className="story-text">
         {lines.map((l, i) => (
           <p key={i}>{l}</p>

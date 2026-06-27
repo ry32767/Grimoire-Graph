@@ -23,6 +23,14 @@ function aimAngle(from: Vec2, to: Vec2, a: number): number {
   return Math.atan2(to.y - from.y, to.x - from.x) - Math.atan(a)
 }
 
+/** ミリ秒を mm:ss に整形（#6：クリアタイム）。 */
+function formatTime(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000))
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
 function makeComposer(angle: number): ComposerState {
   const coeffs = defaultCoeffs(ROTATE_PRESETS[0])
   return {
@@ -57,6 +65,9 @@ export default function App() {
   const [codexOpen, setCodexOpen] = useState(false)
   const [guideOpen, setGuideOpen] = useState(false)
   const [guideShown, setGuideShown] = useState(false)
+  // #6：クリアタイム計測
+  const [runStartMs, setRunStartMs] = useState<number | null>(null)
+  const [clearSnapshotMs, setClearSnapshotMs] = useState(0)
 
   const aliveAllies = useMemo(() => battle?.allies.filter((a) => a.hp > 0) ?? [], [battle])
 
@@ -163,12 +174,15 @@ export default function App() {
     setPendingState(after)
   }
 
+  const snapshotTime = () => setClearSnapshotMs(performance.now() - (runStartMs ?? performance.now()))
+
   const onAnimationDone = () => {
     const after = pendingState
     setAnimation(null)
     setPendingState(null)
     if (!after) return
     if (after.outcome === 'cleared') {
+      snapshotTime()
       setBattle(after)
       setScreen('stageClear')
       return
@@ -187,15 +201,23 @@ export default function App() {
       const firstAlive = prep.state.allies.find((a) => a.hp > 0)
       if (firstAlive) setActiveAllyId(firstAlive.id)
     }
-    if (prep.state.outcome === 'cleared') setScreen('stageClear')
-    else if (prep.state.outcome === 'gameover') setScreen('gameover')
+    if (prep.state.outcome === 'cleared') {
+      snapshotTime()
+      setScreen('stageClear')
+    } else if (prep.state.outcome === 'gameover') setScreen('gameover')
   }
 
   // ===== 全画面（タイトル/物語/結果） =====
   if (screen === 'title') {
     return (
       <div className="app">
-        <TitleScreen onStart={() => setScreen('prologue')} onGuide={() => setGuideOpen(true)} />
+        <TitleScreen
+          onStart={() => {
+            setRunStartMs(performance.now())
+            setScreen('prologue')
+          }}
+          onGuide={() => setGuideOpen(true)}
+        />
         {guideOpen && <Guide onClose={() => setGuideOpen(false)} />}
       </div>
     )
@@ -231,6 +253,7 @@ export default function App() {
         <ResultScreen
           title="ステージクリア！"
           lines={stage.clearText}
+          time={{ label: '経過タイム', value: formatTime(clearSnapshotMs) }}
           actions={[
             isLast
               ? { label: 'エンディングへ', onClick: () => setScreen('ending'), primary: true }
@@ -267,6 +290,7 @@ export default function App() {
         <ResultScreen
           title="エンディング"
           lines={EPILOGUE}
+          time={{ label: 'クリアタイム', value: formatTime(clearSnapshotMs) }}
           actions={[{ label: 'タイトルへ戻る', primary: true, onClick: () => setScreen('title') }]}
         />
       </div>
@@ -285,7 +309,10 @@ export default function App() {
       <div className="battle">
         <div className="battle-left">
           <div className="phase-bar">
-            <span>{STAGES[battle.stageIndex].name}</span>
+            <span>
+              {STAGES[battle.stageIndex].name}
+              {STAGES[battle.stageIndex].boss && <span className="boss-tag">BOSS</span>}
+            </span>
             <span className="turn">
               ターン {battle.turn}・{composing ? '作成フェーズ' : '解決フェーズ'}
             </span>
