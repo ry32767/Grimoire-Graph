@@ -379,9 +379,12 @@ export function strokeZPath(ctx: CanvasRenderingContext2D, pts: ZPoint[], vp: Vi
   ctx.lineWidth = 3
   ctx.lineCap = 'round'
   for (let i = 1; i < pts.length; i++) {
-    const a = toScreen(pts[i - 1].pos, vp)
-    const b = toScreen(pts[i].pos, vp)
-    const z = (pts[i - 1].z + pts[i].z) / 2
+    const p0 = pts[i - 1]
+    const p1 = pts[i]
+    if (!p0 || !p1) continue // 念のため：欠損点があってもクラッシュしない
+    const a = toScreen(p0.pos, vp)
+    const b = toScreen(p1.pos, vp)
+    const z = (p0.z + p1.z) / 2
     const attr = attributeOf(z)
     const t = Math.min(strengthOf(z) / FIELD.sMax, 1)
     if (attr === 'neutral') {
