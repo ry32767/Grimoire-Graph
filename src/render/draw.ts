@@ -294,6 +294,16 @@ export function drawEnemies(
     ctx.beginPath()
     ctx.arc(c.x, c.y, r * 1.6, 0, Math.PI * 2)
     ctx.fill()
+    // 暗い背板＋属性色の縁取り（軌跡や背景に紛れず際立つ・#27）
+    ctx.fillStyle = 'rgba(12,10,24,0.78)'
+    ctx.beginPath()
+    ctx.arc(c.x, c.y, r * 1.18, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = tint
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.arc(c.x, c.y, r * 1.18, 0, Math.PI * 2)
+    ctx.stroke()
     // スプライト
     const rows = light ? LIGHT_ENEMY_ROWS : DARK_ENEMY_ROWS
     const pal = light ? LIGHT_ENEMY_PAL : DARK_ENEMY_PAL
@@ -423,9 +433,8 @@ export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
   }
 
   drawObstacles(ctx, p.obstacles, p.vp)
-  drawEnemies(ctx, p.enemies, p.vp, p.flash, p.shakePhase)
 
-  // 各味方のプレビュー軌道（z で色分け）
+  // 各味方のプレビュー軌道（z で色分け）。敵より先に描き、敵に被らせない（#27）。
   if (p.playerPaths) {
     for (const path of p.playerPaths) {
       if (path && path.length > 1) strokeZPath(ctx, path, p.vp)
@@ -437,6 +446,8 @@ export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
     for (const l of p.landings) if (l) drawLanding(ctx, l, p.vp)
   }
 
+  // 敵・術者は軌跡の上に描く（軌跡で隠れない・#27）
+  drawEnemies(ctx, p.enemies, p.vp, p.flash, p.shakePhase)
   drawCasters(ctx, p.allies, p.vp, p.activeAllyId, p.flash, p.shakePhase)
 }
 
