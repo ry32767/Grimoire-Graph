@@ -345,7 +345,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
   drawCasters(ctx, p.allies, p.vp, p.activeAllyId)
 }
 
-/** 飛行中の弾（十字スパーク＋グロー）。phase で煌めきを変える。 */
+/** 飛行中の弾（多層グロー＋脈動コア＋回転スパーク・#11）。phase で煌めきを変える。 */
 export function drawBullet(
   ctx: CanvasRenderingContext2D,
   pos: Vec2,
@@ -354,24 +354,36 @@ export function drawBullet(
   phase = 0,
 ): void {
   const c = toScreen(pos, vp)
+  const pulse = 1 + Math.sin(phase * 1.7) * 0.25
   ctx.save()
+  // 外側グロー
+  const glow = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, 14 * pulse)
+  glow.addColorStop(0, color)
+  glow.addColorStop(1, 'rgba(0,0,0,0)')
+  ctx.globalAlpha = 0.5
+  ctx.fillStyle = glow
+  ctx.beginPath()
+  ctx.arc(c.x, c.y, 14 * pulse, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.globalAlpha = 1
   ctx.shadowColor = color
-  ctx.shadowBlur = 12
+  ctx.shadowBlur = 14
+  // 回転スパーク（4方向＋斜め）
+  ctx.strokeStyle = color
+  ctx.lineWidth = 2
+  const len = 7 + Math.sin(phase) * 2.5
+  for (let i = 0; i < 4; i++) {
+    const a = phase * 0.5 + (i * Math.PI) / 2
+    ctx.beginPath()
+    ctx.moveTo(c.x, c.y)
+    ctx.lineTo(c.x + Math.cos(a) * len, c.y + Math.sin(a) * len)
+    ctx.stroke()
+  }
   // コア
   ctx.fillStyle = '#fff8e1'
   ctx.beginPath()
-  ctx.arc(c.x, c.y, 3, 0, Math.PI * 2)
+  ctx.arc(c.x, c.y, 3.2 * pulse, 0, Math.PI * 2)
   ctx.fill()
-  // 十字スパーク
-  ctx.strokeStyle = color
-  ctx.lineWidth = 2
-  const len = 6 + Math.sin(phase) * 2
-  ctx.beginPath()
-  ctx.moveTo(c.x - len, c.y)
-  ctx.lineTo(c.x + len, c.y)
-  ctx.moveTo(c.x, c.y - len)
-  ctx.lineTo(c.x, c.y + len)
-  ctx.stroke()
   ctx.restore()
 }
 

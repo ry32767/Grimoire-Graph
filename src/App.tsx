@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { Ally, AllyCast, BattleState, Vec2 } from './game/types'
 import { createBattleState, prepareTurn, resolveAllyCasts } from './game/battle'
 import { planEnemyShot, enemyFlight } from './game/enemyAI'
@@ -8,13 +8,14 @@ import { makeParty } from './data/party'
 import { FIELD } from './data/constants'
 import { PROLOGUE, EPILOGUE, GAMEOVER_TEXT } from './data/story'
 import { type ComposerState, buildComposerTrajectory, computePreview } from './components/composer'
-import BattleCanvas, { type ResolveAnimation, type AnimShot } from './components/BattleCanvas'
+import BattleCanvas, { type ResolveAnimation, type AnimBullet, type AnimOrbit } from './components/BattleCanvas'
 import Hud from './components/Hud'
 import BattleLog from './components/BattleLog'
 import FunctionPanel from './components/FunctionPanel'
 import Codex from './components/Codex'
 import Guide from './components/Guide'
 import { TitleScreen, StoryScreen, ResultScreen } from './components/screens'
+import { ensureAudio, playSfx, startMusic, toggleMuted, type SfxKind } from './audio/sound'
 
 type Screen = 'title' | 'prologue' | 'stageIntro' | 'battle' | 'stageClear' | 'gameover' | 'ending'
 
@@ -68,6 +69,9 @@ export default function App() {
   // #6：クリアタイム計測
   const [runStartMs, setRunStartMs] = useState<number | null>(null)
   const [clearSnapshotMs, setClearSnapshotMs] = useState(0)
+  // #10：音
+  const sfxRef = useRef<SfxKind[]>([])
+  const [muted, setMutedState] = useState(false)
 
   const aliveAllies = useMemo(() => battle?.allies.filter((a) => a.hp > 0) ?? [], [battle])
 
@@ -163,15 +167,38 @@ export default function App() {
       casts.push({ allyId: a.id, trajectory: traj, initialSpeed: c.speed })
     }
     const { state: after, resolution } = resolveAllyCasts(battle, casts, castingIds)
-    const allyShots: AnimShot[] = resolution.allyShots.map((s) =>
-      s.kind === 'orbit'
-        ? { kind: 'orbit', path: s.path.map((z) => z.pos), ring: s.path, misfirePos: s.misfirePos }
-        : { kind: 'projectile', path: s.path.map((z) => z.pos), ring: null, misfirePos: s.misfirePos },
-    )
-    const enemyPaths = resolution.enemyShots.map((s) => s.path)
+    const bullets: AnimBullet[] = []
+    const orbits: AnimOrbit[] = []
+    for (const s of resolution.allyShots) {
+      if (s.kind === 'orbit') {
+        orbits.push({ ring: s.path })
+      } else if (s.flight) {
+        bullets.push({
+          samples: s.flight.samples.map((x) => ({ pos: x.pos, speed: x.speed, arcLen: x.arcLen })),
+          side: 'ally',
+          misfirePos: s.misfirePos,
+        })
+      }
+    }
+    for (const es of resolution.enemyShots) {
+      bullets.push({
+        samples: es.flight.samples.map((x) => ({ pos: x.pos, speed: x.speed, arcLen: x.arcLen })),
+        side: 'enemy',
+        misfirePos: null,
+      })
+    }
+    // 着弾時に鳴らす効果音を予約（#10）
+    const kinds = new Set(resolution.log.map((l) => l.kind))
+    const sfx: SfxKind[] = []
+    if (kinds.has('misfire')) sfx.push('misfire')
+    if (kinds.has('playerHit')) sfx.push('hit')
+    if (kinds.has('orbit')) sfx.push('orbit')
+    if (kinds.has('enemyHit')) sfx.push('enemyHit')
+    sfxRef.current = sfx
     setBattle({ ...battle, phase: 'resolve' })
-    setAnimation({ allyShots, enemyPaths })
+    setAnimation({ bullets, orbits })
     setPendingState(after)
+    playSfx('fire')
   }
 
   const snapshotTime = () => setClearSnapshotMs(performance.now() - (runStartMs ?? performance.now()))
@@ -180,14 +207,19 @@ export default function App() {
     const after = pendingState
     setAnimation(null)
     setPendingState(null)
+    // 予約した着弾効果音を再生
+    sfxRef.current.forEach((k) => playSfx(k))
+    sfxRef.current = []
     if (!after) return
     if (after.outcome === 'cleared') {
+      playSfx('clear')
       snapshotTime()
       setBattle(after)
       setScreen('stageClear')
       return
     }
     if (after.outcome === 'gameover') {
+      playSfx('gameover')
       setBattle(after)
       setScreen('gameover')
       return
@@ -202,9 +234,13 @@ export default function App() {
       if (firstAlive) setActiveAllyId(firstAlive.id)
     }
     if (prep.state.outcome === 'cleared') {
+      playSfx('clear')
       snapshotTime()
       setScreen('stageClear')
-    } else if (prep.state.outcome === 'gameover') setScreen('gameover')
+    } else if (prep.state.outcome === 'gameover') {
+      playSfx('gameover')
+      setScreen('gameover')
+    }
   }
 
   // ===== 全画面（タイトル/物語/結果） =====
@@ -213,6 +249,8 @@ export default function App() {
       <div className="app">
         <TitleScreen
           onStart={() => {
+            ensureAudio()
+            startMusic()
             setRunStartMs(performance.now())
             setScreen('prologue')
           }}
@@ -345,7 +383,10 @@ export default function App() {
                       key={a.id}
                       className={`btn small ally-tab${a.id === activeAllyId ? ' selected' : ''}${dead ? ' dead' : ''}`}
                       disabled={dead}
-                      onClick={() => setActiveAllyId(a.id)}
+                      onClick={() => {
+                        playSfx('select')
+                        setActiveAllyId(a.id)
+                      }}
                     >
                       {a.name}
                       {impaired && !dead ? '（ひるみ）' : ''}
@@ -370,6 +411,16 @@ export default function App() {
                 </button>
                 <button className="btn small" onClick={() => setCodexOpen(true)}>
                   図鑑
+                </button>
+                <button
+                  className="btn small"
+                  title="音のオン/オフ"
+                  onClick={() => {
+                    ensureAudio()
+                    setMutedState(toggleMuted())
+                  }}
+                >
+                  {muted ? '🔇' : '🔊'}
                 </button>
               </div>
             </>
