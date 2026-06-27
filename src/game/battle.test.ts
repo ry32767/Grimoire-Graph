@@ -11,17 +11,16 @@ const enemy = (id: string, pos: { x: number; y: number }, hp: number, speed = 4)
   hp,
   maxHp: hp,
   element: 'dark',
-  hitboxRadius: 1,
+  hitboxRadius: 1.1,
   statuses: [],
   castTrajectory: { mode: 'rotate', g: () => 0, angle: 0 },
   castInitialSpeed: speed,
+  castZ: -3, // 闇の敵弾
 })
 
 const stage = (enemies: Enemy[]): Stage => ({
   id: 's',
   name: 'テスト',
-  field: () => 3, // 光・強度3
-  fieldName: 'テスト場',
   enemies,
   obstacles: [],
   introText: [],
@@ -30,9 +29,10 @@ const stage = (enemies: Enemy[]): Stage => ({
   recommendedPresetId: 'line',
 })
 
-const lineAttack = (speed = 8): { kind: 'attack'; trajectory: Trajectory; initialSpeed: number } => ({
+// +x 軸に沿って飛び、関数値 z=x で光を帯びる光線（敵を反対極で撃てる）
+const rayAttack = (speed = 8): { kind: 'attack'; trajectory: Trajectory; initialSpeed: number } => ({
   kind: 'attack',
-  trajectory: { mode: 'rotate', g: () => 0, angle: 0 },
+  trajectory: { mode: 'rotate', g: (x) => x, angle: -Math.PI / 4 },
   initialSpeed: speed,
 })
 
@@ -50,8 +50,7 @@ describe('勝敗判定（機能13）', () => {
   it('敵を全滅させるとクリア', () => {
     let s = createBattleState(stage([enemy('e', { x: 5, y: 0 }, 10)]), 0, 120)
     const prep = prepareTurn(s)
-    // 敵は発射するが、こちらの一撃で倒す（HP10は1ヒットで割れる）
-    const out = resolvePlayerAction(prep.state, lineAttack(9), [])
+    const out = resolvePlayerAction(prep.state, rayAttack(9), [])
     s = out.state
     expect(s.enemies[0].hp).toBe(0)
     expect(s.outcome).toBe('cleared')
@@ -60,8 +59,7 @@ describe('勝敗判定（機能13）', () => {
   it('プレイヤーHPが0でゲームオーバー', () => {
     let s = createBattleState(stage([enemy('e', { x: 6, y: 0 }, 1000, 10)]), 0, 5)
     const prep = prepareTurn(s)
-    // 防御も攻撃もせず…ここでは弱い攻撃。敵の強い弾で術者が落ちる
-    const out = resolvePlayerAction(prep.state, lineAttack(3), prep.castingEnemyIds)
+    const out = resolvePlayerAction(prep.state, rayAttack(3), prep.castingEnemyIds)
     s = out.state
     expect(s.player.hp).toBe(0)
     expect(s.outcome).toBe('gameover')
@@ -70,7 +68,7 @@ describe('勝敗判定（機能13）', () => {
   it('HPは0未満にならない', () => {
     let s = createBattleState(stage([enemy('e', { x: 5, y: 0 }, 5)]), 0, 120)
     const prep = prepareTurn(s)
-    const out = resolvePlayerAction(prep.state, lineAttack(10), [])
+    const out = resolvePlayerAction(prep.state, rayAttack(10), [])
     s = out.state
     expect(s.enemies[0].hp).toBeGreaterThanOrEqual(0)
   })

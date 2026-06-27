@@ -29,18 +29,25 @@ export interface Hit {
   pos: Vec2
   speed: number
   arcLen: number
+  /** 命中点の軌道パラメータ（z=関数値の評価に使う） */
+  param: number
 }
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t
 }
 
-/** 飛行サンプル列が円ヒットボックスに最初に触れる点（速度・弧長を補間）。 */
+/** 飛行サンプル列が円ヒットボックスに最初に触れる点（速度・弧長・パラメータを補間）。 */
 export function firstHit(samples: FlightSample[], center: Vec2, radius: number): Hit | null {
   if (samples.length === 0) return null
   if (samples.length === 1) {
     return dist(samples[0].pos, center) <= radius
-      ? { pos: samples[0].pos, speed: samples[0].speed, arcLen: samples[0].arcLen }
+      ? {
+          pos: samples[0].pos,
+          speed: samples[0].speed,
+          arcLen: samples[0].arcLen,
+          param: samples[0].param,
+        }
       : null
   }
   for (let i = 1; i < samples.length; i++) {
@@ -52,6 +59,7 @@ export function firstHit(samples: FlightSample[], center: Vec2, radius: number):
         pos: { x: lerp(a.pos.x, b.pos.x, t), y: lerp(a.pos.y, b.pos.y, t) },
         speed: lerp(a.speed, b.speed, t),
         arcLen: lerp(a.arcLen, b.arcLen, t),
+        param: lerp(a.param, b.param, t),
       }
     }
   }

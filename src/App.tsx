@@ -60,8 +60,8 @@ export default function App() {
   const preview = useMemo(
     () =>
       battle
-        ? computePreview(trajectory, composer.speed, battle.field)
-        : { path: [], landing: null, powerEstimate: 0, selfMisfireWarning: false },
+        ? computePreview(trajectory, composer.speed)
+        : { path: [], landing: null, powerEstimate: 0, maxStrength: 0, selfMisfireWarning: false },
     [trajectory, composer.speed, battle],
   )
   const ghostPaths = useMemo<Vec2[][]>(() => {
@@ -95,13 +95,18 @@ export default function App() {
     if (!battle) return
     const stage = STAGES[stageIndex]
     const target = battle.enemies.find((e) => e.hp > 0)
-    const angle = target ? Math.atan2(target.pos.y, target.pos.x) : 0
+    if (!target) return
+    // 敵へ向かう直線 g(x)=a·x。a の符号で属性（敵の反対極）を作り、原点(中立)から
+    // 敵の位置で最大強度に帯びる。光の敵→闇(a<0)、闇の敵→光(a>0)。
+    const phi = Math.atan2(target.pos.y, target.pos.x)
+    const a = target.element === 'light' ? -1 : 1
+    const angle = phi - Math.atan(a)
     setComposer({
       ...makeInitialComposer(),
-      presetId: stage.recommendedPresetId,
-      coeffs: stage.recommendedCoeffs ?? defaultCoeffs(ROTATE_PRESETS[0]),
+      presetId: 'line',
+      coeffs: { a, b: 0 },
       angle,
-      speed: stage.recommendedSpeed ?? 8,
+      speed: stage.recommendedSpeed ?? 9,
     })
   }
 
@@ -246,14 +251,13 @@ export default function App() {
       <div className="battle">
         <div className="battle-left">
           <div className="phase-bar">
-            <span>{battle.fieldName}</span>
+            <span>{STAGES[battle.stageIndex].name}</span>
             <span className="turn">
               ターン {battle.turn}・{composing ? '作成フェーズ' : '解決フェーズ'}
             </span>
           </div>
           <div className="canvas-wrap">
             <BattleCanvas
-              field={battle.field}
               enemies={battle.enemies}
               obstacles={battle.obstacles}
               shield={battle.player.shield}
@@ -273,7 +277,6 @@ export default function App() {
               composer={composer}
               onChange={onChange}
               preview={preview}
-              field={battle.field}
               mechanics={battle.mechanics}
               canFire={composer.actionKind === 'shield' || !!trajectory}
               onFire={fire}

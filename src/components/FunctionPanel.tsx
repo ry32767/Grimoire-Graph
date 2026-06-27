@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { Field, Mechanics } from '../game/types'
+import type { Mechanics } from '../game/types'
 import {
   ROTATE_PRESETS,
   POLAR_PRESETS,
@@ -20,7 +20,6 @@ interface Props {
   composer: ComposerState
   onChange: (next: Partial<ComposerState>) => void
   preview: Preview
-  field: Field
   mechanics: Mechanics
   canFire: boolean
   onFire: () => void
@@ -100,7 +99,14 @@ export default function FunctionPanel(props: Props) {
               </button>
             ))}
           </div>
-          <div className="preset-desc">{c.useFree ? '自由入力式を使用中' : (preset?.description ?? '')}</div>
+          <div className="preset-desc">
+            {c.useFree ? '自由入力式を使用中' : (preset?.description ?? '')}
+            {!c.useFree && preset && (
+              <div className="free-hint">
+                自由入力名: <code>{preset.freeName}</code>
+              </div>
+            )}
+          </div>
 
           {!c.useFree &&
             preset?.coeffs.map((cf) => (
@@ -134,6 +140,14 @@ export default function FunctionPanel(props: Props) {
                 </button>
               </div>
               {c.freeError && <div className="field-error">{c.freeError}</div>}
+              <div className="hint">
+                使える関数: <code>sin cos tan sqrt exp abs log</code>（<code>^</code>はべき乗）
+              </div>
+              {preset?.category === 'rotate' && (
+                <button className="btn small" onClick={() => setFreeDraft(preset.toExpr(c.coeffs))}>
+                  今の関数を式にコピー
+                </button>
+              )}
             </div>
           )}
 
@@ -176,10 +190,11 @@ export default function FunctionPanel(props: Props) {
             {preview.landing && (
               <>
                 <div>
-                  着弾属性:{' '}
+                  着弾の理:{' '}
                   <span className={preview.landing.attr}>{attrLabel(preview.landing.attr)}</span>
                 </div>
-                <div>強度 |z|: {preview.landing.strength.toFixed(2)}</div>
+                <div>着弾強度 |z|: {preview.landing.strength.toFixed(2)}</div>
+                <div>最大強度: {preview.maxStrength.toFixed(2)}</div>
                 <div>威力目安: {preview.powerEstimate.toFixed(1)}</div>
               </>
             )}

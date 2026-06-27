@@ -1,9 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { segmentCircleHit, firstHit, firstHitAmong } from './collision'
 import { simulateFlight } from './physics'
-import type { Field, FlightSample, Trajectory } from './types'
-
-const neutral: Field = () => 0
+import type { FlightSample, Trajectory } from './types'
 
 // x 軸上を速度一定で進むサンプル列を作る
 function lineSamples(): FlightSample[] {
@@ -56,8 +54,8 @@ describe('回転/極座標で一貫した当たり判定', () => {
   it('回転（直線）と極座標（円）どちらも (5,0) の対象に当たる', () => {
     const rot: Trajectory = { mode: 'rotate', g: () => 0, angle: 0 } // +x 方向
     const pol: Trajectory = { mode: 'polar', f: () => 5 } // 半径5の円
-    const rotFlight = simulateFlight(rot, 5, neutral)
-    const polFlight = simulateFlight(pol, 5, neutral)
+    const rotFlight = simulateFlight(rot, 5)
+    const polFlight = simulateFlight(pol, 5)
     expect(firstHit(rotFlight.samples, { x: 5, y: 0 }, 0.6)).not.toBeNull()
     expect(firstHit(polFlight.samples, { x: 5, y: 0 }, 0.6)).not.toBeNull()
   })

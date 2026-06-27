@@ -1,8 +1,10 @@
 // ターン解決：敵公開 → プレイヤー後出し → 同時発射 → 解決（機能6・13）。
 // 解決順序：物理 → パリィ → 障害物 → 命中 → ダメージ/状態異常（勝敗は battle で判定）。純粋関数。
+//
+// 新モデル：属性は「弾の関数値 z」で決まる。プレイヤー弾は軌道の関数値 g(x)/f(θ)、
+// 敵弾は enemy.castZ（符号=属性, |z|=強度）。
 import type {
   Enemy,
-  Field,
   Flight,
   LogEntry,
   Mechanics,
@@ -13,19 +15,14 @@ import type {
   Vec2,
 } from './types'
 import {
-  evalField,
   attributeOf,
   strengthOf,
   computeDamage,
   dominantAttribute,
+  trajectoryZ,
   affinityMultiplier,
 } from './attribute'
-import {
-  simulateFlight,
-  simulateWithLosses,
-  simulatePath,
-  type LossEvent,
-} from './physics'
+import { simulateFlight, simulateWithLosses, simulatePath, type LossEvent } from './physics'
 import { firstHitAmong, firstHit } from './collision'
 import { firstCrossing, resolveParry } from './parry'
 import { applyObstacleHit } from './obstacle'
@@ -38,6 +35,8 @@ export interface EnemyShot {
   enemyId: string
   path: Vec2[]
   flight: Flight
+  /** 敵弾が帯びる z（高さ＝属性） */
+  castZ: number
   blocked: boolean
   parried: boolean
   reachedPlayer: boolean
@@ -45,7 +44,6 @@ export interface EnemyShot {
 }
 
 export interface ResolveInput {
-  field: Field
   player: PlayerState
   enemies: Enemy[]
   /** このターン実際に発射する敵のID（ひるみ等で発射しない敵は除外） */
@@ -74,11 +72,9 @@ function enemyPath(from: Vec2, steps = 40): Vec2[] {
   return path
 }
 
-/**
- * 同時発射の解決。入力は変更せず、新しい状態とログ・飛行データを返す。
- */
+/** 同時発射の解決。入力は変更せず、新しい状態とログ・飛行データを返す。 */
 export function resolveTurn(input: ResolveInput): ResolveResult {
-  const { field, mechanics, action } = input
+  const { mechanics, action } = input
   const log: LogEntry[] = []
   const enemies = input.enemies.map((e) => ({ ...e, statuses: [...e.statuses] }))
   const obstacles = input.obstacles.map((o) => ({ ...o }))
@@ -92,42 +88,53 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     log.push({ kind: 'shield', text: `結界（${action.shield.shape === 'circle' ? '円' : '楕円'}）を展開した` })
   }
 
-  // === 1. 物理：敵弾を構築 ===
+  // === 1. 物理：敵弾を構築（z は敵の castZ 一定） ===
   const enemyShots: EnemyShot[] = []
   for (const e of enemies) {
     if (!input.castingEnemyIds.includes(e.id)) continue
     const path = enemyPath(e.pos)
-    const flight = simulatePath(path, e.castInitialSpeed, field)
-    enemyShots.push({ enemyId: e.id, path, flight, blocked: false, parried: false, reachedPlayer: false, damage: 0 })
+    const flight = simulatePath(path, e.castInitialSpeed, () => e.castZ)
+    enemyShots.push({
+      enemyId: e.id,
+      path,
+      flight,
+      castZ: e.castZ,
+      blocked: false,
+      parried: false,
+      reachedPlayer: false,
+      damage: 0,
+    })
   }
 
   let playerFlight: Flight | null = null
 
   if (action.kind === 'attack') {
-    const freeFlight = simulateFlight(action.trajectory, action.initialSpeed, field)
+    const traj = action.trajectory
+    const freeFlight = simulateFlight(traj, action.initialSpeed)
     const losses: LossEvent[] = []
 
     // === 2. パリィ：自弾と敵弾の最初の交差を解決 ===
     if (mechanics.parry && freeFlight.samples.length > 1) {
       const playerPath = freeFlight.samples.map((s) => s.pos)
-      let best: { shot: EnemyShot; indexA: number; indexB: number; pos: Vec2 } | null = null
+      let best: { shot: EnemyShot; indexA: number; indexB: number } | null = null
       for (const shot of enemyShots) {
         const cross = firstCrossing(playerPath, shot.path)
         if (cross && (best === null || cross.indexA < best.indexA)) {
-          best = { shot, indexA: cross.indexA, indexB: cross.indexB, pos: cross.pos }
+          best = { shot, indexA: cross.indexA, indexB: cross.indexB }
         }
       }
       if (best) {
         const pSample = freeFlight.samples[best.indexA]
         const eSample = best.shot.flight.samples[Math.min(best.indexB, best.shot.flight.samples.length - 1)]
-        // 各弾が帯びる理（主に通過した属性）でパリィを判定する
-        const pDom = dominantAttribute(field, freeFlight.samples)
-        const eDom = dominantAttribute(field, best.shot.flight.samples)
+        // 自弾の支配属性（経路で |z| 最大）と、敵弾の属性（castZ）でパリィ判定
+        const pDom = dominantAttribute(traj, freeFlight.samples)
+        const eAttr = attributeOf(best.shot.castZ)
+        const eStr = strengthOf(best.shot.castZ)
         const pPower = pSample.speed * pDom.strength
-        const ePower = eSample.speed * eDom.strength
-        const parry = resolveParry(pDom.attr, pSample.speed, pPower, eDom.attr, eSample.speed, ePower)
+        const ePower = eSample.speed * eStr
+        const parry = resolveParry(pDom.attr, pSample.speed, pPower, eAttr, eSample.speed, ePower)
         if (!parry.passthrough) {
-          log.push({ kind: 'parry', text: `パリィ：${pDom.attr === 'light' ? '光' : '闇'}×${eDom.attr === 'light' ? '光' : '闇'} が衝突` })
+          log.push({ kind: 'parry', text: `パリィ：${pDom.attr === 'light' ? '光' : '闇'}×${eAttr === 'light' ? '光' : '闇'} が衝突` })
           losses.push({ arcLen: pSample.arcLen, deltaV: pSample.speed - parry.speedA })
           if (parry.vanishB) {
             best.shot.parried = true
@@ -145,7 +152,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
         if (ob.durability <= 0) continue
         const hit = firstHit(freeFlight.samples, ob.pos, ob.hitboxRadius)
         if (hit) {
-          const z = evalField(field, hit.pos)
+          const z = trajectoryZ(traj, hit.param)
           const power = hit.speed * strengthOf(z)
           const res = applyObstacleHit(ob, power, attributeOf(z))
           obstacles[i] = res.obstacle
@@ -156,9 +163,9 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     }
 
     // 減衰イベントを適用して最終飛行を求める
-    playerFlight = simulateWithLosses(action.trajectory, action.initialSpeed, field, losses)
+    playerFlight = simulateWithLosses(traj, action.initialSpeed, losses)
 
-    // === 4&5. 命中 → ダメージ/状態異常 ===
+    // === 4&5. 命中 → ダメージ/状態異常（z は命中点の関数値） ===
     const targets = enemies
       .filter((e) => e.hp > 0)
       .map((e) => ({ id: e.id, pos: e.pos, radius: e.hitboxRadius }))
@@ -166,7 +173,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     if (hit) {
       const idx = enemies.findIndex((e) => e.id === hit.id)
       const enemy = enemies[idx]
-      const z = evalField(field, hit.pos)
+      const z = trajectoryZ(traj, hit.param)
       const dmg = computeDamage(hit.speed, z, enemy.element)
       enemies[idx] = {
         ...enemy,
@@ -204,18 +211,18 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     }
   }
 
-  // === 7. 敵弾の解決：結界 → 術者への命中 ===
+  // === 7. 敵弾の解決：結界 → 術者への命中（z は敵の castZ 一定） ===
   for (const shot of enemyShots) {
     if (shot.parried) continue
+    const bAttr = attributeOf(shot.castZ)
+    const bStr = strengthOf(shot.castZ)
     let reachSpeed = shot.flight.endSpeed
     // 結界
     if (mechanics.shield && activeShield && activeShield.durability > 0) {
       const cross = crossesShield(shot.path, activeShield)
       if (cross) {
         const crossSample = shot.flight.samples[Math.min(cross.index, shot.flight.samples.length - 1)]
-        const z = evalField(field, cross.pos)
-        const bAttr = attributeOf(z)
-        const bPow = crossSample.speed * strengthOf(z)
+        const bPow = crossSample.speed * bStr
         const sh = applyShieldHit(activeShield, bPow, bAttr, crossSample.speed)
         activeShield = sh.shield
         player.shield = sh.broken ? null : sh.shield
@@ -226,7 +233,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
           continue
         }
         // 結界通過後の速度で原点まで再計算
-        const reFlight = simulatePath(shot.path, shot.flight.samples[0].speed, field, [
+        const reFlight = simulatePath(shot.path, shot.flight.samples[0].speed, () => shot.castZ, [
           { arcLen: crossSample.arcLen, deltaV: crossSample.speed - sh.newBulletSpeed },
         ])
         shot.flight = reFlight
@@ -237,13 +244,11 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
         }
       }
     }
-    // 術者へ命中。敵弾が帯びた理（主に通過した属性・強度）で威力を決める。
-    // 原点 z は中立になりがちな場が多いため、経路の支配属性を用いる。
+    // 術者へ命中（プレイヤーは中立扱い＝相性×1.0）
     shot.reachedPlayer = true
-    const dom = dominantAttribute(field, shot.flight.samples)
-    const damage = reachSpeed * dom.strength * affinityMultiplier(dom.attr, 'neutral')
+    const damage = reachSpeed * bStr * affinityMultiplier(bAttr, 'neutral')
     player.hp = Math.max(0, player.hp - damage)
-    player.statuses = addStatus(player.statuses, makeStatus(dom.attr, dom.strength))
+    player.statuses = addStatus(player.statuses, makeStatus(bAttr, bStr))
     shot.damage = damage
     const ename = enemies.find((e) => e.id === shot.enemyId)?.name ?? '敵'
     log.push({ kind: 'enemyHit', text: `${ename}の術式が術者に命中！ ${damage.toFixed(0)} ダメージ` })

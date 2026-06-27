@@ -48,12 +48,15 @@ describe('ステージ定義（機能14）', () => {
 })
 
 describe('エンジンとの結線（スモーク）', () => {
-  it('ステージ1でおすすめ直線を敵に当てるとHPが減る', () => {
+  it('ステージ1でおすすめ光線を敵に当てるとHPが減る', () => {
     const stage = STAGES[0]
     const target = stage.enemies[0]
     const preset = ALL_PRESETS.find((p) => p.id === stage.recommendedPresetId)!
-    const angle = Math.atan2(target.pos.y, target.pos.x)
-    const trajectory = buildTrajectory(preset, stage.recommendedCoeffs ?? {}, angle)
+    // おすすめ：敵の反対極を作る直線 g(x)=a·x（闇の敵→光 a=1）
+    const a = target.element === 'light' ? -1 : 1
+    const phi = Math.atan2(target.pos.y, target.pos.x)
+    const angle = phi - Math.atan(a)
+    const trajectory = buildTrajectory(preset, { a, b: 0 }, angle)
 
     let s = createBattleState(stage, 0, 100)
     const prep = prepareTurn(s)

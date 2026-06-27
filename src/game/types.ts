@@ -15,9 +15,6 @@ export type FireMode = 'rotate' | 'polar'
 /** 撃ち主 */
 export type Owner = 'player' | 'enemy'
 
-/** 属性の場 z=f(x,y)。ステージごとに定義（§3.2） */
-export type Field = (x: number, y: number) => number
-
 /** 回転方式の軌道：y=g(x) を angle[rad] だけ回転（原点起点） */
 export interface RotateTrajectory {
   mode: 'rotate'
@@ -90,6 +87,8 @@ export interface Enemy {
   /** このターン敵が先出しする術式（軌道・初速）。AI が決める */
   castTrajectory: Trajectory
   castInitialSpeed: number
+  /** 敵弾が帯びる z（高さ＝属性）。符号=属性, |z|=強度。光の敵は正・闇の敵は負 */
+  castZ: number
 }
 
 /** 属性付き障害物（§3.7） */
@@ -132,10 +131,6 @@ export interface Mechanics {
 export interface Stage {
   id: string
   name: string
-  /** 場 z=f(x,y) */
-  field: Field
-  /** 場の式の表示名（UI 用） */
-  fieldName: string
   enemies: Enemy[]
   obstacles: Obstacle[]
   /** 導入テキスト（ステージ前） */
@@ -178,8 +173,6 @@ export type PlayerAction =
 /** 戦闘状態（メモリ上のみ・永続化なし） */
 export interface BattleState {
   stageIndex: number
-  field: Field
-  fieldName: string
   player: PlayerState
   enemies: Enemy[]
   obstacles: Obstacle[]

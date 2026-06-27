@@ -5,9 +5,11 @@ import {
   affinityMultiplier,
   power,
   computeDamage,
-  evalField,
+  trajectoryZ,
+  dominantAttribute,
 } from './attribute'
 import { FIELD, AFFINITY } from '../data/constants'
+import type { Trajectory } from './types'
 
 describe('属性判定（z 符号）', () => {
   it('z>ε は光、z<-ε は闇、|z|<ε は中立', () => {
@@ -74,9 +76,17 @@ describe('威力とダメージ（機能9）', () => {
   })
 })
 
-describe('場の評価', () => {
-  it('有限値はそのまま、NaN は 0 に丸める', () => {
-    expect(evalField((x, y) => x + y, { x: 1, y: 2 })).toBe(3)
-    expect(evalField(() => NaN, { x: 0, y: 0 })).toBe(0)
+describe('軌道の z 値（属性源・新モデル）', () => {
+  it('回転は g(x)、極座標は f(θ) を返す。NaN は 0', () => {
+    expect(trajectoryZ({ mode: 'rotate', g: (x) => x * 2, angle: 0 }, 3)).toBe(6)
+    expect(trajectoryZ({ mode: 'polar', f: (t) => t }, 1.5)).toBe(1.5)
+    expect(trajectoryZ({ mode: 'rotate', g: () => NaN, angle: 0 }, 0)).toBe(0)
+  })
+
+  it('支配属性は経路で |z| が最大の点の属性・強度を返す', () => {
+    const traj: Trajectory = { mode: 'rotate', g: (x) => x, angle: 0 } // z=x → 光
+    const dom = dominantAttribute(traj, [{ param: 0 }, { param: 2 }, { param: 4 }])
+    expect(dom.attr).toBe('light')
+    expect(dom.strength).toBe(4)
   })
 })

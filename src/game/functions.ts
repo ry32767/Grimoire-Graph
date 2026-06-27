@@ -21,12 +21,16 @@ interface PresetBase {
   /** チュートリアル／関数解説でそのまま提示する説明文（§3.10） */
   description: string
   coeffs: Coefficient[]
+  /** 自由入力で使う関数名／式の手がかり（例: sin, exp, abs） */
+  freeName: string
 }
 
 /** 回転方式プリセット（直交 y=g(x)） */
 export interface RotatePreset extends PresetBase {
   category: 'rotate'
   buildG: (c: CoeffMap) => (x: number) => number
+  /** 現在の係数を mathjs で入力できる式に変換（自由入力へコピー用） */
+  toExpr: (c: CoeffMap) => string
 }
 
 /** 極座標方式プリセット（r=f(θ)） */
@@ -46,6 +50,9 @@ const coeff = (
   def: number,
 ): Coefficient => ({ key, label, min, max, step, default: def })
 
+/** 数値を mathjs 式向けに短く整形（負号もそのまま使える） */
+const num = (v: number): string => Number(v.toFixed(2)).toString()
+
 // ===== A. 軌道（直交 y=g(x)・狙う角度θで回転） =====
 
 export const ROTATE_PRESETS: RotatePreset[] = [
@@ -54,15 +61,18 @@ export const ROTATE_PRESETS: RotatePreset[] = [
     name: '直線',
     category: 'rotate',
     formula: 'y = a·x + b',
+    freeName: 'x（一次式）',
     description: 'まっすぐ飛ぶ基本の術式。狙いを定めやすい。',
     coeffs: [coeff('a', 'a', -3, 3, 0.1, 1), coeff('b', 'b', -5, 5, 0.1, 0)],
     buildG: (c) => (x) => c.a * x + c.b,
+    toExpr: (c) => `${num(c.a)}*x + ${num(c.b)}`,
   },
   {
     id: 'parabola',
     name: '放物線',
     category: 'rotate',
     formula: 'y = a·(x−h)² + k',
+    freeName: '(x-h)^2（二次式）',
     description: '山なり／谷なりの弧。障害物を山越えできる。',
     coeffs: [
       coeff('a', 'a', -1, 1, 0.05, 0.3),
@@ -70,25 +80,29 @@ export const ROTATE_PRESETS: RotatePreset[] = [
       coeff('k', 'k', -5, 5, 0.1, -3),
     ],
     buildG: (c) => (x) => c.a * (x - c.h) ** 2 + c.k,
+    toExpr: (c) => `${num(c.a)}*(x - ${num(c.h)})^2 + ${num(c.k)}`,
   },
   {
     id: 'sine',
     name: 'サイン波',
     category: 'rotate',
     formula: 'y = A·sin(B·x) + C',
-    description: '波打って飛ぶ。光と闇の場を縫える。変異が大きい。',
+    freeName: 'sin',
+    description: '波打って飛ぶ。光と闇を交互に帯びる。変異が大きい。',
     coeffs: [
       coeff('A', 'A', 0, 4, 0.1, 3),
       coeff('B', 'B', 0.2, 2, 0.05, 1),
       coeff('C', 'C', -3, 3, 0.1, 0),
     ],
     buildG: (c) => (x) => c.A * Math.sin(c.B * x) + c.C,
+    toExpr: (c) => `${num(c.A)}*sin(${num(c.B)}*x) + ${num(c.C)}`,
   },
   {
     id: 'exp',
     name: '指数',
     category: 'rotate',
     formula: 'y = a·e^(b·x) + c',
+    freeName: 'exp',
     description: '終盤で急上昇。遠くで一気に跳ね上がる。',
     coeffs: [
       coeff('a', 'a', 0, 2, 0.1, 1),
@@ -96,12 +110,14 @@ export const ROTATE_PRESETS: RotatePreset[] = [
       coeff('c', 'c', -3, 3, 0.1, -2),
     ],
     buildG: (c) => (x) => c.a * Math.exp(c.b * x) + c.c,
+    toExpr: (c) => `${num(c.a)}*exp(${num(c.b)}*x) + ${num(c.c)}`,
   },
   {
     id: 'abs',
     name: '絶対値',
     category: 'rotate',
     formula: 'y = a·|x−h| + k',
+    freeName: 'abs',
     description: 'V字に鋭く折れる。きっかけで方向を変える。',
     coeffs: [
       coeff('a', 'a', -2, 2, 0.1, 1),
@@ -109,6 +125,7 @@ export const ROTATE_PRESETS: RotatePreset[] = [
       coeff('k', 'k', -5, 5, 0.1, -3),
     ],
     buildG: (c) => (x) => c.a * Math.abs(x - c.h) + c.k,
+    toExpr: (c) => `${num(c.a)}*abs(x - ${num(c.h)}) + ${num(c.k)}`,
   },
 ]
 
@@ -120,6 +137,7 @@ export const POLAR_PRESETS: PolarPreset[] = [
     name: '円',
     category: 'polar',
     formula: 'r = R',
+    freeName: 'R（定数）',
     description: '一定半径で全周をなめる。結界の基本形にも。',
     coeffs: [coeff('R', 'R', 1, 12, 0.5, 6)],
     buildF: (c) => () => c.R,
@@ -129,6 +147,7 @@ export const POLAR_PRESETS: PolarPreset[] = [
     name: 'らせん',
     category: 'polar',
     formula: 'r = a·θ',
+    freeName: 'a*θ',
     description: '渦巻き状に外へ。全方向を順に薙ぐ。',
     coeffs: [coeff('a', 'a', 0.2, 2, 0.1, 1)],
     buildF: (c) => (t) => c.a * t,
@@ -138,7 +157,8 @@ export const POLAR_PRESETS: PolarPreset[] = [
     name: 'バラ曲線',
     category: 'polar',
     formula: 'r = a·cos(k·θ)',
-    description: '花びら状に複数方向へ同時に伸びる。変異が大きい。',
+    freeName: 'cos',
+    description: '花びら状に複数方向へ同時に伸びる。光と闇を交互に帯びる。',
     coeffs: [coeff('a', 'a', 1, 10, 0.5, 6), coeff('k', 'k', 2, 5, 1, 4)],
     buildF: (c) => (t) => c.a * Math.cos(c.k * t),
   },
@@ -147,6 +167,7 @@ export const POLAR_PRESETS: PolarPreset[] = [
     name: 'リマソン',
     category: 'polar',
     formula: 'r = a + b·cos(θ)',
+    freeName: 'cos',
     description: 'ハート／くぼみ形。片側に強く張り出す。',
     coeffs: [coeff('a', 'a', 1, 6, 0.5, 3), coeff('b', 'b', 1, 6, 0.5, 3)],
     buildF: (c) => (t) => c.a + c.b * Math.cos(t),

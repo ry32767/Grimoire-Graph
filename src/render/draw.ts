@@ -1,45 +1,34 @@
 // Canvas 描画関数（機能3・5）。座標変換は coords に集約したものを使う。
-import type { Attribute, Enemy, Field, Obstacle, Shield, Vec2 } from '../game/types'
+import type { Attribute, Enemy, Obstacle, Shield, Vec2 } from '../game/types'
 import { FIELD } from '../data/constants'
 import { toScreen, scaleOf, type Viewport } from '../game/coords'
-import { COLORS, fieldTile, attrColor } from './theme'
+import { attributeOf, strengthOf } from '../game/attribute'
+import { COLORS, attrColor } from './theme'
+
+/** z つきの軌道点 */
+export interface ZPoint {
+  pos: Vec2
+  z: number
+}
 
 /** 静的シーンの描画パラメータ */
 export interface SceneParams {
   vp: Viewport
-  field: Field
   enemies: Enemy[]
   obstacles: Obstacle[]
   shield: Shield | null
-  /** プレイヤーのプレビュー軌道（数学座標の点列） */
-  playerPath?: Vec2[] | null
+  /** プレイヤーのプレビュー軌道（z つき＝属性で色分け） */
+  playerPath?: ZPoint[] | null
   /** 敵ゴースト軌道（数学座標の点列の配列） */
   ghostPaths?: Vec2[][]
   /** 予測着弾点とその属性（機能17） */
   landing?: { pos: Vec2; attr: Attribute } | null
 }
 
-/** 背景：場の色分け（薄いタイル）と数学グリッド。 */
-export function drawBackground(ctx: CanvasRenderingContext2D, vp: Viewport, field: Field): void {
+/** 背景：数学グリッドと軸・場外境界（場のタイルは廃止）。 */
+export function drawBackground(ctx: CanvasRenderingContext2D, vp: Viewport): void {
   ctx.fillStyle = COLORS.bg
   ctx.fillRect(0, 0, vp.width, vp.height)
-
-  // 場のタイル（約44分割）
-  const cells = 44
-  const cw = vp.width / cells
-  const ch = vp.height / cells
-  for (let i = 0; i < cells; i++) {
-    for (let j = 0; j < cells; j++) {
-      const px = (i + 0.5) * cw
-      const py = (j + 0.5) * ch
-      const mx = (px - vp.width / 2) / scaleOf(vp)
-      const my = (vp.height / 2 - py) / scaleOf(vp)
-      if (mx * mx + my * my > FIELD.rField * FIELD.rField) continue
-      const z = field(mx, my)
-      ctx.fillStyle = fieldTile(Number.isFinite(z) ? z : 0)
-      ctx.fillRect(Math.floor(i * cw), Math.floor(j * ch), Math.ceil(cw), Math.ceil(ch))
-    }
-  }
 
   // グリッド線（数学ユニット）
   ctx.strokeStyle = COLORS.grid
@@ -88,42 +77,100 @@ function strokePath(ctx: CanvasRenderingContext2D, pts: Vec2[], vp: Viewport): v
   ctx.stroke()
 }
 
-/** 術者（原点）マーカー */
+// ===== ドット絵スプライト =====
+
+/** 文字グリッドのスプライトを (cx,cy) 中心・1セル px で描く。'.'/' ' は透明。 */
+function drawPixelSprite(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  rows: string[],
+  palette: Record<string, string>,
+  px: number,
+): void {
+  const w = rows[0].length
+  const h = rows.length
+  const ox = cx - (w * px) / 2
+  const oy = cy - (h * px) / 2
+  const s = Math.max(1, Math.ceil(px))
+  for (let r = 0; r < h; r++) {
+    for (let c = 0; c < w; c++) {
+      const col = palette[rows[r][c]]
+      if (!col) continue
+      ctx.fillStyle = col
+      ctx.fillRect(Math.round(ox + c * px), Math.round(oy + r * px), s, s)
+    }
+  }
+}
+
+// 魔導士（術者）
+const MAGE_ROWS = [
+  '...Y...',
+  '..PPP..',
+  '.PPPPP.',
+  '..CCC..',
+  '.GRRRG.',
+  '.RRRRR.',
+  '.R...R.',
+  '.D...D.',
+]
+const MAGE_PAL: Record<string, string> = {
+  Y: '#FFF8E1',
+  P: '#7B5CC4',
+  C: '#ffe9a8',
+  G: '#F4C430',
+  R: '#5a4a8a',
+  D: '#2a2342',
+}
+
+// 光の敵（守護像）
+const LIGHT_ENEMY_ROWS = ['.GGG.', 'GGGGG', 'GeWeG', 'GGGGG', '.G.G.', 'G...G']
+const LIGHT_ENEMY_PAL: Record<string, string> = { G: '#F4C430', W: '#FFF8E1', e: '#3a2342' }
+
+// 闇の敵（幽鬼）
+const DARK_ENEMY_ROWS = ['.PPP.', 'PPPPP', 'PeWeP', 'PPPPP', '.PPP.', 'P.P.P']
+const DARK_ENEMY_PAL: Record<string, string> = { P: '#7B5CC4', W: '#1E2A6B', e: '#FFF8E1' }
+
+/** 術者（原点）：魔導士のドット絵＋淡いオーラ。 */
 export function drawCaster(ctx: CanvasRenderingContext2D, vp: Viewport): void {
   const o = toScreen({ x: 0, y: 0 }, vp)
-  ctx.fillStyle = COLORS.caster
-  ctx.strokeStyle = COLORS.light1
-  ctx.lineWidth = 2
+  // オーラ
+  const grad = ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, 22)
+  grad.addColorStop(0, 'rgba(244,196,48,0.35)')
+  grad.addColorStop(1, 'rgba(244,196,48,0)')
+  ctx.fillStyle = grad
   ctx.beginPath()
-  ctx.arc(o.x, o.y, 7, 0, Math.PI * 2)
+  ctx.arc(o.x, o.y, 22, 0, Math.PI * 2)
   ctx.fill()
-  ctx.stroke()
+  const px = Math.max(2.5, scaleOf(vp) * 0.2)
+  drawPixelSprite(ctx, o.x, o.y, MAGE_ROWS, MAGE_PAL, px)
 }
 
-function drawCircle(ctx: CanvasRenderingContext2D, pos: Vec2, rUnits: number, vp: Viewport): void {
-  const c = toScreen(pos, vp)
-  ctx.beginPath()
-  ctx.arc(c.x, c.y, rUnits * scaleOf(vp), 0, Math.PI * 2)
-}
-
-/** 敵の描画（属性で色分け・HPに応じてフェード） */
+/** 敵の描画（属性ごとのドット絵スプライト＋名前）。 */
 export function drawEnemies(ctx: CanvasRenderingContext2D, enemies: Enemy[], vp: Viewport): void {
   for (const e of enemies) {
     if (e.hp <= 0) continue
     const c = toScreen(e.pos, vp)
-    ctx.fillStyle = e.element === 'light' ? 'rgba(244,196,48,0.85)' : 'rgba(123,92,196,0.85)'
-    ctx.strokeStyle = COLORS.enemy
-    ctx.lineWidth = 3
     const r = e.hitboxRadius * scaleOf(vp)
-    // ドット風の四角＋円
-    ctx.fillRect(c.x - r * 0.7, c.y - r * 0.7, r * 1.4, r * 1.4)
-    drawCircle(ctx, e.pos, e.hitboxRadius, vp)
-    ctx.stroke()
+    const light = e.element === 'light'
+    // 淡いオーラ
+    const aura = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, r * 1.6)
+    aura.addColorStop(0, light ? 'rgba(244,196,48,0.3)' : 'rgba(123,92,196,0.32)')
+    aura.addColorStop(1, 'rgba(0,0,0,0)')
+    ctx.fillStyle = aura
+    ctx.beginPath()
+    ctx.arc(c.x, c.y, r * 1.6, 0, Math.PI * 2)
+    ctx.fill()
+    // スプライト
+    const rows = light ? LIGHT_ENEMY_ROWS : DARK_ENEMY_ROWS
+    const pal = light ? LIGHT_ENEMY_PAL : DARK_ENEMY_PAL
+    const px = (e.hitboxRadius * scaleOf(vp) * 2) / rows[0].length
+    drawPixelSprite(ctx, c.x, c.y, rows, pal, px)
     // 名前
     ctx.fillStyle = COLORS.text
     ctx.font = '10px "DotGothic16", monospace'
     ctx.textAlign = 'center'
-    ctx.fillText(e.name, c.x, c.y - r - 4)
+    ctx.fillText(e.name, c.x, c.y - r - 6)
   }
 }
 
@@ -162,9 +209,34 @@ export function drawShield(ctx: CanvasRenderingContext2D, shield: Shield, vp: Vi
   ctx.globalAlpha = 1
 }
 
+/** z（属性）で色分けして軌道を描く。中立は淡く、光=金・闇=紫。 */
+function strokeZPath(ctx: CanvasRenderingContext2D, pts: ZPoint[], vp: Viewport): void {
+  ctx.lineWidth = 3
+  ctx.lineCap = 'round'
+  for (let i = 1; i < pts.length; i++) {
+    const a = toScreen(pts[i - 1].pos, vp)
+    const b = toScreen(pts[i].pos, vp)
+    const z = (pts[i - 1].z + pts[i].z) / 2
+    const attr = attributeOf(z)
+    const t = Math.min(strengthOf(z) / FIELD.sMax, 1)
+    if (attr === 'neutral') {
+      ctx.strokeStyle = 'rgba(220,220,235,0.45)'
+      ctx.lineWidth = 2
+    } else {
+      ctx.strokeStyle = attr === 'light' ? COLORS.light1 : COLORS.dark1
+      ctx.lineWidth = 2 + t * 3
+    }
+    ctx.beginPath()
+    ctx.moveTo(a.x, a.y)
+    ctx.lineTo(b.x, b.y)
+    ctx.stroke()
+  }
+  ctx.lineCap = 'butt'
+}
+
 /** 静的シーン一式を描画する。 */
 export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
-  drawBackground(ctx, p.vp, p.field)
+  drawBackground(ctx, p.vp)
 
   // 敵ゴースト軌道
   if (p.ghostPaths) {
@@ -179,11 +251,9 @@ export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
   if (p.shield) drawShield(ctx, p.shield, p.vp)
   drawEnemies(ctx, p.enemies, p.vp)
 
-  // プレイヤーのプレビュー軌道
+  // プレイヤーのプレビュー軌道（z で色分け）
   if (p.playerPath && p.playerPath.length > 1) {
-    ctx.strokeStyle = COLORS.light2
-    ctx.lineWidth = 3
-    strokePath(ctx, p.playerPath, p.vp)
+    strokeZPath(ctx, p.playerPath, p.vp)
   }
 
   // 予測着弾点
@@ -205,16 +275,57 @@ export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
   drawCaster(ctx, p.vp)
 }
 
-/** 飛行中の弾（光=金スパーク、闇=紫の揺らぎ）。 */
-export function drawBullet(ctx: CanvasRenderingContext2D, pos: Vec2, color: string, vp: Viewport): void {
+/** 飛行中の弾（十字スパーク＋グロー）。phase で煌めきを変える。 */
+export function drawBullet(
+  ctx: CanvasRenderingContext2D,
+  pos: Vec2,
+  color: string,
+  vp: Viewport,
+  phase = 0,
+): void {
   const c = toScreen(pos, vp)
-  ctx.fillStyle = color
+  ctx.save()
   ctx.shadowColor = color
-  ctx.shadowBlur = 8
+  ctx.shadowBlur = 12
+  // コア
+  ctx.fillStyle = '#fff8e1'
   ctx.beginPath()
-  ctx.arc(c.x, c.y, 5, 0, Math.PI * 2)
+  ctx.arc(c.x, c.y, 3, 0, Math.PI * 2)
   ctx.fill()
-  ctx.shadowBlur = 0
+  // 十字スパーク
+  ctx.strokeStyle = color
+  ctx.lineWidth = 2
+  const len = 6 + Math.sin(phase) * 2
+  ctx.beginPath()
+  ctx.moveTo(c.x - len, c.y)
+  ctx.lineTo(c.x + len, c.y)
+  ctx.moveTo(c.x, c.y - len)
+  ctx.lineTo(c.x, c.y + len)
+  ctx.stroke()
+  ctx.restore()
+}
+
+/** 弾の軌跡（残像）。点列を新しいものほど濃く描く。 */
+export function drawTrail(
+  ctx: CanvasRenderingContext2D,
+  pts: Vec2[],
+  color: string,
+  vp: Viewport,
+): void {
+  ctx.save()
+  ctx.lineCap = 'round'
+  for (let i = 1; i < pts.length; i++) {
+    const a = toScreen(pts[i - 1], vp)
+    const b = toScreen(pts[i], vp)
+    ctx.globalAlpha = (i / pts.length) * 0.6
+    ctx.strokeStyle = color
+    ctx.lineWidth = (i / pts.length) * 5
+    ctx.beginPath()
+    ctx.moveTo(a.x, a.y)
+    ctx.lineTo(b.x, b.y)
+    ctx.stroke()
+  }
+  ctx.restore()
 }
 
 /** 暴発エフェクト（光と闇が混じる）。progress 0→1 で広がる。 */
@@ -236,5 +347,15 @@ export function drawMisfire(
   ctx.beginPath()
   ctx.arc(c.x, c.y, r + 1, 0, Math.PI * 2)
   ctx.fill()
+  // 光と闇のスパーク（交互）
+  ctx.lineWidth = 2
+  for (let i = 0; i < 10; i++) {
+    const ang = (i / 10) * Math.PI * 2 + progress * 1.2
+    ctx.strokeStyle = i % 2 === 0 ? COLORS.light1 : COLORS.dark1
+    ctx.beginPath()
+    ctx.moveTo(c.x + Math.cos(ang) * r * 0.5, c.y + Math.sin(ang) * r * 0.5)
+    ctx.lineTo(c.x + Math.cos(ang) * (r + 4), c.y + Math.sin(ang) * (r + 4))
+    ctx.stroke()
+  }
   ctx.globalAlpha = 1
 }

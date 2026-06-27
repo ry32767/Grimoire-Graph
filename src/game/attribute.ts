@@ -1,10 +1,13 @@
-// 場の評価・属性判定・強度・極性相性・威力・ダメージ（機能4・9）。純粋関数。
-import type { Attribute, Field, Vec2 } from './types'
+// 属性判定・強度・極性相性・威力・ダメージ（機能4・9）。純粋関数。
+//
+// 新モデル：属性はステージ固定の場ではなく「プレイヤーの関数値そのもの（z=高さ）」で決まる。
+// 軌道は関数のグラフであり、その値 z=g(x)（回転）/ f(θ)（極座標）の符号が属性、|z| が強度。
+import type { Attribute, Trajectory } from './types'
 import { FIELD, AFFINITY } from '../data/constants'
 
-/** 場 z=f(x,y) を評価する */
-export function evalField(field: Field, pos: Vec2): number {
-  const z = field(pos.x, pos.y)
+/** 軌道のパラメータ位置での z 値（=関数値=属性の高さ）。 */
+export function trajectoryZ(traj: Trajectory, param: number): number {
+  const z = traj.mode === 'rotate' ? traj.g(param) : traj.f(param)
   return Number.isFinite(z) ? z : 0
 }
 
@@ -17,7 +20,6 @@ export function attributeOf(z: number): Attribute {
 /** 属性強度 = clamp(|z|, 0, Smax)（§3.4） */
 export function strengthOf(z: number): number {
   const a = Math.abs(z)
-  if (a < 0) return 0
   return a > FIELD.sMax ? FIELD.sMax : a
 }
 
@@ -33,17 +35,14 @@ export function power(speed: number, z: number): number {
   return speed * strengthOf(z)
 }
 
-/**
- * 弾が主に通過した属性（経路で |z| が最大の点の属性と強度）。
- * パリィでは「弾がどの理を帯びているか」をこれで判定する（§3.8 の運用解釈）。
- */
+/** 弾が帯びる属性（経路で |z| が最大の点）。パリィ判定などに使う。 */
 export function dominantAttribute(
-  field: Field,
-  samples: { pos: Vec2 }[],
+  traj: Trajectory,
+  samples: { param: number }[],
 ): { attr: Attribute; strength: number } {
   let best: { attr: Attribute; strength: number } = { attr: 'neutral', strength: 0 }
   for (const s of samples) {
-    const z = evalField(field, s.pos)
+    const z = trajectoryZ(traj, s.param)
     const st = strengthOf(z)
     if (st > best.strength) best = { attr: attributeOf(z), strength: st }
   }
@@ -52,25 +51,18 @@ export function dominantAttribute(
 
 /** ダメージ計算の内訳（戦闘ログ表示用・機能9） */
 export interface DamageBreakdown {
-  /** 攻撃属性（命中点の z 符号で決まる） */
   attackAttr: Attribute
-  /** 命中点の速度 */
   speed: number
-  /** 属性強度 |z| */
   strength: number
-  /** 威力 = 速度 × 強度 */
   power: number
-  /** 対象属性 */
   targetAttr: Attribute
-  /** 極性相性倍率 */
   affinity: number
-  /** 最終ダメージ = 威力 × 相性 */
   damage: number
 }
 
 /**
- * 命中点の速度・場の値 z・対象属性から最終ダメージと内訳を求める。
- * 攻撃属性は命中点の z 符号で決まる（プレイヤーは属性を直接選べない・§3.2）。
+ * 命中点の速度・z 値・対象属性から最終ダメージと内訳を求める。
+ * 攻撃属性は命中点の z（関数値）の符号で決まる（§3.2）。
  */
 export function computeDamage(speed: number, z: number, targetAttr: Attribute): DamageBreakdown {
   const attackAttr = attributeOf(z)

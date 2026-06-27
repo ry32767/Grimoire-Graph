@@ -1,4 +1,28 @@
 /* =========================================================
+   フォント（マイクラ風ドット）
+   見出し/英数字: Press Start 2P（自己ホスト＝完全ローカル）
+   日本語本文: DotGothic16（index.html で非ブロッキング読込、未取得時は monospace）
+   ========================================================= */
+@font-face {
+  font-family: 'Press Start 2P';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/press-start-2p-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+1E00-1E9F, U+2020, U+20A0-20AB, U+20AD-20C0, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Press Start 2P';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/press-start-2p-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+2000-206F, U+20AC, U+2122,
+    U+2191, U+2193, U+2212, U+2215;
+}
+
+/* =========================================================
    Graph Mage デザイントークン（§3.9）
    8ビット・ドット絵調 / 光=金白・闇=紫藍・背景黒め・高コントラスト
    ========================================================= */
@@ -248,11 +272,18 @@ h3 {
   background: #000;
   border: 2px solid var(--panel-bevel);
   position: relative;
+  overflow: hidden;
 }
 .hp-fill {
+  display: block;
   height: 100%;
+  min-height: 10px;
   background: linear-gradient(180deg, var(--ok), #3aa05c);
   transition: width 0.3s;
+  box-shadow: 0 0 6px rgba(107, 213, 140, 0.5);
+}
+.hp-fill.enemy {
+  box-shadow: 0 0 6px rgba(232, 93, 117, 0.5);
 }
 .hp-fill.enemy {
   background: linear-gradient(180deg, var(--danger), #9c3650);
@@ -492,6 +523,51 @@ h3 {
   margin-top: 6px;
 }
 
+/* ガイド（ページ送り） */
+.modal.guide {
+  max-width: 520px;
+}
+.guide-title {
+  font-size: 13px;
+  color: var(--light-1);
+  margin: 4px 0 8px;
+}
+.guide-diagram {
+  border: 2px solid var(--panel-bevel);
+  background: var(--bg);
+  margin-bottom: 10px;
+}
+.guide-diagram svg {
+  display: block;
+}
+.guide-body {
+  font-size: 14px;
+  min-height: 5.5em;
+}
+.guide-body p {
+  margin: 0;
+}
+.guide-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 14px;
+}
+.guide-dots {
+  display: inline-flex;
+  gap: 6px;
+}
+.guide-dots .dot {
+  width: 8px;
+  height: 8px;
+  background: var(--panel-bevel);
+  display: inline-block;
+}
+.guide-dots .dot.on {
+  background: var(--light-1);
+}
+
 .tip-list {
   text-align: left;
   font-size: 14px;
@@ -503,6 +579,18 @@ h3 {
 .hint {
   font-size: 12px;
   color: var(--text-dim);
+  margin-top: 6px;
+}
+.free-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+code {
+  font-family: var(--font-body);
+  color: var(--light-1);
+  background: rgba(0, 0, 0, 0.35);
+  padding: 0 4px;
 }
 .kbd {
   color: var(--light-1);

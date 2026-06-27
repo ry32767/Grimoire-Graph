@@ -7,8 +7,6 @@ import { resolveTurn, type ResolveResult } from './turn'
 export function createBattleState(stage: Stage, stageIndex: number, playerMaxHp: number): BattleState {
   return {
     stageIndex,
-    field: stage.field,
-    fieldName: stage.fieldName,
     player: { hp: playerMaxHp, maxHp: playerMaxHp, statuses: [], shield: null },
     enemies: stage.enemies.map((e) => ({ ...e, statuses: [...e.statuses] })),
     obstacles: stage.obstacles.map((o) => ({ ...o })),
@@ -75,7 +73,6 @@ export function resolvePlayerAction(
   castingEnemyIds: string[],
 ): { state: BattleState; resolution: ResolveResult } {
   const resolution = resolveTurn({
-    field: state.field,
     player: state.player,
     enemies: state.enemies,
     castingEnemyIds,

@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react'
-import type { Enemy, Field, Obstacle, Shield, Vec2, Attribute } from '../game/types'
+import type { Enemy, Obstacle, Shield, Vec2, Attribute } from '../game/types'
 import { FIELD } from '../data/constants'
 import type { Viewport } from '../game/coords'
-import { drawScene, drawBullet, drawMisfire, type SceneParams } from '../render/draw'
+import { drawScene, drawBullet, drawTrail, drawMisfire, type SceneParams, type ZPoint } from '../render/draw'
 import { COLORS } from '../render/theme'
 
 const INTERNAL = 480
@@ -16,11 +16,10 @@ export interface ResolveAnimation {
 }
 
 interface Props {
-  field: Field
   enemies: Enemy[]
   obstacles: Obstacle[]
   shield: Shield | null
-  playerPath?: Vec2[] | null
+  playerPath?: ZPoint[] | null
   ghostPaths?: Vec2[][]
   landing?: { pos: Vec2; attr: Attribute } | null
   animation?: ResolveAnimation | null
@@ -36,7 +35,6 @@ export default function BattleCanvas(props: Props) {
 
   const staticParams: SceneParams = {
     vp: VP,
-    field: props.field,
     enemies: props.enemies,
     obstacles: props.obstacles,
     shield: props.shield,
@@ -62,11 +60,12 @@ export default function BattleCanvas(props: Props) {
     let raf = 0
     let finished = false
     const start = performance.now()
-    const sampleAt = (path: Vec2[], t: number): Vec2 | null => {
-      if (path.length === 0) return null
-      const idx = Math.min(path.length - 1, Math.floor(t * (path.length - 1)))
-      return path[idx]
-    }
+    const idxAt = (path: Vec2[], t: number) =>
+      Math.min(path.length - 1, Math.floor(t * (path.length - 1)))
+    const sampleAt = (path: Vec2[], t: number): Vec2 | null =>
+      path.length === 0 ? null : path[idxAt(path, t)]
+    const trailAt = (path: Vec2[], t: number, n = 7): Vec2[] =>
+      path.length === 0 ? [] : path.slice(Math.max(0, idxAt(path, t) - n), idxAt(path, t) + 1)
     const finish = () => {
       if (finished) return
       finished = true
@@ -76,14 +75,17 @@ export default function BattleCanvas(props: Props) {
     }
     const frame = (now: number) => {
       const t = Math.min(1, (now - start) / ANIM_MS)
+      const phase = t * 24
       drawScene(ctx, { ...staticParams, landing: null })
       if (anim.playerPath) {
+        drawTrail(ctx, trailAt(anim.playerPath, t), COLORS.light1, VP)
         const p = sampleAt(anim.playerPath, t)
-        if (p) drawBullet(ctx, p, COLORS.light2, VP)
+        if (p) drawBullet(ctx, p, COLORS.light1, VP, phase)
       }
       for (const path of anim.enemyPaths) {
+        drawTrail(ctx, trailAt(path, t), COLORS.dark1, VP)
         const p = sampleAt(path, t)
-        if (p) drawBullet(ctx, p, COLORS.dark1, VP)
+        if (p) drawBullet(ctx, p, COLORS.dark1, VP, phase)
       }
       if (anim.misfirePos && t > 0.7) {
         drawMisfire(ctx, anim.misfirePos, (t - 0.7) / 0.3, VP)
@@ -102,7 +104,6 @@ export default function BattleCanvas(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     props.animation,
-    props.field,
     props.enemies,
     props.obstacles,
     props.shield,

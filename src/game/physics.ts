@@ -1,11 +1,12 @@
 // 物理：加速度場・運動量・速度減衰・消滅（機能5）。純粋関数。
 //
-// 速度モデル：dv/dt = a(pos), ds/dt = v より dv/ds = a/v → v² = v₀² + 2∫a ds。
-// 加速度 a は位置のみに依存するため、速度は「初速」と「経路の加速度積分」だけで定まる。
-// これは v ← v + a·dt（固定 dt）の数値積分と等価で、減衰イベントは弧長順に適用できる。
-import type { Field, Flight, FlightEnd, FlightSample, Trajectory, Vec2 } from './types'
+// 速度モデル：dv/dt = a(z), ds/dt = v より v² = v₀² + 2∫a ds（弧長積分。v←v+a·dt と等価）。
+// 新モデルでは加速度の根拠となる z は「弾の関数値（高さ）」。回転=g(x)/極座標=f(θ)、
+// 敵弾など明示パスでは zAt で与える。中立(z≈0)で最大加速、強属性(|z|≥zRef)で加速0。
+import type { Flight, FlightEnd, FlightSample, Trajectory, Vec2 } from './types'
 import { FIELD } from '../data/constants'
 import { sampleTrajectory, buildPolyline, pathTermination, dist, type PolyPoint } from './coords'
+import { trajectoryZ } from './attribute'
 
 /** 加速度 a = aMax × (1 − clamp(|z|/zRef, 0, 1))。|z|≈0 で最大、|z|≥zRef で 0（§3.4） */
 export function acceleration(z: number): number {
@@ -16,39 +17,35 @@ export function acceleration(z: number): number {
 /** 速度プロファイル：経路（poly）と各頂点までの加速度積分 A、初速、終端情報。 */
 export interface SpeedProfile {
   poly: PolyPoint[]
-  /** A[i] = ∫₀^{cumLen[i]} a(pos) ds（弧長による数値積分・台形近似） */
   accel: number[]
   v0: number
   end: FlightEnd
   endPos: Vec2
 }
 
-/** ポリラインと場から加速度積分 A（各頂点まで）を求める。 */
-function accelIntegral(poly: PolyPoint[], field: Field): number[] {
+/** ポリラインと「頂点ごとの z」から加速度積分 A（各頂点まで）を求める（台形則）。 */
+function accelIntegral(poly: PolyPoint[], zAt: (i: number) => number): number[] {
   const accel: number[] = []
   let acc = 0
   for (let i = 0; i < poly.length; i++) {
     if (i > 0) {
       const segLen = poly[i].cumLen - poly[i - 1].cumLen
-      const aPrev = acceleration(field(poly[i - 1].pos.x, poly[i - 1].pos.y))
-      const aCur = acceleration(field(poly[i].pos.x, poly[i].pos.y))
-      acc += ((aPrev + aCur) / 2) * segLen // 台形則
+      const aPrev = acceleration(zAt(i - 1))
+      const aCur = acceleration(zAt(i))
+      acc += ((aPrev + aCur) / 2) * segLen
     }
     accel.push(acc)
   }
   return accel
 }
 
-/** 軌道（原点起点）から速度プロファイルを構築する。 */
-export function buildSpeedProfile(
-  traj: Trajectory,
-  initialSpeed: number,
-  field: Field,
-): SpeedProfile {
+/** 軌道（原点起点）から速度プロファイルを構築する。z は関数値 g(x)/f(θ)。 */
+export function buildSpeedProfile(traj: Trajectory, initialSpeed: number): SpeedProfile {
   const samples = sampleTrajectory(traj)
   const poly = buildPolyline(samples)
   const term = pathTermination(samples)
-  return { poly, accel: accelIntegral(poly, field), v0: initialSpeed, end: term.end, endPos: term.pos }
+  const accel = accelIntegral(poly, (i) => trajectoryZ(traj, poly[i].param))
+  return { poly, accel, v0: initialSpeed, end: term.end, endPos: term.pos }
 }
 
 /** 明示的な点列（例：敵→原点）から累積弧長つきポリラインを作る。 */
@@ -62,11 +59,16 @@ export function polyFromPoints(points: Vec2[]): PolyPoint[] {
   return poly
 }
 
-/** 明示的な点列から速度プロファイルを構築する（終端は到達点）。 */
-export function buildPathProfile(points: Vec2[], initialSpeed: number, field: Field): SpeedProfile {
+/** 明示パス（敵弾など）から速度プロファイルを構築する。z は zAt(index) で与える。 */
+export function buildPathProfile(
+  points: Vec2[],
+  initialSpeed: number,
+  zAt: (i: number) => number,
+): SpeedProfile {
   const poly = polyFromPoints(points)
   const endPos = points.length > 0 ? points[points.length - 1] : { x: 0, y: 0 }
-  return { poly, accel: accelIntegral(poly, field), v0: initialSpeed, end: 'maxParam', endPos }
+  const accel = accelIntegral(poly, zAt)
+  return { poly, accel, v0: initialSpeed, end: 'maxParam', endPos }
 }
 
 /** エネルギー基準（vBaseSq, 基準点での A）から速度を求める（終端速度でクランプ）。 */
@@ -131,29 +133,28 @@ export function simulateProfile(profile: SpeedProfile, losses: LossEvent[]): Fli
   return { samples, end, endPos, endSpeed: samples[samples.length - 1].speed }
 }
 
-/** 自由飛行のシミュレーション（プレビュー・描画・テスト用）。自由飛行では vanished にならない。 */
-export function simulateFlight(traj: Trajectory, initialSpeed: number, field: Field): Flight {
-  return simulateProfile(buildSpeedProfile(traj, initialSpeed, field), [])
+/** 自由飛行のシミュレーション（プレビュー・描画・テスト用）。 */
+export function simulateFlight(traj: Trajectory, initialSpeed: number): Flight {
+  return simulateProfile(buildSpeedProfile(traj, initialSpeed), [])
 }
 
 /** 軌道（原点起点）に減衰イベントを適用して飛行を解決する。 */
 export function simulateWithLosses(
   traj: Trajectory,
   initialSpeed: number,
-  field: Field,
   losses: LossEvent[],
 ): Flight {
-  return simulateProfile(buildSpeedProfile(traj, initialSpeed, field), losses)
+  return simulateProfile(buildSpeedProfile(traj, initialSpeed), losses)
 }
 
-/** 明示パス（敵弾など）に減衰イベントを適用して飛行を解決する。 */
+/** 明示パス（敵弾など・zAt で高さを与える）に減衰イベントを適用して解決する。 */
 export function simulatePath(
   points: Vec2[],
   initialSpeed: number,
-  field: Field,
+  zAt: (i: number) => number,
   losses: LossEvent[] = [],
 ): Flight {
-  return simulateProfile(buildPathProfile(points, initialSpeed, field), losses)
+  return simulateProfile(buildPathProfile(points, initialSpeed, zAt), losses)
 }
 
 /** 飛行サンプルから、ある弧長以下で最後に到達した点（命中位置の補助）。 */
