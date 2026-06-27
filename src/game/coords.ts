@@ -119,9 +119,29 @@ export function buildPolyline(samples: Sample[]): PolyPoint[] {
 }
 
 /**
- * 軌道の終端（最初の「無効 or 場外」点）を分類する（暴発点の検出に使う・§3.5）。
- * - invalid: 未定義/発散/非実数（暴発点は直前の有効点。無ければ原点）
- * - outOfField: 場外へ出た（その点）
+ * 場外サンプル i の直後が「発散」か（#3）。判定：
+ *  - 直後に無効点（非有限＝1/0 などの極）が来る、または
+ *  - 大きく場外へ飛んだ後に場内へ戻る（＝±∞へ振れて戻る単純極のパターン）。
+ * これにより、刻み幅が極を飛び越えて非有限点を取りこぼす関数（例 1/(2.5−x)）も暴発に分類できる。
+ */
+function divergesSoonAfter(samples: Sample[], i: number, window = 96): boolean {
+  const end = Math.min(samples.length, i + window)
+  let maxDepart = 0
+  let reenters = false
+  for (let j = i; j < end; j++) {
+    const s = samples[j]
+    if (!s.valid) return true
+    if (!s.inField) maxDepart = Math.max(maxDepart, dist(s.pos))
+    else if (j > i) reenters = true // 一度場外に出た後に場内へ戻った
+  }
+  return reenters && maxDepart > FIELD.rField * 2
+}
+
+/**
+ * 軌道の終端（最初の「無効 or 場外」点）を分類する（暴発点の検出に使う・§3.5・#3/#9）。
+ * - invalid: 未定義/発散/非実数（暴発点は直前の場内有効点。無ければ原点）。
+ *   場外脱出でも直後に発散するなら「発散による暴発」とみなし invalid に分類（暴発点は画面内）。
+ * - outOfField: 場外へクリーンに出た（外れ・その点）
  * - maxParam: 場内で軌道を進み切った
  */
 export function pathTermination(samples: Sample[]): {
@@ -129,9 +149,14 @@ export function pathTermination(samples: Sample[]): {
   pos: Vec2
 } {
   let lastValid: Vec2 = { x: 0, y: 0 }
-  for (const s of samples) {
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i]
     if (!s.valid) return { end: 'invalid', pos: lastValid }
-    if (!s.inField) return { end: 'outOfField', pos: s.pos }
+    if (!s.inField) {
+      // 場外に出た直後すぐ発散するなら、暴発（invalid）として画面内の直前点を中心にする
+      if (divergesSoonAfter(samples, i)) return { end: 'invalid', pos: lastValid }
+      return { end: 'outOfField', pos: s.pos }
+    }
     lastValid = s.pos
   }
   return { end: 'maxParam', pos: lastValid }

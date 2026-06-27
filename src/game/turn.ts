@@ -184,8 +184,8 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
         kind: 'playerHit',
         text: `${enemy.name}に命中！ 速度${dmg.speed.toFixed(1)}×強度${dmg.strength.toFixed(1)}×相性${dmg.affinity} = ${dmg.damage.toFixed(0)} ダメージ`,
       })
-    } else if (playerFlight.end === 'invalid' || playerFlight.end === 'outOfField') {
-      // === 6. 暴発（命中せず軌道がエラー終端）===
+    } else if (playerFlight.end === 'invalid') {
+      // === 6. 暴発（命中せず関数がエラー＝発散/未定義で終端・#3/#9）===
       const point = { type: playerFlight.end, pos: playerFlight.endPos }
       const speed = playerFlight.samples.length > 0 ? playerFlight.endSpeed : action.initialSpeed
       const mis = resolveMisfire(point, speed, enemies.map((e) => ({ id: e.id, pos: e.pos })))

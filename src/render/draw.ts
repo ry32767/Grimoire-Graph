@@ -328,7 +328,7 @@ export function drawTrail(
   ctx.restore()
 }
 
-/** 暴発エフェクト（光と闇が混じる）。progress 0→1 で広がる。 */
+/** ドット爆発（暴発・#9）。グリッドに整列した四角ピクセルで 8bit 風に弾ける。progress 0→1。 */
 export function drawMisfire(
   ctx: CanvasRenderingContext2D,
   pos: Vec2,
@@ -337,25 +337,45 @@ export function drawMisfire(
 ): void {
   const c = toScreen(pos, vp)
   const maxR = FIELD.aoeRadius * scaleOf(vp)
+  const px = Math.max(4, Math.round(scaleOf(vp) * 0.32)) // ドットの一辺
   const r = maxR * progress
-  const grad = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, r + 1)
-  grad.addColorStop(0, 'rgba(255,248,225,0.9)')
-  grad.addColorStop(0.5, 'rgba(244,196,48,0.6)')
-  grad.addColorStop(1, 'rgba(123,92,196,0.1)')
-  ctx.fillStyle = grad
-  ctx.globalAlpha = 1 - progress * 0.5
-  ctx.beginPath()
-  ctx.arc(c.x, c.y, r + 1, 0, Math.PI * 2)
-  ctx.fill()
-  // 光と闇のスパーク（交互）
-  ctx.lineWidth = 2
-  for (let i = 0; i < 10; i++) {
-    const ang = (i / 10) * Math.PI * 2 + progress * 1.2
-    ctx.strokeStyle = i % 2 === 0 ? COLORS.light1 : COLORS.dark1
-    ctx.beginPath()
-    ctx.moveTo(c.x + Math.cos(ang) * r * 0.5, c.y + Math.sin(ang) * r * 0.5)
-    ctx.lineTo(c.x + Math.cos(ang) * (r + 4), c.y + Math.sin(ang) * (r + 4))
-    ctx.stroke()
+  ctx.save()
+  // グリッド整列して四角を置く（ピクセルアート感）
+  const cell = (gx: number, gy: number, col: string, a: number) => {
+    ctx.globalAlpha = a
+    ctx.fillStyle = col
+    ctx.fillRect(Math.round((c.x + gx) / px) * px, Math.round((c.y + gy) / px) * px, px, px)
   }
-  ctx.globalAlpha = 1
+  // 中心の閃光（白）：序盤に強く、消える
+  const flash = Math.max(0, 1 - progress * 1.4)
+  if (flash > 0) {
+    cell(0, 0, '#fff8e1', flash)
+    cell(px, 0, '#fff8e1', flash * 0.8)
+    cell(-px, 0, '#fff8e1', flash * 0.8)
+    cell(0, px, '#fff8e1', flash * 0.8)
+    cell(0, -px, '#fff8e1', flash * 0.8)
+  }
+  // 放射状に飛び散るドット（光と闇が交互）。リング状に広がる。
+  const rings = 3
+  for (let ring = 0; ring < rings; ring++) {
+    const rr = r * (0.5 + ring * 0.28)
+    const count = 8 + ring * 4
+    const fade = (1 - progress) * (1 - ring * 0.18)
+    if (fade <= 0) continue
+    for (let i = 0; i < count; i++) {
+      const ang = (i / count) * Math.PI * 2 + ring * 0.4 + progress * 0.8
+      const gx = Math.cos(ang) * rr
+      const gy = Math.sin(ang) * rr
+      const col = (i + ring) % 2 === 0 ? COLORS.light1 : COLORS.dark1
+      cell(gx, gy, col, Math.min(1, fade))
+      // 中間に淡い火の粉
+      if (ring === 0) cell(gx * 0.6, gy * 0.6, COLORS.light2, fade * 0.6)
+    }
+  }
+  // 衝撃リング（中空の四角枠）
+  ctx.globalAlpha = (1 - progress) * 0.8
+  ctx.strokeStyle = progress < 0.5 ? COLORS.light1 : COLORS.dark1
+  ctx.lineWidth = px * 0.6
+  ctx.strokeRect(c.x - r, c.y - r, r * 2, r * 2)
+  ctx.restore()
 }

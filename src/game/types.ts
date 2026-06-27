@@ -98,7 +98,7 @@ export interface Enemy {
   castZ: number
 }
 
-/** 属性付き障害物（§3.7） */
+/** 属性付き障害物（§3.7・#1/#16：被弾で半径が削れる） */
 export interface Obstacle {
   id: string
   pos: Vec2
@@ -106,6 +106,8 @@ export interface Obstacle {
   element: Attribute
   durability: number
   maxDurability: number
+  /** 初期半径（半径は耐久比に連動して縮む）。未指定は hitboxRadius を初期値とみなす */
+  maxRadius?: number
 }
 
 /** 閉曲線シールド（§3.6） */

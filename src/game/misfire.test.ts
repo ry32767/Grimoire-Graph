@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { detectMisfire, resolveMisfire } from './misfire'
+import { dist } from './coords'
 import { FIELD, AFFINITY } from '../data/constants'
 import type { Trajectory } from './types'
 
@@ -20,6 +21,19 @@ describe('暴発点の検出（§3.5・機能8）', () => {
     const m = detectMisfire(recip)
     expect(m?.type).toBe('invalid')
     expect(m?.pos).toEqual({ x: 0, y: 0 })
+  })
+
+  it('#3：原点以外で発散する関数も invalid＝暴発（暴発点は画面内＝場内）', () => {
+    // 1/(2-x) は x=2 で発散（#9 の例）。暴発点は直前の場内点（画面内・原点以外）になる。
+    const pole: Trajectory = { mode: 'rotate', g: (x) => 1 / (2 - x), angle: 0 }
+    const m = detectMisfire(pole)
+    expect(m?.type).toBe('invalid')
+    expect(dist(m!.pos)).toBeLessThanOrEqual(FIELD.rField)
+    expect(dist(m!.pos)).toBeGreaterThan(0) // 原点ではない
+
+    // 刻みが極を飛び越える 1/(2.5-x) も「飛んで戻る」検出で暴発に分類
+    const pole2: Trajectory = { mode: 'rotate', g: (x) => 1 / (2.5 - x), angle: 0 }
+    expect(detectMisfire(pole2)?.type).toBe('invalid')
   })
 })
 
