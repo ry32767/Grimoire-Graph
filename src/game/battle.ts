@@ -9,7 +9,7 @@ export function createBattleState(stage: Stage, stageIndex: number, party: Ally[
     stageIndex,
     allies: party.map((a) => ({ ...a, hp: a.maxHp, statuses: [] })),
     enemies: stage.enemies.map((e) => ({ ...e, statuses: [...e.statuses] })),
-    obstacles: stage.obstacles.map((o) => ({ ...o, maxRadius: o.maxRadius ?? o.hitboxRadius })),
+    obstacles: stage.obstacles.map((o) => ({ ...o, carves: [...o.carves] })),
     mechanics: stage.mechanics,
     turn: 1,
     phase: 'enemyReveal',

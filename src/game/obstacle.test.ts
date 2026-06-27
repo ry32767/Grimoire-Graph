@@ -1,49 +1,56 @@
 import { describe, it, expect } from 'vitest'
-import {
-  obstacleSpeedLoss,
-  obstacleDurabilityDamage,
-  applyObstacleHit,
-} from './obstacle'
+import { isSolidAt, carveSpeedLoss, carveRadius } from './obstacle'
+import { COMBAT } from '../data/constants'
 import type { Obstacle } from './types'
 
-const obstacle = (durability: number): Obstacle => ({
+const blob = (): Obstacle => ({
   id: 'o1',
-  pos: { x: 5, y: 0 },
-  hitboxRadius: 1,
   element: 'light',
-  durability,
-  maxDurability: durability,
+  solids: [{ x: 0, y: 0, r: 3 }],
+  carves: [],
 })
 
-describe('障害物の速度損（§3.7）', () => {
-  it('反対極ほど速度損が小さい（貫通しやすい）', () => {
-    const opposite = obstacleSpeedLoss('dark', 'light') // 反対極
-    const same = obstacleSpeedLoss('light', 'light') // 同極
-    expect(opposite).toBeLessThan(same)
+describe('障害物の素材判定（solids − carves）', () => {
+  it('solid 円の中は素材', () => {
+    expect(isSolidAt(blob(), { x: 1, y: 0 })).toBe(true)
+  })
+
+  it('solid 円の外は素材でない', () => {
+    expect(isSolidAt(blob(), { x: 5, y: 0 })).toBe(false)
+  })
+
+  it('えぐられた円（carve）の中は素材でない＝穴', () => {
+    const ob: Obstacle = { ...blob(), carves: [{ x: 0, y: 0, r: 1.5 }] }
+    expect(isSolidAt(ob, { x: 0, y: 0 })).toBe(false) // 穴の中
+    expect(isSolidAt(ob, { x: 2.5, y: 0 })).toBe(true) // 穴の外だが solid 内
   })
 })
 
-describe('障害物耐久の削り（極性相性）', () => {
-  it('反対極ほど耐久を大きく削る', () => {
-    const opposite = obstacleDurabilityDamage(10, 'dark', 'light')
-    const same = obstacleDurabilityDamage(10, 'light', 'light')
-    expect(opposite).toBeGreaterThan(same)
+describe('障害物の削りコスト（§3.7・#1/#16）', () => {
+  it('反対極ほど安く削れる（貫通しやすい）', () => {
+    expect(carveSpeedLoss('dark', 'light')).toBeLessThan(carveSpeedLoss('light', 'light'))
+  })
+
+  it('中立は反対極と同極の中間', () => {
+    const opposite = carveSpeedLoss('dark', 'light')
+    const neutral = carveSpeedLoss('neutral', 'light')
+    const same = carveSpeedLoss('light', 'light')
+    expect(neutral).toBeGreaterThan(opposite)
+    expect(neutral).toBeLessThan(same)
   })
 })
 
-describe('障害物衝突の解決（破壊／貫通）', () => {
-  it('耐久を削り、速度損を返す', () => {
-    const r = applyObstacleHit(obstacle(100), 10, 'dark')
-    expect(r.obstacle.durability).toBeLessThan(100)
-    expect(r.speedLoss).toBeGreaterThan(0)
-    expect(r.destroyed).toBe(false)
+describe('えぐり取る半径（威力依存・#1）', () => {
+  it('威力が高いほど半径が大きい', () => {
+    expect(carveRadius(60)).toBeGreaterThan(carveRadius(20))
   })
 
-  it('耐久0で破壊され、以後は素通り（速度損0）', () => {
-    const r1 = applyObstacleHit(obstacle(5), 100, 'dark') // 大威力で破壊
-    expect(r1.destroyed).toBe(true)
-    expect(r1.obstacle.durability).toBe(0)
-    const r2 = applyObstacleHit(r1.obstacle, 100, 'dark') // 破壊済み
-    expect(r2.speedLoss).toBe(0)
+  it('最大半径でキャップされる', () => {
+    expect(carveRadius(99999)).toBe(COMBAT.carveMaxRadius)
+  })
+
+  it('威力0でも負にはならない', () => {
+    expect(carveRadius(0)).toBe(0)
+    expect(carveRadius(-10)).toBe(0)
   })
 })

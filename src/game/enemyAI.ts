@@ -1,10 +1,11 @@
 // 敵AI（#2・#17）：敵ごとの「得意関数（系統）」で攻撃を最適化する。純粋関数。
 // 各敵は family（直線/弧/波/渦）を持ち、AI は狙い角と形状係数の候補から、
 // 狙う味方へ最大ダメージを与える軌道を選ぶ（軌跡型は陣営有利＝強属性で展開）。
-import type { Ally, Enemy, EnemyFamily, Flight, Trajectory, Vec2 } from './types'
+import type { Ally, Enemy, EnemyFamily, Flight, Obstacle, Trajectory, Vec2 } from './types'
 import { sampleTrajectory, validPrefix } from './coords'
 import { simulatePath } from './physics'
 import { firstHit } from './collision'
+import { isSolidAt } from './obstacle'
 import { attributeOf, strengthOf, affinityMultiplier } from './attribute'
 import { GAME } from '../data/constants'
 
@@ -76,7 +77,7 @@ export interface EnemyPlan {
  * 敵の攻撃を計画する：狙う味方×（狙い角×形状）の候補から、最大ダメージの軌道を選ぶ。
  * どの候補も命中見込みがなければ、最もHPの低い味方へ直進で牽制する。
  */
-export function planEnemyShot(enemy: Enemy, allies: Ally[], obstacles: { pos: Vec2; hitboxRadius: number }[] = []): EnemyPlan | null {
+export function planEnemyShot(enemy: Enemy, allies: Ally[], obstacles: Obstacle[] = []): EnemyPlan | null {
   const alive = allies.filter((a) => a.hp > 0)
   if (alive.length === 0) return null
 
@@ -94,11 +95,14 @@ export function planEnemyShot(enemy: Enemy, allies: Ally[], obstacles: { pos: Ve
         const { flight } = enemyFlight(traj, enemy.castInitialSpeed, enemy.castZ)
         const hit = firstHit(flight.samples, ally.pos, GAME.allyHitbox)
         if (!hit) continue
-        // 障害物が手前にあると弾が削れる＝評価を下げる
+        // 障害物（素材）が手前にあると弾が削れる＝評価を下げる
         let penalty = 1
-        for (const ob of obstacles) {
-          const oh = firstHit(flight.samples, ob.pos, ob.hitboxRadius)
-          if (oh && oh.arcLen < hit.arcLen) penalty *= 0.55
+        for (const sm of flight.samples) {
+          if (sm.arcLen >= hit.arcLen) break
+          if (obstacles.some((ob) => isSolidAt(ob, sm.pos))) {
+            penalty = 0.55
+            break
+          }
         }
         const baseDmg = hit.speed * bStr * affinityMultiplier(bAttr, ally.element) * penalty
         // とどめを刺せる相手を最優先、次に手負い（割合）を優先

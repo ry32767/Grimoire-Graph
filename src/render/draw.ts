@@ -251,21 +251,56 @@ export function drawEnemies(ctx: CanvasRenderingContext2D, enemies: Enemy[], vp:
   }
 }
 
-/** 障害物の描画 */
+const OBSTACLE_FILL: Record<Attribute, string> = {
+  light: 'rgba(120,98,46,0.94)',
+  dark: 'rgba(62,52,104,0.94)',
+  neutral: 'rgba(64,64,80,0.92)',
+}
+
+// 障害物レイヤー用のオフスクリーン（穴抜きを障害物だけに閉じ込めるため・フレーム間で再利用）
+let obstacleLayer: HTMLCanvasElement | null = null
+
+/**
+ * 障害物の描画（Graph War 風）。solids（円の和＝ブロブ）を塗り、carves の円を
+ * destination-out で抜いて滑らかにえぐる。各障害物ごとにオフスクリーンをクリアして
+ * 合成するので、穴はその障害物の素材だけを削り、向こうの場が透けて見える。
+ */
 export function drawObstacles(ctx: CanvasRenderingContext2D, obstacles: Obstacle[], vp: Viewport): void {
+  if (obstacles.length === 0) return
+  const s = scaleOf(vp)
+  const W = ctx.canvas.width
+  const H = ctx.canvas.height
+  if (!obstacleLayer) obstacleLayer = document.createElement('canvas')
+  const layer = obstacleLayer
+  if (layer.width !== W || layer.height !== H) {
+    layer.width = W
+    layer.height = H
+  }
+  const lx = layer.getContext('2d')
+  if (!lx) return
+
   for (const o of obstacles) {
-    if (o.durability <= 0) continue
-    const c = toScreen(o.pos, vp)
-    const r = o.hitboxRadius * scaleOf(vp)
-    ctx.fillStyle = o.element === 'light' ? 'rgba(202,162,74,0.5)' : 'rgba(106,90,168,0.5)'
-    ctx.strokeStyle = COLORS.obstacle
-    ctx.lineWidth = 3
-    ctx.fillRect(c.x - r, c.y - r, r * 2, r * 2)
-    ctx.strokeRect(c.x - r, c.y - r, r * 2, r * 2)
-    // 耐久ゲージ
-    const hpw = (o.durability / o.maxDurability) * r * 2
-    ctx.fillStyle = COLORS.light2
-    ctx.fillRect(c.x - r, c.y + r + 2, hpw, 3)
+    if (o.solids.length === 0) continue
+    lx.clearRect(0, 0, W, H)
+    // ブロブ本体（円の和を塗る）
+    lx.globalCompositeOperation = 'source-over'
+    lx.fillStyle = OBSTACLE_FILL[o.element]
+    for (const d of o.solids) {
+      const c = toScreen({ x: d.x, y: d.y }, vp)
+      lx.beginPath()
+      lx.arc(c.x, c.y, d.r * s, 0, Math.PI * 2)
+      lx.fill()
+    }
+    // えぐり取った穴を抜く（滑らかな円形の削れ）
+    lx.globalCompositeOperation = 'destination-out'
+    for (const c0 of o.carves) {
+      const c = toScreen({ x: c0.x, y: c0.y }, vp)
+      lx.beginPath()
+      lx.arc(c.x, c.y, c0.r * s, 0, Math.PI * 2)
+      lx.fill()
+    }
+    lx.globalCompositeOperation = 'source-over'
+    ctx.drawImage(layer, 0, 0)
   }
 }
 
@@ -384,6 +419,78 @@ export function drawBullet(
   ctx.beginPath()
   ctx.arc(c.x, c.y, 3.2 * pulse, 0, Math.PI * 2)
   ctx.fill()
+  ctx.restore()
+}
+
+/** 小さな周回パーティクル（軌道型魔法・#24）。グロー＋白コア。 */
+export function drawParticle(
+  ctx: CanvasRenderingContext2D,
+  pos: Vec2,
+  color: string,
+  vp: Viewport,
+  phase = 0,
+): void {
+  const c = toScreen(pos, vp)
+  const r = 2.4 + Math.sin(phase) * 0.9
+  ctx.save()
+  ctx.shadowColor = color
+  ctx.shadowBlur = 10
+  ctx.globalAlpha = 0.9
+  ctx.fillStyle = color
+  ctx.beginPath()
+  ctx.arc(c.x, c.y, r, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.globalAlpha = 1
+  ctx.fillStyle = '#fff8e1'
+  ctx.beginPath()
+  ctx.arc(c.x, c.y, r * 0.45, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.restore()
+}
+
+/**
+ * 障害物を削る瞬間のパーティクル（#11）。当たった点から石片＝四角ドットが飛び散り、
+ * 中心が閃く。progress 0→1 で広がりながら消える。attr で色（光=金・闇=紫）。
+ */
+export function drawCarveBurst(
+  ctx: CanvasRenderingContext2D,
+  pos: Vec2,
+  r: number,
+  attr: Attribute,
+  progress: number,
+  vp: Viewport,
+): void {
+  if (progress < 0 || progress >= 1) return
+  const c = toScreen(pos, vp)
+  const s = scaleOf(vp)
+  const px = Math.max(3, Math.round(s * 0.34))
+  const col = attr === 'light' ? COLORS.light1 : attr === 'dark' ? COLORS.dark1 : COLORS.light2
+  const spread = (r + 2) * s
+  ctx.save()
+  // 中心の閃光（序盤に白く弾ける）
+  const flash = Math.max(0, 1 - progress * 2.4)
+  if (flash > 0) {
+    ctx.globalAlpha = flash
+    ctx.shadowColor = col
+    ctx.shadowBlur = 10
+    ctx.fillStyle = '#fff8e1'
+    const fr = px * 1.4
+    ctx.fillRect(Math.round(c.x - fr), Math.round(c.y - fr), fr * 2, fr * 2)
+    ctx.shadowBlur = 0
+  }
+  // 飛び散る石片（角度を散らし、距離は progress で広がる・重力で少し落ちる）
+  const n = 12
+  for (let i = 0; i < n; i++) {
+    const ang = (i / n) * Math.PI * 2 + i * 1.7
+    const reach = 0.55 + ((i * 37) % 10) / 9
+    const dist = spread * (0.2 + progress * 1.05) * reach
+    const gx = c.x + Math.cos(ang) * dist
+    const gy = c.y + Math.sin(ang) * dist + progress * progress * px * 2.5 // 重力で落下
+    ctx.globalAlpha = Math.max(0, 1 - progress) * 0.95
+    ctx.fillStyle = i % 3 === 0 ? COLORS.light2 : col
+    const sz = Math.max(1, px * (1 - progress * 0.55))
+    ctx.fillRect(Math.round(gx - sz / 2), Math.round(gy - sz / 2), sz, sz)
+  }
   ctx.restore()
 }
 

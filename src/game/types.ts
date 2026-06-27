@@ -109,16 +109,39 @@ export interface Enemy {
   castZ: number
 }
 
-/** 属性付き障害物（§3.7・#1/#16：被弾で半径が削れる） */
+/** 円（障害物の基本形・削り穴の両方に使う）。中心 (x,y)・半径 r。 */
+export interface Disc {
+  x: number
+  y: number
+  r: number
+}
+
+/**
+ * 障害物（§3.7・#1/#16・Graph War 風）。形は solids（重なった円の和＝連続したブロブ）で表す。
+ * 耐久値は持たず、魔法が当たった点を中心に円（carves）を引き算して物理的にえぐり取る
+ * （＝solids にありつつ どの carves にも入らない点が「素材」。穴は滑らかな円形に削れる）。
+ */
 export interface Obstacle {
   id: string
-  pos: Vec2
-  hitboxRadius: number
   element: Attribute
-  durability: number
-  maxDurability: number
-  /** 初期半径（半径は耐久比に連動して縮む）。未指定は hitboxRadius を初期値とみなす */
-  maxRadius?: number
+  /** 基本形：重なった円の和（壁・柱の素材） */
+  solids: Disc[]
+  /** 魔法に削り取られた円（穴）。solids から引く */
+  carves: Disc[]
+}
+
+/** 障害物を削った1回分の演出データ（#11：削る瞬間のパーティクル＆穴の開示）。 */
+export interface CarveBurst {
+  /** えぐった点（数学座標） */
+  pos: Vec2
+  /** えぐり半径 */
+  r: number
+  /** 弾がこの点に到達した弧長（アニメで開示タイミングを取る） */
+  arcLen: number
+  /** えぐった弾の属性（パーティクルの色） */
+  attr: Attribute
+  /** 削られた障害物ID（穴を正しい障害物に適用する） */
+  obstacleId: string
 }
 
 /** 味方術者（#15：自陣営3人）。各自が配置（発射元）を持つ */

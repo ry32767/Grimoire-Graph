@@ -121,20 +121,21 @@ export function buildPolyline(samples: Sample[]): PolyPoint[] {
 /**
  * 場外サンプル i の直後が「発散」か（#3）。判定：
  *  - 直後に無効点（非有限＝1/0 などの極）が来る、または
- *  - 大きく場外へ飛んだ後に場内へ戻る（＝±∞へ振れて戻る単純極のパターン）。
- * これにより、刻み幅が極を飛び越えて非有限点を取りこぼす関数（例 1/(2.5−x)）も暴発に分類できる。
+ *  - 連続サンプル間の位置が大きく飛ぶ（極を跨いで ±∞ へ振れた＝不連続）。
+ * 連続な正常曲線は1刻みでの移動量が小さいため、極（不連続）だけを拾える。
+ * これにより刻み幅が極を飛び越える関数（例 1/(2.5−x)）も暴発に分類できる。
  */
 function divergesSoonAfter(samples: Sample[], i: number, window = 96): boolean {
   const end = Math.min(samples.length, i + window)
-  let maxDepart = 0
-  let reenters = false
-  for (let j = i; j < end; j++) {
-    const s = samples[j]
-    if (!s.valid) return true
-    if (!s.inField) maxDepart = Math.max(maxDepart, dist(s.pos))
-    else if (j > i) reenters = true // 一度場外に出た後に場内へ戻った
+  const jumpThreshold = FIELD.rField
+  const startIdx = Math.max(1, i)
+  for (let j = startIdx; j < end; j++) {
+    if (!samples[j].valid) return true // 非有限＝極
+    if (samples[j - 1].valid && dist(samples[j].pos, samples[j - 1].pos) > jumpThreshold) {
+      return true // 連続点が大きく飛ぶ＝極を跨いだ
+    }
   }
-  return reenters && maxDepart > FIELD.rField * 2
+  return false
 }
 
 /**
