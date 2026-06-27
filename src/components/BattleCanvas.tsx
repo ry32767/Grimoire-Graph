@@ -43,6 +43,9 @@ export interface AnimBullet {
 /** 削る瞬間のパーティクルが残る弧長の窓（この距離だけ弾が進む間 破片が舞う） */
 const BURST_ARC = 9
 
+/** 暴発の大爆発を見せる余韻（弾の到達後にこの時間だけ爆発を展開・#9/#29） */
+const MISFIRE_TAIL_MS = 1000
+
 /** 軌道型リング */
 export interface AnimOrbit {
   ring: ZPoint[]
@@ -140,7 +143,10 @@ export default function BattleCanvas(props: Props) {
     // 軌道型がある時は周回が見えるよう窓を長めに確保（#24）
     const hasOrbit = anim.orbits.length > 0
     const floorMs = hasOrbit ? 1600 : MIN_MS
-    const realMs = Math.min(MAX_MS, Math.max(floorMs, maxTotal * MS_PER_GAMESEC))
+    const flightMs = Math.min(MAX_MS, Math.max(floorMs, maxTotal * MS_PER_GAMESEC))
+    // 暴発がある時は弾の到達後に大爆発の余韻時間を足す（#9/#29）
+    const hasMisfire = anim.bullets.some((b) => b.misfirePos)
+    const realMs = flightMs + (hasMisfire ? MISFIRE_TAIL_MS : 0)
 
     let raf = 0
     let finished = false
@@ -153,9 +159,11 @@ export default function BattleCanvas(props: Props) {
       doneRef.current?.()
     }
     const frame = (now: number) => {
-      const e = Math.min(1, (now - start) / realMs)
+      const elapsed = now - start
+      // 飛行は flightMs で進み切る。余韻（暴発）中は弾は終端で静止する。
+      const e = Math.min(1, elapsed / flightMs)
       const tau = e * maxTotal
-      const phase = e * realMs * 0.02
+      const phase = e * flightMs * 0.02
 
       // 各弾の現在位置・弧長を先に計算（穴の開示・削るパーティクルに使う）
       const states = anim.bullets.map((b, i) =>
@@ -215,12 +223,16 @@ export default function BattleCanvas(props: Props) {
         const { pos, idx } = st
         const color = b.side === 'ally' ? COLORS.light1 : COLORS.dark1
         const core = b.side === 'ally' ? COLORS.light2 : '#cdbbf2'
-        const trail = b.samples.slice(Math.max(0, idx - 9), idx + 1).map((s) => s.pos)
-        drawTrail(ctx, trail, color, VP)
-        drawBullet(ctx, pos, core, VP, phase)
-        // 暴発：弾が終端へ到達したら爆発
-        if (b.misfirePos && tau >= tl.total * 0.92) {
-          const mp = Math.min(1, (tau - tl.total * 0.92) / Math.max(0.0001, maxTotal - tl.total * 0.92))
+        // 暴発：弾が終端へ到達してから余韻いっぱいまで爆発を進める（実時間ベース）
+        const arrivalMs = maxTotal > 0 ? (tl.total / maxTotal) * flightMs : 0
+        const exploding = b.misfirePos && elapsed >= arrivalMs
+        if (!exploding) {
+          const trail = b.samples.slice(Math.max(0, idx - 9), idx + 1).map((s) => s.pos)
+          drawTrail(ctx, trail, color, VP)
+          drawBullet(ctx, pos, core, VP, phase)
+        }
+        if (b.misfirePos && exploding) {
+          const mp = Math.min(1, (elapsed - arrivalMs) / Math.max(1, realMs - arrivalMs))
           drawMisfire(ctx, b.misfirePos, mp, VP)
         }
       })
@@ -235,7 +247,7 @@ export default function BattleCanvas(props: Props) {
         }
       })
 
-      if (e < 1) raf = requestAnimationFrame(frame)
+      if (elapsed < realMs) raf = requestAnimationFrame(frame)
       else finish()
     }
     raf = requestAnimationFrame(frame)

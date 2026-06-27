@@ -22,8 +22,8 @@ export const FIELD = {
   maxSpeed: 14,
   /** 飛行速度の上限（加速で際限なく伸びるのを防ぐ・終端速度） */
   maxFlightSpeed: 24,
-  /** 暴発の AoE 半径（ユニット） */
-  aoeRadius: 3.8,
+  /** 暴発の AoE 半径（ユニット・#29 で少し拡大） */
+  aoeRadius: 5,
 } as const
 
 /** 極性相性倍率（§3.2） */

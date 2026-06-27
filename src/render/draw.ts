@@ -517,7 +517,12 @@ export function drawTrail(
   ctx.restore()
 }
 
-/** ドット爆発（暴発・#9）。グリッドに整列した四角ピクセルで 8bit 風に弾ける。progress 0→1。 */
+/**
+ * 暴発の大爆発（#9/#29）。「収縮 → 紫の虚空が弾ける」二段構え。
+ * 序盤(0〜0.3)は周囲のドットが中心へ吸い込まれ特異点が育つ＝虚式・紫の予兆。
+ * 中盤以降(0.3〜1)で紫の球が膨張し、白い閃光・多重衝撃枠・光闇のドットが飛散する。
+ * グリッド整列の四角ピクセルで 8bit 風を保ちつつ、紫の発光球で派手さを足す。
+ */
 export function drawMisfire(
   ctx: CanvasRenderingContext2D,
   pos: Vec2,
@@ -525,46 +530,94 @@ export function drawMisfire(
   vp: Viewport,
 ): void {
   const c = toScreen(pos, vp)
-  const maxR = FIELD.aoeRadius * scaleOf(vp)
-  const px = Math.max(4, Math.round(scaleOf(vp) * 0.32)) // ドットの一辺
-  const r = maxR * progress
+  const s = scaleOf(vp)
+  const maxR = FIELD.aoeRadius * s * 1.3 // 演出は AoE より少し大きく弾けさせる
+  const px = Math.max(4, Math.round(s * 0.32)) // ドットの一辺
   ctx.save()
-  // グリッド整列して四角を置く（ピクセルアート感）
   const cell = (gx: number, gy: number, col: string, a: number) => {
-    ctx.globalAlpha = a
+    ctx.globalAlpha = Math.max(0, Math.min(1, a))
     ctx.fillStyle = col
     ctx.fillRect(Math.round((c.x + gx) / px) * px, Math.round((c.y + gy) / px) * px, px, px)
   }
-  // 中心の閃光（白）：序盤に強く、消える
-  const flash = Math.max(0, 1 - progress * 1.4)
+
+  const VOID2 = '#b483ff' // 虚式・紫の輝き
+
+  if (progress < 0.3) {
+    // ===== 収縮フェーズ：周囲のドットが中心へ吸い込まれる =====
+    const ip = progress / 0.3 // 0→1
+    const n = 22
+    for (let i = 0; i < n; i++) {
+      const ang = (i / n) * Math.PI * 2 + i * 1.3
+      const rr = maxR * (1 - ip) * (0.6 + ((i * 29) % 8) / 10)
+      cell(Math.cos(ang) * rr, Math.sin(ang) * rr, i % 2 === 0 ? VOID2 : COLORS.light2, 0.3 + ip * 0.7)
+    }
+    // 育つ特異点（紫の発光球＋白核）
+    const core = px * (1 + ip * 3)
+    const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, core)
+    g.addColorStop(0, '#fff8e1')
+    g.addColorStop(0.4, VOID2)
+    g.addColorStop(1, 'rgba(106,46,196,0)')
+    ctx.globalAlpha = 0.7 + ip * 0.3
+    ctx.fillStyle = g
+    ctx.beginPath()
+    ctx.arc(c.x, c.y, core, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+    return
+  }
+
+  // ===== 爆発フェーズ =====
+  const ep = (progress - 0.3) / 0.7 // 0→1
+  const r = maxR * ep
+
+  // 紫の虚空球（膨張しながら薄れる）
+  const voidR = maxR * (0.35 + ep * 1.0)
+  const vg = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, voidR)
+  vg.addColorStop(0, `rgba(180,131,255,${0.85 * (1 - ep)})`)
+  vg.addColorStop(0.55, `rgba(106,46,196,${0.6 * (1 - ep)})`)
+  vg.addColorStop(1, 'rgba(40,12,80,0)')
+  ctx.fillStyle = vg
+  ctx.globalAlpha = 1
+  ctx.beginPath()
+  ctx.arc(c.x, c.y, voidR, 0, Math.PI * 2)
+  ctx.fill()
+
+  // 中心の白い閃光（序盤に強く弾ける）
+  const flash = Math.max(0, 1 - ep * 1.7)
   if (flash > 0) {
+    ctx.shadowColor = VOID2
+    ctx.shadowBlur = 16
     cell(0, 0, '#fff8e1', flash)
     cell(px, 0, '#fff8e1', flash * 0.8)
     cell(-px, 0, '#fff8e1', flash * 0.8)
     cell(0, px, '#fff8e1', flash * 0.8)
     cell(0, -px, '#fff8e1', flash * 0.8)
+    ctx.shadowBlur = 0
   }
-  // 放射状に飛び散るドット（光と闇が交互）。リング状に広がる。
-  const rings = 3
+
+  // 放射状に飛び散るドット（光・闇・紫が混ざる。重力で少し落ちる）
+  const rings = 4
   for (let ring = 0; ring < rings; ring++) {
-    const rr = r * (0.5 + ring * 0.28)
-    const count = 8 + ring * 4
-    const fade = (1 - progress) * (1 - ring * 0.18)
+    const rr = r * (0.45 + ring * 0.24)
+    const count = 10 + ring * 5
+    const fade = (1 - ep) * (1 - ring * 0.14)
     if (fade <= 0) continue
     for (let i = 0; i < count; i++) {
-      const ang = (i / count) * Math.PI * 2 + ring * 0.4 + progress * 0.8
+      const ang = (i / count) * Math.PI * 2 + ring * 0.4 + ep * 0.9
       const gx = Math.cos(ang) * rr
-      const gy = Math.sin(ang) * rr
-      const col = (i + ring) % 2 === 0 ? COLORS.light1 : COLORS.dark1
+      const gy = Math.sin(ang) * rr + ep * ep * px * 2
+      const col = (i + ring) % 3 === 0 ? VOID2 : (i + ring) % 3 === 1 ? COLORS.light1 : COLORS.dark1
       cell(gx, gy, col, Math.min(1, fade))
-      // 中間に淡い火の粉
-      if (ring === 0) cell(gx * 0.6, gy * 0.6, COLORS.light2, fade * 0.6)
     }
   }
-  // 衝撃リング（中空の四角枠）
-  ctx.globalAlpha = (1 - progress) * 0.8
-  ctx.strokeStyle = progress < 0.5 ? COLORS.light1 : COLORS.dark1
-  ctx.lineWidth = px * 0.6
-  ctx.strokeRect(c.x - r, c.y - r, r * 2, r * 2)
+
+  // 多重衝撃リング（中空の四角枠が外へ広がる）
+  for (let k = 0; k < 2; k++) {
+    const kr = r * (0.7 + k * 0.5)
+    ctx.globalAlpha = (1 - ep) * 0.8 * (1 - k * 0.3)
+    ctx.strokeStyle = k === 0 ? VOID2 : COLORS.dark1
+    ctx.lineWidth = px * 0.6
+    ctx.strokeRect(c.x - kr, c.y - kr, kr * 2, kr * 2)
+  }
   ctx.restore()
 }
