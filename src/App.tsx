@@ -403,8 +403,8 @@ export default function App() {
                 onOpenCodex={() => setCodexOpen(true)}
               />
               <div className="action-row">
-                <button className="btn primary fire-all" disabled={!anyCastable} onClick={fireAll}>
-                  全員発射
+                <button className="btn primary fire-all" onClick={fireAll}>
+                  {anyCastable ? '全員発射' : 'ターンを進める'}
                 </button>
                 <button className="btn small" onClick={() => setGuideOpen(true)}>
                   遊び方
