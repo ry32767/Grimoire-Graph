@@ -121,16 +121,6 @@ export interface Obstacle {
   maxRadius?: number
 }
 
-/** 閉曲線シールド（§3.6・旧防御。#4 で軌道型魔法に統合され state では未使用） */
-export interface Shield {
-  shape: 'circle' | 'ellipse'
-  /** circle: R / ellipse: a,b */
-  params: { R?: number; a?: number; b?: number }
-  element: Attribute
-  durability: number
-  maxDurability: number
-}
-
 /** 味方術者（#15：自陣営3人）。各自が配置（発射元）を持つ */
 export interface Ally {
   id: string

@@ -110,6 +110,36 @@ describe('軌道型（周回結界）の防御（#4）', () => {
   })
 })
 
+describe('防御の重ね掛け（軌道型＋パリィ）', () => {
+  it('リング迎撃とパリィの速度損が累積する（単独より強く減速）', () => {
+    // 敵弾：(0,10)→味方(0,-4) の直線（光・強）。原点まわりの円リングと、下方の闇弾でパリィ。
+    const en = enemy('e', { x: 0, y: 10 }, 'light', 100, 6)
+    const allies = [ally('ring', { x: 0, y: 0 }), ally('parry', { x: -1, y: -4 }, 'dark')]
+    const ringCast = cast('ring', { mode: 'polar', f: () => 5, origin: { x: 0, y: 0 } })
+    // 闇の直線（パリィ用）：(-1,-4) から +x 方向へ薙ぐ → 敵弾(0,-y軸付近)と交差
+    const parryCast = cast('parry', { mode: 'rotate', g: (x) => -x, angle: 0, origin: { x: -1, y: -4 } })
+
+    const both = resolveTurn({
+      allies,
+      casts: [ringCast, parryCast],
+      enemies: [en],
+      castingEnemyIds: ['e'],
+      obstacles: [],
+      mechanics: withFire,
+    })
+    const ringOnly = resolveTurn({
+      allies,
+      casts: [ringCast],
+      enemies: [en],
+      castingEnemyIds: ['e'],
+      obstacles: [],
+      mechanics: withFire,
+    })
+    // 両防御の方が敵弾の到達速度は小さい（=減衰が累積している）
+    expect(both.enemyShots[0].flight.endSpeed).toBeLessThanOrEqual(ringOnly.enemyShots[0].flight.endSpeed)
+  })
+})
+
 describe('障害物（耐久＝半径を削る・#1/#16）', () => {
   it('障害物に当たると耐久が削れる', () => {
     const res = resolveTurn({

@@ -19,7 +19,14 @@ import {
   affinityMultiplier,
   trajectoryZ,
 } from './attribute'
-import { simulateFlight, simulateWithLosses, simulatePath, type LossEvent } from './physics'
+import {
+  simulateFlight,
+  simulateWithLosses,
+  simulatePath,
+  polyFromPoints,
+  sampleAtLength,
+  type LossEvent,
+} from './physics'
 import { firstHit, firstHitAmong, type Target } from './collision'
 import { firstCrossing, resolveParry } from './parry'
 import { applyObstacleHit } from './obstacle'
@@ -171,17 +178,24 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
   }
 
   // === 3. 防御：軌道型リングの迎撃 → 発射型のパリィ（敵弾を削る） ===
+  // 減衰イベントは shot ごとに蓄積し、毎回「元の初速＋全減衰」で再シミュレートする
+  // （軌道型→パリィなど複数防御の速度損を正しく重ねる）。
   for (const shot of enemyShots) {
+    const initSpeed = shot.flight.samples[0]?.speed ?? 0
+    const pathPoly = polyFromPoints(shot.path)
+    const arcAt = (idx: number) => pathPoly[Math.min(idx, pathPoly.length - 1)]?.cumLen ?? 0
+    const losses: LossEvent[] = []
+    const resim = () => {
+      shot.flight = simulatePath(shot.path, initSpeed, () => shot.castZ, losses)
+    }
+
     // 3a. 軌道型リングが境界で迎撃
     for (const p of plans) {
       if (p.kind !== 'orbit' || !p.ring || shot.blocked) continue
       const inter = ringInterception(p.ring, shot.path)
       if (!inter.crossed || inter.ringZ === undefined || inter.enemyIndex === undefined) continue
-      const loss = orbitBlockLoss(inter.ringZ, attributeOf(shot.castZ))
-      const crossArc = shot.flight.samples[Math.min(inter.enemyIndex, shot.flight.samples.length - 1)].arcLen
-      shot.flight = simulatePath(shot.path, shot.flight.samples[0]?.speed ?? 0, () => shot.castZ, [
-        { arcLen: crossArc, deltaV: loss },
-      ])
+      losses.push({ arcLen: arcAt(inter.enemyIndex), deltaV: orbitBlockLoss(inter.ringZ, attributeOf(shot.castZ)) })
+      resim()
       const aName = nameOf(allies, p.cast.allyId)
       if (shot.flight.end === 'vanished') {
         shot.blocked = true
@@ -191,6 +205,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       }
     }
     if (shot.blocked) continue
+
     // 3b. 発射型のパリィ（反対極なら相殺）
     for (const p of plans) {
       if (p.kind !== 'projectile' || !p.freeFlight || p.freeFlight.samples.length < 2) continue
@@ -198,7 +213,9 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       const cross = firstCrossing(playerPath, shot.path)
       if (!cross) continue
       const pSample = p.freeFlight.samples[cross.indexA]
-      const eSample = shot.flight.samples[Math.min(cross.indexB, shot.flight.samples.length - 1)]
+      const crossArc = arcAt(cross.indexB)
+      // 直前までの減衰を反映した現在の飛行から、交差点（弧長基準）の速度を引く
+      const eSample = sampleAtLength(shot.flight, crossArc) ?? shot.flight.samples[shot.flight.samples.length - 1]
       const pZ = trajectoryZ(p.cast.trajectory, pSample.param)
       const pAttr = attributeOf(pZ)
       const pStr = strengthOf(pZ)
@@ -206,10 +223,8 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       const eStr = strengthOf(shot.castZ)
       const parry = resolveParry(pAttr, pSample.speed, pSample.speed * pStr, eAttr, eSample.speed, eSample.speed * eStr)
       if (parry.passthrough) continue
-      const crossArc = eSample.arcLen
-      shot.flight = simulatePath(shot.path, shot.flight.samples[0]?.speed ?? 0, () => shot.castZ, [
-        { arcLen: crossArc, deltaV: eSample.speed - parry.speedB },
-      ])
+      losses.push({ arcLen: crossArc, deltaV: eSample.speed - parry.speedB })
+      resim()
       log.push({ kind: 'parry', text: `${nameOf(allies, p.cast.allyId)}の弾が敵弾を相殺` })
       if (shot.flight.end === 'vanished') {
         shot.blocked = true
@@ -290,7 +305,8 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     } else if (flight.end === 'invalid') {
       // 暴発（関数エラー・#3/#9）：敵＋近くの味方を巻き込む AoE
       misfirePos = flight.endPos
-      const speed = flight.samples.length > 0 ? flight.endSpeed : p.cast.initialSpeed
+      // endSpeed は samples 空でも v0(=初速) を保持するため常に正しい
+      const speed = flight.endSpeed
       const mis = resolveMisfire({ type: 'invalid', pos: misfirePos }, speed, enemies.map((e) => ({ id: e.id, pos: e.pos })))
       for (const id of mis.hitIds) {
         const idx = enemies.findIndex((e) => e.id === id)
