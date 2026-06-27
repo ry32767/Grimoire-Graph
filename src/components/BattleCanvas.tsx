@@ -256,14 +256,22 @@ export default function BattleCanvas(props: Props) {
         // 複数パーティクルを等間隔に並べ、複数周ぐるぐる回す
         const N = 18
         const revs = 2.6
+        const eClamped = Number.isFinite(e) ? Math.max(0, Math.min(1, e)) : 0
         for (let n = 0; n < N; n++) {
-          const frac = (n / N + e * revs) % 1
-          const idx = Math.min(len - 1, Math.floor(frac * (len - 1)))
+          const frac = (n / N + eClamped * revs) % 1
+          // idx は必ず 0..len-1 に収める（NaN/範囲外でも安全・凍結防止）
+          let idx = Math.floor(frac * (len - 1))
+          if (!Number.isFinite(idx)) idx = 0
+          idx = Math.max(0, Math.min(len - 1, idx))
           const pt = ring[idx]
+          if (!pt) continue
           const col = zColor(pt.z)
           // 短い尾
           const trail: Vec2[] = []
-          for (let t = 4; t >= 0; t--) trail.push(ring[(idx - t * 2 + len) % len].pos)
+          for (let t = 4; t >= 0; t--) {
+            const tp = ring[(idx - t * 2 + len) % len]
+            if (tp) trail.push(tp.pos)
+          }
           ctx.globalAlpha = 0.5
           drawTrail(ctx, trail, col, VP)
           ctx.globalAlpha = 1
