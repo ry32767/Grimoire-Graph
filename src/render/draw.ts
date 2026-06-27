@@ -21,6 +21,48 @@ export interface SceneParams {
   ghostPaths?: Vec2[][]
   /** 予測着弾点とその属性（機能17） */
   landings?: ({ pos: Vec2; attr: Attribute } | null)[]
+  /** 被弾中の対象ID→フラッシュ強度（1→0）。赤く光って揺れる（#20） */
+  flash?: Record<string, number>
+  /** 揺れの位相（時間とともに増加） */
+  shakePhase?: number
+}
+
+/** 被弾の揺れ量（px）。強度と位相・IDシードで上下左右に細かく震える（#20）。 */
+function shakeOffset(intensity: number, phase: number, seed: number): Vec2 {
+  if (intensity <= 0) return { x: 0, y: 0 }
+  const amp = intensity * 5
+  return {
+    x: Math.sin(phase * 1.3 + seed) * amp,
+    y: Math.cos(phase * 1.7 + seed * 1.5) * amp,
+  }
+}
+
+/** 被弾の赤フラッシュを (cx,cy) 中心・半径 r で重ねる（#20）。 */
+function drawHitFlash(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  intensity: number,
+): void {
+  if (intensity <= 0) return
+  ctx.save()
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r)
+  g.addColorStop(0, `rgba(255,72,72,${0.75 * intensity})`)
+  g.addColorStop(0.6, `rgba(255,40,40,${0.4 * intensity})`)
+  g.addColorStop(1, 'rgba(255,0,0,0)')
+  ctx.fillStyle = g
+  ctx.beginPath()
+  ctx.arc(cx, cy, r, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.restore()
+}
+
+/** 文字列IDから安定した擬似乱数シードを作る（揺れの位相ずらし用）。 */
+function idSeed(id: string): number {
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 1000
+  return h
 }
 
 /** 背景：数学グリッドと軸・場外境界（場のタイルは廃止）。 */
@@ -135,10 +177,15 @@ export function drawCasters(
   allies: Ally[],
   vp: Viewport,
   activeAllyId?: string | null,
+  flash?: Record<string, number>,
+  shakePhase = 0,
 ): void {
   const s = scaleOf(vp)
   for (const a of allies) {
-    const o = toScreen(a.pos, vp)
+    const o0 = toScreen(a.pos, vp)
+    const intensity = flash?.[a.id] ?? 0
+    const sh = shakeOffset(intensity, shakePhase, idSeed(a.id))
+    const o = { x: o0.x + sh.x, y: o0.y + sh.y }
     const dead = a.hp <= 0
     const aura =
       a.element === 'light'
@@ -172,6 +219,8 @@ export function drawCasters(
     ctx.font = '9px "DotGothic16", monospace'
     ctx.textAlign = 'center'
     ctx.fillText(a.name, o.x, o.y + px * 5)
+    // 被弾の赤フラッシュ（#20）
+    drawHitFlash(ctx, o.x, o.y, 22, intensity)
   }
 }
 
@@ -221,10 +270,19 @@ function drawFamilyGlyph(
 }
 
 /** 敵の描画（属性ごとのドット絵スプライト＋得意関数記号＋名前）。 */
-export function drawEnemies(ctx: CanvasRenderingContext2D, enemies: Enemy[], vp: Viewport): void {
+export function drawEnemies(
+  ctx: CanvasRenderingContext2D,
+  enemies: Enemy[],
+  vp: Viewport,
+  flash?: Record<string, number>,
+  shakePhase = 0,
+): void {
   for (const e of enemies) {
     if (e.hp <= 0) continue
-    const c = toScreen(e.pos, vp)
+    const c0 = toScreen(e.pos, vp)
+    const intensity = flash?.[e.id] ?? 0
+    const sh = shakeOffset(intensity, shakePhase, idSeed(e.id))
+    const c = { x: c0.x + sh.x, y: c0.y + sh.y }
     const r = e.hitboxRadius * scaleOf(vp)
     const light = e.element === 'light'
     const tint = light ? COLORS.light1 : COLORS.dark1
@@ -248,6 +306,8 @@ export function drawEnemies(ctx: CanvasRenderingContext2D, enemies: Enemy[], vp:
     ctx.font = '10px "DotGothic16", monospace'
     ctx.textAlign = 'center'
     ctx.fillText(`${e.name}〔${FAMILY_LABEL[e.family]}〕`, c.x, c.y - r - 6)
+    // 被弾の赤フラッシュ（#20）
+    drawHitFlash(ctx, c.x, c.y, r * 1.5, intensity)
   }
 }
 
@@ -363,7 +423,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
   }
 
   drawObstacles(ctx, p.obstacles, p.vp)
-  drawEnemies(ctx, p.enemies, p.vp)
+  drawEnemies(ctx, p.enemies, p.vp, p.flash, p.shakePhase)
 
   // 各味方のプレビュー軌道（z で色分け）
   if (p.playerPaths) {
@@ -377,7 +437,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
     for (const l of p.landings) if (l) drawLanding(ctx, l, p.vp)
   }
 
-  drawCasters(ctx, p.allies, p.vp, p.activeAllyId)
+  drawCasters(ctx, p.allies, p.vp, p.activeAllyId, p.flash, p.shakePhase)
 }
 
 /** 飛行中の弾（多層グロー＋脈動コア＋回転スパーク・#11）。phase で煌めきを変える。 */

@@ -31,6 +31,13 @@ export interface AnimSample {
   arcLen: number
 }
 
+/** 命中した対象（赤フラッシュ＋揺れ・#20）。弾がこの弧長に達した瞬間に対象が反応する。 */
+export interface AnimImpact {
+  id: string
+  side: 'ally' | 'enemy'
+  arcLen: number
+}
+
 /** アニメーション用の1発（発射型／敵弾） */
 export interface AnimBullet {
   samples: AnimSample[]
@@ -38,6 +45,8 @@ export interface AnimBullet {
   misfirePos: Vec2 | null
   /** この弾が障害物を削った点（弧長つき。到達時に穴を開示しパーティクルを出す・#11） */
   carves: CarveBurst[]
+  /** 命中して対象を反応させる情報（#20。外れ/暴発は null） */
+  impact: AnimImpact | null
 }
 
 /** 削る瞬間のパーティクルが残る弧長の窓（この距離だけ弾が進む間 破片が舞う） */
@@ -46,10 +55,18 @@ const BURST_ARC = 9
 /** 暴発の大爆発を見せる余韻（弾の到達後にこの時間だけ爆発を展開・#9/#29） */
 const MISFIRE_TAIL_MS = 1000
 
+/** 命中の赤フラッシュ＋揺れを見せる余韻（撃破でも演出を見せてから遷移・#20） */
+const IMPACT_TAIL_MS = 450
+
 /** 軌道型リング */
 export interface AnimOrbit {
   ring: ZPoint[]
+  /** 掃射で当てた敵ID群（赤フラッシュ＋揺れ・#20） */
+  hitEnemyIds: string[]
 }
+
+/** 被弾フラッシュの減衰時間（ms）。一瞬赤く光って揺れて戻る（#20） */
+const FLASH_MS = 420
 
 export interface ResolveAnimation {
   bullets: AnimBullet[]
@@ -144,9 +161,15 @@ export default function BattleCanvas(props: Props) {
     const hasOrbit = anim.orbits.length > 0
     const floorMs = hasOrbit ? 1600 : MIN_MS
     const flightMs = Math.min(MAX_MS, Math.max(floorMs, maxTotal * MS_PER_GAMESEC))
-    // 暴発がある時は弾の到達後に大爆発の余韻時間を足す（#9/#29）
+    // 弾の到達後に演出を見せる余韻：暴発は大きく、命中は短く確保する（#9/#29/#20）
     const hasMisfire = anim.bullets.some((b) => b.misfirePos)
-    const realMs = flightMs + (hasMisfire ? MISFIRE_TAIL_MS : 0)
+    const hasImpact =
+      anim.bullets.some((b) => b.impact) || anim.orbits.some((o) => o.hitEnemyIds.length > 0)
+    const tailMs = hasMisfire ? MISFIRE_TAIL_MS : hasImpact ? IMPACT_TAIL_MS : 0
+    const realMs = flightMs + tailMs
+
+    // 被弾フラッシュ：対象IDごとに「反応を開始した実時刻」を記録し、以後減衰させる（#20）
+    const flashStartByTarget: Record<string, number> = {}
 
     let raf = 0
     let finished = false
@@ -185,7 +208,37 @@ export default function BattleCanvas(props: Props) {
         revealed[o.id] ? { ...o, carves: [...o.carves, ...revealed[o.id]] } : o,
       )
 
-      drawScene(ctx, { ...staticParams, obstacles, playerPaths: undefined, landings: undefined })
+      // 被弾の検出：弾が命中弧長に達したら対象の反応を開始（#20）
+      anim.bullets.forEach((b, i) => {
+        const st = states[i]
+        if (!st || !b.impact) return
+        if (st.arcLen >= b.impact.arcLen && flashStartByTarget[b.impact.id] === undefined) {
+          flashStartByTarget[b.impact.id] = elapsed
+        }
+      })
+      // 軌道型の掃射ヒットは周回が一巡した中盤で反応
+      if (e >= 0.55) {
+        for (const o of anim.orbits) {
+          for (const id of o.hitEnemyIds) {
+            if (flashStartByTarget[id] === undefined) flashStartByTarget[id] = elapsed
+          }
+        }
+      }
+      // 各対象の現在のフラッシュ強度（1→0へ減衰）
+      const flash: Record<string, number> = {}
+      for (const id in flashStartByTarget) {
+        const t = (elapsed - flashStartByTarget[id]) / FLASH_MS
+        if (t >= 0 && t < 1) flash[id] = 1 - t
+      }
+
+      drawScene(ctx, {
+        ...staticParams,
+        obstacles,
+        playerPaths: undefined,
+        landings: undefined,
+        flash,
+        shakePhase: elapsed * 0.05,
+      })
 
       // 軌道型リング：パーティクルがぐるぐる周回する（#24）
       for (const o of anim.orbits) {

@@ -169,13 +169,14 @@ export default function App() {
     const orbits: AnimOrbit[] = []
     for (const s of resolution.allyShots) {
       if (s.kind === 'orbit') {
-        orbits.push({ ring: s.path })
+        orbits.push({ ring: s.path, hitEnemyIds: s.sweptEnemyIds })
       } else if (s.flight) {
         bullets.push({
           samples: s.flight.samples.map((x) => ({ pos: x.pos, speed: x.speed, arcLen: x.arcLen })),
           side: 'ally',
           misfirePos: s.misfirePos,
           carves: s.carves,
+          impact: s.hitEnemyId ? { id: s.hitEnemyId, side: 'enemy', arcLen: s.hitArcLen } : null,
         })
       }
     }
@@ -185,6 +186,7 @@ export default function App() {
         side: 'enemy',
         misfirePos: null,
         carves: es.carves,
+        impact: es.hitAllyId ? { id: es.hitAllyId, side: 'ally', arcLen: es.hitArcLen } : null,
       })
     }
     // 着弾時に鳴らす効果音を予約（#10）

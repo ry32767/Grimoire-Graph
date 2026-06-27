@@ -60,6 +60,9 @@ export interface EnemyShot {
   damage: number
   /** 障害物を削った演出データ（#11） */
   carves: CarveBurst[]
+  /** 味方へ命中した時の対象IDと到達弧長（赤フラッシュ＋揺れ演出・#20） */
+  hitAllyId: string | null
+  hitArcLen: number
 }
 
 /** 味方の発射（描画・解決用） */
@@ -73,6 +76,11 @@ export interface AllyShot {
   misfirePos: Vec2 | null
   /** 障害物を削った演出データ（#11） */
   carves: CarveBurst[]
+  /** 発射型が命中した敵IDと到達弧長（赤フラッシュ＋揺れ演出・#20） */
+  hitEnemyId: string | null
+  hitArcLen: number
+  /** 軌道型が掃射で当てた敵ID群（#20） */
+  sweptEnemyIds: string[]
 }
 
 export interface ResolveInput {
@@ -248,6 +256,8 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       reachedTarget: false,
       damage: 0,
       carves: [],
+      hitAllyId: null,
+      hitArcLen: 0,
     })
   }
 
@@ -363,7 +373,9 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
         .filter((e) => e.hp > 0)
         .map((e) => ({ id: e.id, pos: e.pos, radius: e.hitboxRadius, element: e.element }))
       const hits = orbitSweep(p.ring, p.ringSpeed, targets)
+      const sweptEnemyIds: string[] = []
       for (const h of hits) {
+        sweptEnemyIds.push(h.id)
         const idx = enemies.findIndex((e) => e.id === h.id)
         if (idx < 0) continue
         enemies[idx] = {
@@ -379,7 +391,17 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       if (hits.length === 0) {
         log.push({ kind: 'orbit', text: `${nameOf(allies, p.cast.allyId)}は周回結界を展開した` })
       }
-      allyShots.push({ allyId: p.cast.allyId, kind: 'orbit', path: p.ring, flight: null, misfirePos: null, carves: p.carves })
+      allyShots.push({
+        allyId: p.cast.allyId,
+        kind: 'orbit',
+        path: p.ring,
+        flight: null,
+        misfirePos: null,
+        carves: p.carves,
+        hitEnemyId: null,
+        hitArcLen: 0,
+        sweptEnemyIds,
+      })
       continue
     }
 
@@ -388,8 +410,12 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     const traj = p.cast.trajectory
     const path: ZPoint[] = flight.samples.map((s) => ({ pos: s.pos, z: trajectoryZ(traj, s.param) }))
     let misfirePos: Vec2 | null = null
+    let hitEnemyId: string | null = null
+    let hitArcLen = 0
     const hit = firstHitAmong(flight.samples, enemyTargets())
     if (hit) {
+      hitEnemyId = hit.id
+      hitArcLen = hit.arcLen
       const idx = enemies.findIndex((e) => e.id === hit.id)
       const enemy = enemies[idx]
       const z = trajectoryZ(traj, hit.param)
@@ -434,7 +460,17 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     } else {
       log.push({ kind: 'miss', text: `${nameOf(allies, p.cast.allyId)}の弾は外れた` })
     }
-    allyShots.push({ allyId: p.cast.allyId, kind: 'projectile', path, flight, misfirePos, carves: p.carves })
+    allyShots.push({
+      allyId: p.cast.allyId,
+      kind: 'projectile',
+      path,
+      flight,
+      misfirePos,
+      carves: p.carves,
+      hitEnemyId,
+      hitArcLen,
+      sweptEnemyIds: [],
+    })
   }
 
   // === 6. 敵弾が味方へ命中（パス上で最初に当たった味方。逸れれば回避） ===
@@ -457,6 +493,8 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     }
     shot.reachedTarget = true
     shot.damage = damage
+    shot.hitAllyId = allies[idx].id
+    shot.hitArcLen = hit.arcLen
     log.push({
       kind: 'enemyHit',
       text: `${nameOf(enemies, shot.enemyId)}の術式が${allies[idx].name}に命中！ ${damage.toFixed(0)} ダメージ`,

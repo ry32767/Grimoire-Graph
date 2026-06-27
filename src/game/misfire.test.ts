@@ -53,7 +53,7 @@ describe('暴発の AoE 解決', () => {
   it('AoE 半径内の敵に当たる', () => {
     const r = resolveMisfire({ type: 'invalid', pos: { x: 5, y: 0 } }, 4, [
       { id: 'near', pos: { x: 5.5, y: 0 } }, // 距離0.5 < AoE
-      { id: 'far', pos: { x: 10, y: 0 } }, // 距離5 > AoE
+      { id: 'far', pos: { x: 13, y: 0 } }, // 距離8 > AoE（#29 で半径5へ拡大）
     ])
     expect(r.hitIds).toContain('near')
     expect(r.hitIds).not.toContain('far')
