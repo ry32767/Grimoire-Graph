@@ -1,0 +1,220 @@
+// 関数カタログ（§3.10 A/B）・自由入力式の安全評価（mathjs）・サンプル出力（機能1・2）。
+import { compile } from 'mathjs'
+import type { Trajectory } from './types'
+
+/** 係数スライダーの定義 */
+export interface Coefficient {
+  key: string
+  label: string
+  min: number
+  max: number
+  step: number
+  default: number
+}
+
+type CoeffMap = Record<string, number>
+
+interface PresetBase {
+  id: string
+  name: string
+  formula: string
+  /** チュートリアル／関数解説でそのまま提示する説明文（§3.10） */
+  description: string
+  coeffs: Coefficient[]
+}
+
+/** 回転方式プリセット（直交 y=g(x)） */
+export interface RotatePreset extends PresetBase {
+  category: 'rotate'
+  buildG: (c: CoeffMap) => (x: number) => number
+}
+
+/** 極座標方式プリセット（r=f(θ)） */
+export interface PolarPreset extends PresetBase {
+  category: 'polar'
+  buildF: (c: CoeffMap) => (theta: number) => number
+}
+
+export type Preset = RotatePreset | PolarPreset
+
+const coeff = (
+  key: string,
+  label: string,
+  min: number,
+  max: number,
+  step: number,
+  def: number,
+): Coefficient => ({ key, label, min, max, step, default: def })
+
+// ===== A. 軌道（直交 y=g(x)・狙う角度θで回転） =====
+
+export const ROTATE_PRESETS: RotatePreset[] = [
+  {
+    id: 'line',
+    name: '直線',
+    category: 'rotate',
+    formula: 'y = a·x + b',
+    description: 'まっすぐ飛ぶ基本の術式。狙いを定めやすい。',
+    coeffs: [coeff('a', 'a', -3, 3, 0.1, 1), coeff('b', 'b', -5, 5, 0.1, 0)],
+    buildG: (c) => (x) => c.a * x + c.b,
+  },
+  {
+    id: 'parabola',
+    name: '放物線',
+    category: 'rotate',
+    formula: 'y = a·(x−h)² + k',
+    description: '山なり／谷なりの弧。障害物を山越えできる。',
+    coeffs: [
+      coeff('a', 'a', -1, 1, 0.05, 0.3),
+      coeff('h', 'h', 0, 10, 0.1, 4),
+      coeff('k', 'k', -5, 5, 0.1, -3),
+    ],
+    buildG: (c) => (x) => c.a * (x - c.h) ** 2 + c.k,
+  },
+  {
+    id: 'sine',
+    name: 'サイン波',
+    category: 'rotate',
+    formula: 'y = A·sin(B·x) + C',
+    description: '波打って飛ぶ。光と闇の場を縫える。変異が大きい。',
+    coeffs: [
+      coeff('A', 'A', 0, 4, 0.1, 3),
+      coeff('B', 'B', 0.2, 2, 0.05, 1),
+      coeff('C', 'C', -3, 3, 0.1, 0),
+    ],
+    buildG: (c) => (x) => c.A * Math.sin(c.B * x) + c.C,
+  },
+  {
+    id: 'exp',
+    name: '指数',
+    category: 'rotate',
+    formula: 'y = a·e^(b·x) + c',
+    description: '終盤で急上昇。遠くで一気に跳ね上がる。',
+    coeffs: [
+      coeff('a', 'a', 0, 2, 0.1, 1),
+      coeff('b', 'b', -1, 1, 0.05, 0.3),
+      coeff('c', 'c', -3, 3, 0.1, -2),
+    ],
+    buildG: (c) => (x) => c.a * Math.exp(c.b * x) + c.c,
+  },
+  {
+    id: 'abs',
+    name: '絶対値',
+    category: 'rotate',
+    formula: 'y = a·|x−h| + k',
+    description: 'V字に鋭く折れる。きっかけで方向を変える。',
+    coeffs: [
+      coeff('a', 'a', -2, 2, 0.1, 1),
+      coeff('h', 'h', 0, 10, 0.1, 4),
+      coeff('k', 'k', -5, 5, 0.1, -3),
+    ],
+    buildG: (c) => (x) => c.a * Math.abs(x - c.h) + c.k,
+  },
+]
+
+// ===== B. 軌道（極座標 r=f(θ)・全方向） =====
+
+export const POLAR_PRESETS: PolarPreset[] = [
+  {
+    id: 'circle',
+    name: '円',
+    category: 'polar',
+    formula: 'r = R',
+    description: '一定半径で全周をなめる。結界の基本形にも。',
+    coeffs: [coeff('R', 'R', 1, 12, 0.5, 6)],
+    buildF: (c) => () => c.R,
+  },
+  {
+    id: 'spiral',
+    name: 'らせん',
+    category: 'polar',
+    formula: 'r = a·θ',
+    description: '渦巻き状に外へ。全方向を順に薙ぐ。',
+    coeffs: [coeff('a', 'a', 0.2, 2, 0.1, 1)],
+    buildF: (c) => (t) => c.a * t,
+  },
+  {
+    id: 'rose',
+    name: 'バラ曲線',
+    category: 'polar',
+    formula: 'r = a·cos(k·θ)',
+    description: '花びら状に複数方向へ同時に伸びる。変異が大きい。',
+    coeffs: [coeff('a', 'a', 1, 10, 0.5, 6), coeff('k', 'k', 2, 5, 1, 4)],
+    buildF: (c) => (t) => c.a * Math.cos(c.k * t),
+  },
+  {
+    id: 'limacon',
+    name: 'リマソン',
+    category: 'polar',
+    formula: 'r = a + b·cos(θ)',
+    description: 'ハート／くぼみ形。片側に強く張り出す。',
+    coeffs: [coeff('a', 'a', 1, 6, 0.5, 3), coeff('b', 'b', 1, 6, 0.5, 3)],
+    buildF: (c) => (t) => c.a + c.b * Math.cos(t),
+  },
+]
+
+export const ALL_PRESETS: Preset[] = [...ROTATE_PRESETS, ...POLAR_PRESETS]
+
+/** 係数の既定値マップを作る */
+export function defaultCoeffs(preset: Preset): CoeffMap {
+  const m: CoeffMap = {}
+  for (const c of preset.coeffs) m[c.key] = c.default
+  return m
+}
+
+/** プリセット＋係数＋（回転時の）角度から Trajectory を組み立てる */
+export function buildTrajectory(
+  preset: Preset,
+  coeffs: CoeffMap,
+  angle: number,
+): Trajectory {
+  if (preset.category === 'rotate') {
+    return { mode: 'rotate', g: preset.buildG(coeffs), angle }
+  }
+  return { mode: 'polar', f: preset.buildF(coeffs) }
+}
+
+// ===== 自由入力式（x の式）の安全評価（mathjs のみ・eval 禁止） =====
+
+/**
+ * 自由入力式をパースして g(x) を返す。不正式なら null（UI は直前の有効関数を維持）。
+ * 評価結果が実数でない（複素数など）／例外時は NaN を返す（→ サンプリングで暴発扱い）。
+ */
+export function parseExpression(expr: string): ((x: number) => number) | null {
+  const trimmed = expr.trim()
+  if (trimmed === '') return null
+  let code
+  try {
+    code = compile(trimmed)
+  } catch {
+    return null
+  }
+  const fn = (x: number): number => {
+    try {
+      const v: unknown = code.evaluate({ x })
+      return typeof v === 'number' ? v : NaN
+    } catch {
+      return NaN
+    }
+  }
+  // 妥当性チェック：未知の記号などはテスト評価で弾く
+  const probe = fn(1)
+  const probe2 = fn(2)
+  if (Number.isNaN(probe) && Number.isNaN(probe2)) return null
+  return fn
+}
+
+// ===== サンプル出力（機能2） =====
+
+export interface SamplePoint {
+  x: number
+  y: number
+}
+
+/** 軌道関数のサンプル出力（既定 f(0), f(2), f(5)） */
+export function sampleOutputs(
+  g: (x: number) => number,
+  xs: number[] = [0, 2, 5],
+): SamplePoint[] {
+  return xs.map((x) => ({ x, y: g(x) }))
+}

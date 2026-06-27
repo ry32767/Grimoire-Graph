@@ -1,0 +1,5 @@
+# リポジトリ内の改行は LF に統一（クロスプラットフォームでの差分ノイズ防止）
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.svg text eol=lf
