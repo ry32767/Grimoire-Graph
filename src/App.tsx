@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import type { Ally, AllyCast, BattleState, Vec2 } from './game/types'
 import { createBattleState, prepareTurn, resolveAllyCasts } from './game/battle'
 import { planEnemyShot, enemyFlight } from './game/enemyAI'
+import { recommendCast } from './game/recommend'
 import { ROTATE_PRESETS, defaultCoeffs } from './game/functions'
 import { STAGES } from './data/stages'
 import { makeParty } from './data/party'
@@ -49,7 +50,7 @@ function makeComposer(angle: number): ComposerState {
 /** パーティ各自の初期コンポーザ（敵陣（上方）へ向ける）。 */
 function initComposers(party: Ally[]): Record<string, ComposerState> {
   const m: Record<string, ComposerState> = {}
-  for (const a of party) m[a.id] = makeComposer(aimAngle(a.pos, { x: 0, y: 9 }, 1))
+  for (const a of party) m[a.id] = makeComposer(aimAngle(a.pos, { x: 0, y: 19 }, 1))
   return m
 }
 
@@ -142,16 +143,13 @@ export default function App() {
     const ally = battle.allies.find((a) => a.id === activeAllyId)
     const target = battle.enemies.find((e) => e.hp > 0)
     if (!ally || !target) return
-    // 敵の反対極を作る直線 g(x)=a·x。光の敵→闇(a<0)、闇/中立→光(a>0)。
-    const a = target.element === 'light' ? -1 : 1
-    const coeffs = { a, b: 0 }
+    // 障害物の貫通/迂回を込みで「当たる」術式を探す
+    const r = recommendCast(ally.pos, target, battle.mechanics.obstacles ? battle.obstacles : [])
     setComposers((m) => ({
       ...m,
-      [activeAllyId]: {
-        ...makeComposer(aimAngle(ally.pos, target.pos, a)),
-        coeffs,
-        freeExpr: `${a}*x`,
-      },
+      [activeAllyId]: r.line
+        ? { ...makeComposer(r.angle), coeffs: { a: r.line.a, b: r.line.b }, freeExpr: `${r.line.a}*x` }
+        : { ...makeComposer(r.angle), useFree: true, freeExpr: r.freeExpr ?? '' },
     }))
   }
 
@@ -177,6 +175,7 @@ export default function App() {
           samples: s.flight.samples.map((x) => ({ pos: x.pos, speed: x.speed, arcLen: x.arcLen })),
           side: 'ally',
           misfirePos: s.misfirePos,
+          carves: s.carves,
         })
       }
     }
@@ -185,6 +184,7 @@ export default function App() {
         samples: es.flight.samples.map((x) => ({ pos: x.pos, speed: x.speed, arcLen: x.arcLen })),
         side: 'enemy',
         misfirePos: null,
+        carves: es.carves,
       })
     }
     // 着弾時に鳴らす効果音を予約（#10）

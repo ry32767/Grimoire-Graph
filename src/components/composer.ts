@@ -47,6 +47,11 @@ export function buildComposerTrajectory(c: ComposerState, origin?: Vec2): Trajec
     if (!preset || preset.category !== 'rotate') return null
     return buildTrajectory(preset, c.coeffs, c.angle, origin)
   }
+  if (c.useFree) {
+    const f = parseExpression(c.freeExpr, 't')
+    if (!f) return null
+    return { mode: 'polar', f, origin }
+  }
   const preset = findPreset(c.presetId)
   if (!preset || preset.category !== 'polar') return null
   return buildTrajectory(preset, c.coeffs, 0, origin)

@@ -2,9 +2,22 @@ import { describe, it, expect } from 'vitest'
 import { STAGES } from './stages'
 import { ROTATE_PRESETS, buildTrajectory } from '../game/functions'
 import { createBattleState, prepareTurn, resolveAllyCasts } from '../game/battle'
-import { makeParty } from './party'
+import { makeParty, PARTY } from './party'
 import { FIELD } from './constants'
 import { dist } from '../game/coords'
+import { isSolidAt } from '../game/obstacle'
+import type { Obstacle, Vec2 } from '../game/types'
+
+/** 線分 a→e のどこかが障害物の素材に当たるか（直線で射線が通らない＝壁で遮られる）。 */
+function segmentBlocked(a: Vec2, e: Vec2, obstacles: Obstacle[]): boolean {
+  const steps = 300
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps
+    const p = { x: a.x + (e.x - a.x) * t, y: a.y + (e.y - a.y) * t }
+    for (const o of obstacles) if (isSolidAt(o, p)) return true
+  }
+  return false
+}
 
 describe('ステージ定義（機能14・#15）', () => {
   it('3ステージ以上ある', () => {
@@ -17,7 +30,7 @@ describe('ステージ定義（機能14・#15）', () => {
     expect(last.mechanics.enemyFire).toBe(true)
   })
 
-  it('敵・障害物は場内に配置され、HP/耐久は正', () => {
+  it('敵・障害物ブロブは場内に配置され、HP/円は正', () => {
     for (const s of STAGES) {
       expect(s.enemies.length).toBeGreaterThan(0)
       expect(s.introText.length).toBeGreaterThan(0)
@@ -27,8 +40,23 @@ describe('ステージ定義（機能14・#15）', () => {
         expect(e.hp).toBeGreaterThan(0)
       }
       for (const o of s.obstacles) {
-        expect(dist(o.pos)).toBeLessThan(FIELD.rField)
-        expect(o.durability).toBeGreaterThan(0)
+        expect(o.solids.length).toBeGreaterThan(0)
+        expect(o.carves).toEqual([])
+        for (const d of o.solids) {
+          expect(dist({ x: d.x, y: d.y })).toBeLessThan(FIELD.rField)
+          expect(d.r).toBeGreaterThan(0)
+        }
+      }
+    }
+  })
+
+  it('障害物ありステージは開始時、全ての味方→敵の直線が壁で遮られる', () => {
+    for (const s of STAGES) {
+      if (!s.mechanics.obstacles) continue // チュートリアル等は直線可
+      for (const a of PARTY) {
+        for (const e of s.enemies) {
+          expect(segmentBlocked(a.pos, e.pos, s.obstacles)).toBe(true)
+        }
       }
     }
   })

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { resolveTurn } from './turn'
-import type { Ally, AllyCast, Enemy, Mechanics, Trajectory } from './types'
+import { isSolidAt } from './obstacle'
+import type { Ally, AllyCast, Enemy, Mechanics, Obstacle, Trajectory } from './types'
 
 const onlyHit: Mechanics = { obstacles: false, enemyFire: false }
 const withFire: Mechanics = { obstacles: false, enemyFire: true }
@@ -140,21 +141,87 @@ describe('防御の重ね掛け（軌道型＋パリィ）', () => {
   })
 })
 
-describe('障害物（耐久＝半径を削る・#1/#16）', () => {
-  it('障害物に当たると耐久が削れる', () => {
+// +x 軸上に伸びる光のブロブ壁（中心 [x0,x1] を半径 1.6 の円で埋める）
+const lightWall = (x0: number, x1: number): Obstacle => ({
+  id: 'wall',
+  element: 'light',
+  solids: Array.from({ length: Math.round((x1 - x0) / 1.6) + 1 }, (_, i) => ({
+    x: x0 + i * 1.6,
+    y: 0,
+    r: 1.6,
+  })),
+  carves: [],
+})
+
+describe('障害物の削り・貫通条件（#1/#16）', () => {
+  it('厚い同極の壁は弱い弾を止めて貫通させない（削り切れず消滅・敵に届かない）', () => {
+    const res = resolveTurn({
+      allies: [ally('a', { x: 0, y: 0 })],
+      // 強い光・低速・+x直進（強属性なので加速せず、同極の厚い壁を削り切れない）
+      casts: [cast('a', { mode: 'rotate', g: () => 5, angle: 0, origin: { x: 0, y: 0 } }, 5)],
+      enemies: [enemy('e', { x: 20, y: 0 }, 'dark')],
+      castingEnemyIds: [],
+      obstacles: [lightWall(4, 14)], // 同極＝削りにくい厚い壁
+      mechanics: withObs,
+    })
+    expect(res.enemies[0].hp).toBe(100) // 敵には届かない
+    expect(res.log.some((l) => l.kind === 'obstacle' && l.text.includes('止まった'))).toBe(true)
+    expect(isSolidAt(res.obstacles[0], { x: 13, y: 0 })).toBe(true) // 壁の奥は残る
+  })
+
+  it('魔法が当たった点を中心に円でえぐられ穴が開く（carves）', () => {
     const res = resolveTurn({
       allies: [ally('a', { x: 0, y: 0 })],
       casts: [cast('a', lightRay())],
       enemies: [enemy('e', { x: 9, y: 0 }, 'dark')],
       castingEnemyIds: [],
-      obstacles: [
-        { id: 'o', pos: { x: 4, y: 0 }, hitboxRadius: 1, element: 'light', durability: 50, maxDurability: 50, maxRadius: 1 },
-      ],
+      // lightRay は +x 軸上を進む（pos=(√2·x, 0)）。(4,0) のブロブを通過する
+      obstacles: [{ id: 'o', element: 'light', solids: [{ x: 4, y: 0, r: 1.6 }], carves: [] }],
       mechanics: withObs,
     })
-    expect(res.obstacles[0].durability).toBeLessThan(50)
-    expect(res.obstacles[0].hitboxRadius).toBeLessThan(1) // 半径も縮む
+    expect(res.obstacles[0].carves.length).toBeGreaterThan(0) // 円が引かれた
+    expect(isSolidAt(res.obstacles[0], { x: 4, y: 0 })).toBe(false) // 当たった所に穴
     expect(res.log.some((l) => l.kind === 'obstacle')).toBe(true)
+  })
+
+  it('厚い壁は最大威力でも1発で貫通できず、撃ち続ければ数発で貫通する（#1/#16）', () => {
+    // 1発で消し飛ばさず、掘り進めるには複数発要る。強属性 z=5 で加速させない。
+    let obstacles = [lightWall(4, 12)]
+    const fireMax = () => {
+      const res = resolveTurn({
+        allies: [ally('a', { x: 0, y: 0 })],
+        casts: [cast('a', { mode: 'rotate', g: () => 5, angle: 0, origin: { x: 0, y: 0 } }, 14)],
+        enemies: [enemy('e', { x: 20, y: 0 }, 'dark')],
+        castingEnemyIds: [],
+        obstacles,
+        mechanics: withObs,
+      })
+      obstacles = res.obstacles // 削り跡を次の発に引き継ぐ
+      return res.enemies[0].hp
+    }
+    const hp1 = fireMax()
+    expect(hp1).toBe(100) // 1発では貫通できない
+    let hp = hp1
+    let shots = 1
+    while (hp === 100 && shots < 12) {
+      hp = fireMax()
+      shots++
+    }
+    expect(hp).toBeLessThan(100) // 撃ち続ければ貫通して命中
+    expect(shots).toBeGreaterThanOrEqual(2) // 1発では無理だった
+  })
+
+  it('低威力の弾は厚い壁で止まる（貫通しない）', () => {
+    const res = resolveTurn({
+      allies: [ally('a', { x: 0, y: 0 })],
+      casts: [cast('a', { mode: 'rotate', g: () => 5, angle: 0, origin: { x: 0, y: 0 } }, 4)],
+      enemies: [enemy('e', { x: 20, y: 0 }, 'dark')],
+      castingEnemyIds: [],
+      obstacles: [lightWall(4, 12)],
+      mechanics: withObs,
+    })
+    expect(res.enemies[0].hp).toBe(100) // 届かない
+    expect(isSolidAt(res.obstacles[0], { x: 10, y: 0 })).toBe(true) // 壁の奥は残る
   })
 })
 

@@ -116,6 +116,35 @@ describe('自由入力式（mathjs）', () => {
   })
 })
 
+describe('極座標の自由入力（θ は t・#19）', () => {
+  it('t を変数とする式をパースできる', () => {
+    const f = parseExpression('8*cos(2*t)', 't')
+    expect(f).not.toBeNull()
+    expect(f!(0)).toBeCloseTo(8, 6)
+    expect(f!(Math.PI / 2)).toBeCloseTo(-8, 6) // cos(π) = -1
+  })
+
+  it('定数式（円）も受け付ける', () => {
+    const f = parseExpression('11', 't')
+    expect(f).not.toBeNull()
+    expect(f!(3)).toBe(11)
+  })
+
+  it('x のパーサに t の式を渡すと未知変数で null', () => {
+    expect(parseExpression('cos(t)', 'x')).toBeNull()
+  })
+
+  it('各極座標プリセットの toExpr が自身の buildF と一致する', () => {
+    for (const p of POLAR_PRESETS) {
+      const coeffs = defaultCoeffs(p)
+      const fromExpr = parseExpression(p.toExpr(coeffs), 't')
+      const fromBuild = p.buildF(coeffs)
+      expect(fromExpr).not.toBeNull()
+      for (const t of [0, 1, 2.5]) expect(fromExpr!(t)).toBeCloseTo(fromBuild(t), 6)
+    }
+  })
+})
+
 describe('サンプル出力（機能2）', () => {
   it('既定で f(0), f(2), f(5) を返す', () => {
     const out = sampleOutputs((x) => x * x)

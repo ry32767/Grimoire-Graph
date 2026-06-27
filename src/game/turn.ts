@@ -4,11 +4,14 @@
 import type {
   Ally,
   AllyCast,
+  CarveBurst,
   Enemy,
   Flight,
+  FlightSample,
   LogEntry,
   Mechanics,
   Obstacle,
+  Trajectory,
   Vec2,
   ZPoint,
 } from './types'
@@ -27,9 +30,9 @@ import {
   sampleAtLength,
   type LossEvent,
 } from './physics'
-import { firstHit, firstHitAmong, type Target } from './collision'
+import { firstHitAmong, type Target } from './collision'
 import { firstCrossing, resolveParry } from './parry'
-import { applyObstacleHit } from './obstacle'
+import { isSolidAt, carveSpeedLoss, carveRadius } from './obstacle'
 import { resolveMisfire } from './misfire'
 import { makeStatus, addStatus } from './status'
 import { dist } from './coords'
@@ -55,6 +58,8 @@ export interface EnemyShot {
   blocked: boolean
   reachedTarget: boolean
   damage: number
+  /** 障害物を削った演出データ（#11） */
+  carves: CarveBurst[]
 }
 
 /** 味方の発射（描画・解決用） */
@@ -66,6 +71,8 @@ export interface AllyShot {
   /** 発射型の最終飛行 */
   flight: Flight | null
   misfirePos: Vec2 | null
+  /** 障害物を削った演出データ（#11） */
+  carves: CarveBurst[]
 }
 
 export interface ResolveInput {
@@ -128,7 +135,88 @@ interface AllyPlan {
   ring: RingPoint[] | null
   ringSpeed: number
   freeFlight: Flight | null
+  carves: CarveBurst[]
 }
+
+/**
+ * 弾が障害物を「えぐり取りながら」進む解決の中核（#1/#16・Graph War 風）。
+ * パスが素材（solids にあり carves に無い点）に触れた点を衝突とみなし、その点を中心に
+ * 威力分の半径の円を carves に足して滑らかにえぐる。えぐった穴の先は素通りなので、次に
+ * 素材へ再突入した点で再びえぐる。えぐるたびに弾は減速し、速度が 0 になればその場で消滅し
+ * 貫通しない。威力が高いほど一撃で広くえぐれる＝少ない回数で抜けられる＝貫通しやすい。
+ * losses は呼び出し側と共有し、resim は「元の初速＋全減衰」で飛行を作り直す。
+ * obstacles の carves は in place で更新（呼び出し側が複製済み）。
+ */
+function carveAlong(
+  geom: FlightSample[],
+  obstacles: Obstacle[],
+  zAt: (param: number) => number,
+  losses: LossEvent[],
+  resim: (losses: LossEvent[]) => Flight,
+  current: Flight,
+): { flight: Flight; bursts: CarveBurst[]; vanished: boolean } {
+  let flight = current
+  const bursts: CarveBurst[] = []
+  if (geom.length <= 1) return { flight, bursts, vanished: false }
+  let vanished = false
+  // パスを原点側から辿り、素材へ触れた点でえぐる。えぐった穴の中は素通り。
+  for (let s = 0; s < geom.length; s++) {
+    let hit: Obstacle | null = null
+    for (const ob of obstacles) {
+      if (isSolidAt(ob, geom[s].pos)) {
+        hit = ob
+        break
+      }
+    }
+    if (!hit) continue // 素材に触れていない（空間 or 穴の中）
+    const cur = sampleAtLength(flight, geom[s].arcLen)
+    if (!cur || cur.speed <= 0) {
+      vanished = true
+      break
+    }
+    const z = zAt(geom[s].param)
+    const attr = attributeOf(z)
+    const power = cur.speed * (strengthOf(z) + 1) // 中立弾でも運動量で少しえぐれる
+    const r = carveRadius(power)
+    // 当たった点を中心に円を引き算して滑らかにえぐる
+    hit.carves.push({ x: geom[s].pos.x, y: geom[s].pos.y, r })
+    bursts.push({ pos: geom[s].pos, r, arcLen: geom[s].arcLen, attr, obstacleId: hit.id })
+    losses.push({ arcLen: geom[s].arcLen, deltaV: carveSpeedLoss(attr, hit.element) })
+    flight = resim(losses)
+    if (flight.end === 'vanished') {
+      vanished = true
+      break
+    }
+  }
+  return { flight, bursts, vanished }
+}
+
+/** 味方弾（軌道・z=関数値）が障害物セルを削りながら進む。おすすめ探索でも再利用。 */
+export function traverseObstacles(
+  traj: Trajectory,
+  initSpeed: number,
+  freeFlight: Flight,
+  obstacles: Obstacle[],
+): { flight: Flight; logs: LogEntry[]; carves: CarveBurst[] } {
+  const losses: LossEvent[] = []
+  const r = carveAlong(
+    freeFlight.samples,
+    obstacles,
+    (param) => trajectoryZ(traj, param),
+    losses,
+    (ls) => simulateWithLosses(traj, initSpeed, ls),
+    freeFlight,
+  )
+  const logs: LogEntry[] = []
+  if (r.bursts.length > 0) {
+    logs.push({
+      kind: 'obstacle',
+      text: r.vanished ? '障害物をえぐったが弾は止まった' : '障害物をえぐり抜いて貫通した',
+    })
+  }
+  return { flight: r.flight, logs, carves: r.bursts }
+}
+
 
 /** 同時発射の解決。入力は変更せず、新しい状態とログ・飛行データを返す。 */
 export function resolveTurn(input: ResolveInput): ResolveResult {
@@ -136,7 +224,8 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
   const log: LogEntry[] = []
   const allies = input.allies.map((a) => ({ ...a, statuses: [...a.statuses] }))
   const enemies = input.enemies.map((e) => ({ ...e, statuses: [...e.statuses] }))
-  const obstacles = input.obstacles.map((o) => ({ ...o }))
+  // carves は削りで増えるので、入力を壊さないようターンごとに新しい配列へ複製（solids は不変で共有）
+  const obstacles = input.obstacles.map((o) => ({ ...o, carves: [...o.carves] }))
 
   const allyById = (id: string) => allies.find((a) => a.id === id)
   const enemyTargets = (): Target[] =>
@@ -158,6 +247,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       blocked: false,
       reachedTarget: false,
       damage: 0,
+      carves: [],
     })
   }
 
@@ -170,10 +260,10 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     if (kind === 'orbit') {
       const ring = buildRing(cast.trajectory)
       const ringFlight = simulateFlight(cast.trajectory, cast.initialSpeed)
-      plans.push({ cast, kind, ring, ringSpeed: meanSpeed(ringFlight), freeFlight: null })
+      plans.push({ cast, kind, ring, ringSpeed: meanSpeed(ringFlight), freeFlight: null, carves: [] })
     } else {
       const freeFlight = simulateFlight(cast.trajectory, cast.initialSpeed)
-      plans.push({ cast, kind, ring: null, ringSpeed: 0, freeFlight })
+      plans.push({ cast, kind, ring: null, ringSpeed: 0, freeFlight, carves: [] })
     }
   }
 
@@ -182,12 +272,35 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
   // （軌道型→パリィなど複数防御の速度損を正しく重ねる）。
   for (const shot of enemyShots) {
     const initSpeed = shot.flight.samples[0]?.speed ?? 0
+    const geom = shot.flight.samples // 幾何（位置・弧長）は減衰で変わらない
     const pathPoly = polyFromPoints(shot.path)
     const arcAt = (idx: number) => pathPoly[Math.min(idx, pathPoly.length - 1)]?.cumLen ?? 0
     const losses: LossEvent[] = []
     const resim = () => {
       shot.flight = simulatePath(shot.path, initSpeed, () => shot.castZ, losses)
     }
+
+    // 3z. 障害物は敵弾も削りながら遮る（味方の盾になる・#16）。削り切れず速度0で止まれば消滅。
+    if (mechanics.obstacles && geom.length > 1) {
+      const r = carveAlong(
+        geom,
+        obstacles,
+        () => shot.castZ,
+        losses,
+        (ls) => simulatePath(shot.path, initSpeed, () => shot.castZ, ls),
+        shot.flight,
+      )
+      shot.flight = r.flight
+      shot.carves = r.bursts
+      if (r.bursts.length > 0) {
+        log.push({
+          kind: 'obstacle',
+          text: r.vanished ? '敵弾は障害物に阻まれて消えた' : '敵弾が障害物をえぐった',
+        })
+      }
+      if (shot.flight.end === 'vanished') shot.blocked = true
+    }
+    if (shot.blocked) continue
 
     // 3a. 軌道型リングが境界で迎撃
     for (const p of plans) {
@@ -233,25 +346,13 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     }
   }
 
-  // === 4. 障害物：各発射型が通過点で耐久＝半径を削り、減速する（#1/#16） ===
+  // === 4. 障害物：弾は障害物内を進むほど減速し、威力で耐久＝半径を削る（#1/#16） ===
   for (const p of plans) {
-    if (p.kind !== 'projectile' || !p.freeFlight) continue
-    const losses: LossEvent[] = []
-    if (mechanics.obstacles) {
-      for (let i = 0; i < obstacles.length; i++) {
-        const ob = obstacles[i]
-        if (ob.durability <= 0 || ob.hitboxRadius <= 0) continue
-        const hit = firstHit(p.freeFlight.samples, ob.pos, ob.hitboxRadius)
-        if (!hit) continue
-        const z = trajectoryZ(p.cast.trajectory, hit.param)
-        const power = hit.speed * strengthOf(z)
-        const res = applyObstacleHit(ob, power, attributeOf(z))
-        obstacles[i] = res.obstacle
-        losses.push({ arcLen: hit.arcLen, deltaV: res.speedLoss })
-        log.push({ kind: 'obstacle', text: res.destroyed ? '障害物を砕いた' : '障害物が弾を削った' })
-      }
-    }
-    p.freeFlight = simulateWithLosses(p.cast.trajectory, p.cast.initialSpeed, losses)
+    if (p.kind !== 'projectile' || !p.freeFlight || !mechanics.obstacles) continue
+    const res = traverseObstacles(p.cast.trajectory, p.cast.initialSpeed, p.freeFlight, obstacles)
+    p.freeFlight = res.flight
+    p.carves = res.carves
+    for (const l of res.logs) log.push(l)
   }
 
   // === 5. 攻撃：命中（発射型）／掃射（軌道型）／暴発 ===
@@ -278,7 +379,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       if (hits.length === 0) {
         log.push({ kind: 'orbit', text: `${nameOf(allies, p.cast.allyId)}は周回結界を展開した` })
       }
-      allyShots.push({ allyId: p.cast.allyId, kind: 'orbit', path: p.ring, flight: null, misfirePos: null })
+      allyShots.push({ allyId: p.cast.allyId, kind: 'orbit', path: p.ring, flight: null, misfirePos: null, carves: p.carves })
       continue
     }
 
@@ -333,7 +434,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     } else {
       log.push({ kind: 'miss', text: `${nameOf(allies, p.cast.allyId)}の弾は外れた` })
     }
-    allyShots.push({ allyId: p.cast.allyId, kind: 'projectile', path, flight, misfirePos })
+    allyShots.push({ allyId: p.cast.allyId, kind: 'projectile', path, flight, misfirePos, carves: p.carves })
   }
 
   // === 6. 敵弾が味方へ命中（パス上で最初に当たった味方。逸れれば回避） ===

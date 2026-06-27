@@ -37,6 +37,8 @@ export interface RotatePreset extends PresetBase {
 export interface PolarPreset extends PresetBase {
   category: 'polar'
   buildF: (c: CoeffMap) => (theta: number) => number
+  /** 現在の係数を mathjs 式に変換（θ は t・自由入力へコピー用） */
+  toExpr: (c: CoeffMap) => string
 }
 
 export type Preset = RotatePreset | PolarPreset
@@ -63,7 +65,7 @@ export const ROTATE_PRESETS: RotatePreset[] = [
     formula: 'y = a·x + b',
     freeName: 'x（一次式）',
     description: 'まっすぐ飛ぶ基本の術式。狙いを定めやすい。',
-    coeffs: [coeff('a', 'a', -5, 5, 0.1, 1), coeff('b', 'b', -12, 12, 0.2, 0)],
+    coeffs: [coeff('a', 'a', -6, 6, 0.1, 1), coeff('b', 'b', -18, 18, 0.2, 0)],
     buildG: (c) => (x) => c.a * x + c.b,
     toExpr: (c) => `${num(c.a)}*x + ${num(c.b)}`,
   },
@@ -75,9 +77,9 @@ export const ROTATE_PRESETS: RotatePreset[] = [
     freeName: '(x-h)^2（二次式）',
     description: '山なり／谷なりの弧。障害物を山越えできる。',
     coeffs: [
-      coeff('a', 'a', -2, 2, 0.05, 0.3),
-      coeff('h', 'h', 0, 16, 0.2, 5),
-      coeff('k', 'k', -12, 12, 0.2, -4),
+      coeff('a', 'a', -2, 2, 0.05, 0.25),
+      coeff('h', 'h', 0, 24, 0.2, 8),
+      coeff('k', 'k', -18, 18, 0.2, -6),
     ],
     buildG: (c) => (x) => c.a * (x - c.h) ** 2 + c.k,
     toExpr: (c) => `${num(c.a)}*(x - ${num(c.h)})^2 + ${num(c.k)}`,
@@ -90,9 +92,9 @@ export const ROTATE_PRESETS: RotatePreset[] = [
     freeName: 'sin',
     description: '波打って飛ぶ。光と闇を交互に帯びる。変異が大きい。',
     coeffs: [
-      coeff('A', 'A', 0, 8, 0.1, 4),
-      coeff('B', 'B', 0.1, 3, 0.05, 0.8),
-      coeff('C', 'C', -6, 6, 0.1, 0),
+      coeff('A', 'A', 0, 12, 0.1, 6),
+      coeff('B', 'B', 0.1, 3, 0.05, 0.6),
+      coeff('C', 'C', -9, 9, 0.1, 0),
     ],
     buildG: (c) => (x) => c.A * Math.sin(c.B * x) + c.C,
     toExpr: (c) => `${num(c.A)}*sin(${num(c.B)}*x) + ${num(c.C)}`,
@@ -105,9 +107,9 @@ export const ROTATE_PRESETS: RotatePreset[] = [
     freeName: 'exp',
     description: '終盤で急上昇。遠くで一気に跳ね上がる。',
     coeffs: [
-      coeff('a', 'a', 0, 3, 0.1, 1),
-      coeff('b', 'b', -1, 1, 0.05, 0.25),
-      coeff('c', 'c', -6, 6, 0.1, -3),
+      coeff('a', 'a', 0, 4, 0.1, 1),
+      coeff('b', 'b', -0.8, 0.8, 0.05, 0.2),
+      coeff('c', 'c', -9, 9, 0.1, -5),
     ],
     buildG: (c) => (x) => c.a * Math.exp(c.b * x) + c.c,
     toExpr: (c) => `${num(c.a)}*exp(${num(c.b)}*x) + ${num(c.c)}`,
@@ -120,9 +122,9 @@ export const ROTATE_PRESETS: RotatePreset[] = [
     freeName: 'abs',
     description: 'V字に鋭く折れる。きっかけで方向を変える。',
     coeffs: [
-      coeff('a', 'a', -4, 4, 0.1, 1),
-      coeff('h', 'h', 0, 16, 0.2, 5),
-      coeff('k', 'k', -12, 12, 0.2, -4),
+      coeff('a', 'a', -5, 5, 0.1, 1),
+      coeff('h', 'h', 0, 24, 0.2, 8),
+      coeff('k', 'k', -18, 18, 0.2, -6),
     ],
     buildG: (c) => (x) => c.a * Math.abs(x - c.h) + c.k,
     toExpr: (c) => `${num(c.a)}*abs(x - ${num(c.h)}) + ${num(c.k)}`,
@@ -139,8 +141,9 @@ export const POLAR_PRESETS: PolarPreset[] = [
     formula: 'r = R',
     freeName: 'R（定数）',
     description: '一定半径で全周をなめる。結界の基本形にも。',
-    coeffs: [coeff('R', 'R', 1, 18, 0.5, 7)],
+    coeffs: [coeff('R', 'R', 2, 28, 0.5, 11)],
     buildF: (c) => () => c.R,
+    toExpr: (c) => `${num(c.R)}`,
   },
   {
     id: 'spiral',
@@ -149,8 +152,9 @@ export const POLAR_PRESETS: PolarPreset[] = [
     formula: 'r = a·θ',
     freeName: 'a*θ',
     description: '渦巻き状に外へ。全方向を順に薙ぐ。',
-    coeffs: [coeff('a', 'a', 0.2, 3, 0.1, 1)],
+    coeffs: [coeff('a', 'a', 0.2, 4, 0.1, 1.4)],
     buildF: (c) => (t) => c.a * t,
+    toExpr: (c) => `${num(c.a)}*t`,
   },
   {
     id: 'rose',
@@ -159,8 +163,9 @@ export const POLAR_PRESETS: PolarPreset[] = [
     formula: 'r = a·cos(k·θ)',
     freeName: 'cos',
     description: '花びら状に複数方向へ同時に伸びる。光と闇を交互に帯びる。',
-    coeffs: [coeff('a', 'a', 1, 16, 0.5, 8), coeff('k', 'k', 2, 6, 1, 4)],
+    coeffs: [coeff('a', 'a', 2, 24, 0.5, 12), coeff('k', 'k', 2, 6, 1, 4)],
     buildF: (c) => (t) => c.a * Math.cos(c.k * t),
+    toExpr: (c) => `${num(c.a)}*cos(${num(c.k)}*t)`,
   },
   {
     id: 'limacon',
@@ -169,8 +174,9 @@ export const POLAR_PRESETS: PolarPreset[] = [
     formula: 'r = a + b·cos(θ)',
     freeName: 'cos',
     description: 'ハート／くぼみ形。片側に強く張り出す。',
-    coeffs: [coeff('a', 'a', 1, 10, 0.5, 4), coeff('b', 'b', 1, 10, 0.5, 4)],
+    coeffs: [coeff('a', 'a', 1, 15, 0.5, 6), coeff('b', 'b', 1, 15, 0.5, 6)],
     buildF: (c) => (t) => c.a + c.b * Math.cos(t),
+    toExpr: (c) => `${num(c.a)} + ${num(c.b)}*cos(t)`,
   },
 ]
 
@@ -196,13 +202,17 @@ export function buildTrajectory(
   return { mode: 'polar', f: preset.buildF(coeffs), origin }
 }
 
-// ===== 自由入力式（x の式）の安全評価（mathjs のみ・eval 禁止） =====
+// ===== 自由入力式の安全評価（mathjs のみ・eval 禁止） =====
 
 /**
- * 自由入力式をパースして g(x) を返す。不正式なら null（UI は直前の有効関数を維持）。
- * 評価結果が実数でない（複素数など）／例外時は NaN を返す（→ サンプリングで暴発扱い）。
+ * 自由入力式をパースして f(v) を返す。変数名は varName（回転=x／極座標=t＝θ・#19）。
+ * 不正式なら null（UI は直前の有効関数を維持）。評価が実数でない（複素数など）／例外時は
+ * NaN を返す（→ サンプリングで暴発扱い）。
  */
-export function parseExpression(expr: string): ((x: number) => number) | null {
+export function parseExpression(
+  expr: string,
+  varName: 'x' | 't' = 'x',
+): ((v: number) => number) | null {
   const trimmed = expr.trim()
   if (trimmed === '') return null
   let code
@@ -211,10 +221,10 @@ export function parseExpression(expr: string): ((x: number) => number) | null {
   } catch {
     return null
   }
-  const fn = (x: number): number => {
+  const fn = (v: number): number => {
     try {
-      const v: unknown = code.evaluate({ x })
-      return typeof v === 'number' ? v : NaN
+      const r: unknown = code.evaluate({ [varName]: v })
+      return typeof r === 'number' ? r : NaN
     } catch {
       return NaN
     }

@@ -33,26 +33,38 @@ export default function FunctionPanel(props: Props) {
   if (c.mode === 'rotate') {
     const g = c.useFree ? parseExpression(c.freeExpr) : preset?.category === 'rotate' ? preset.buildG(c.coeffs) : null
     if (g) samples = sampleOutputs(g, [0, 2, 5])
-  } else if (preset?.category === 'polar') {
-    const f = preset.buildF(c.coeffs)
-    samples = [0, Math.PI / 2, Math.PI].map((t) => ({ x: t, y: f(t) }))
+  } else {
+    const f = c.useFree
+      ? parseExpression(c.freeExpr, 't')
+      : preset?.category === 'polar'
+        ? preset.buildF(c.coeffs)
+        : null
+    if (f) samples = [0, Math.PI / 2, Math.PI].map((t) => ({ x: t, y: f(t) }))
   }
 
   const switchMode = (mode: 'rotate' | 'polar') => {
     const first = presetsFor(mode)[0]
-    onChange({ mode, presetId: first.id, coeffs: defaultCoeffs(first), useFree: false, freeError: null })
+    const coeffs = defaultCoeffs(first)
+    onChange({
+      mode,
+      presetId: first.id,
+      coeffs,
+      useFree: false,
+      freeError: null,
+      freeExpr: first.toExpr(coeffs),
+    })
   }
-  // #13：プリセット選択時、自由入力欄にその式を自動転記
+  // #13：プリセット選択時、自由入力欄にその式を自動転記（回転=x／極座標=t）
   const selectPreset = (id: string) => {
     const p = findPreset(id)
     if (!p) return
     const coeffs = defaultCoeffs(p)
-    const expr = p.category === 'rotate' ? p.toExpr(coeffs) : ''
-    onChange({ presetId: id, coeffs, useFree: false, freeError: null, freeExpr: expr })
+    onChange({ presetId: id, coeffs, useFree: false, freeError: null, freeExpr: p.toExpr(coeffs) })
   }
+  // #19：極座標でも自由入力（θ は t）を受け付ける
   const applyFree = () => {
-    const g = parseExpression(freeDraft)
-    if (!g) onChange({ freeError: '式が正しくありません' })
+    const f = parseExpression(freeDraft, c.mode === 'polar' ? 't' : 'x')
+    if (!f) onChange({ freeError: '式が正しくありません' })
     else onChange({ freeExpr: freeDraft, useFree: true, freeError: null })
   }
 
@@ -113,32 +125,33 @@ export default function FunctionPanel(props: Props) {
           </div>
         ))}
 
-      {c.mode === 'rotate' && (
-        <div className="free-input-wrap">
-          <div className="section-title">自由入力（x の式）</div>
-          <div className="free-input">
-            <input
-              type="text"
-              value={freeDraft}
-              placeholder="例: sin(x)*2 + 1"
-              onChange={(e) => setFreeDraft(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && applyFree()}
-            />
-            <button className="btn small" onClick={applyFree}>
-              適用
-            </button>
-          </div>
-          {c.freeError && <div className="field-error">{c.freeError}</div>}
-          <div className="hint">
-            使える関数: <code>sin cos tan sqrt exp abs log</code>（<code>^</code>はべき乗）
-          </div>
-          {preset?.category === 'rotate' && (
-            <button className="btn small" onClick={() => setFreeDraft(preset.toExpr(c.coeffs))}>
-              今の関数を式にコピー
-            </button>
-          )}
+      <div className="free-input-wrap">
+        <div className="section-title">
+          自由入力（{c.mode === 'polar' ? 'θ の式・θ は t で入力' : 'x の式'}）
         </div>
-      )}
+        <div className="free-input">
+          <input
+            type="text"
+            value={freeDraft}
+            placeholder={c.mode === 'polar' ? '例: 8*cos(2*t)' : '例: sin(x)*2 + 1'}
+            onChange={(e) => setFreeDraft(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && applyFree()}
+          />
+          <button className="btn small" onClick={applyFree}>
+            適用
+          </button>
+        </div>
+        {c.freeError && <div className="field-error">{c.freeError}</div>}
+        <div className="hint">
+          使える関数: <code>sin cos tan sqrt exp abs log</code>（<code>^</code>はべき乗）。 変数は{' '}
+          <code>{c.mode === 'polar' ? 't（=θ）' : 'x'}</code>
+        </div>
+        {preset && (
+          <button className="btn small" onClick={() => setFreeDraft(preset.toExpr(c.coeffs))}>
+            今の関数を式にコピー
+          </button>
+        )}
+      </div>
 
       {c.mode === 'rotate' && (
         <div className="slider-row">

@@ -1,68 +1,42 @@
-// 障害物（属性付き・削り／貫通・§3.7・#1/#16）。純粋関数。
-// #1/#16：被弾すると威力に応じて「耐久＝半径」を削り、弾は減速する。
-//   - 半径は耐久比に連動して縮む（小さくなるほど抵抗＝速度損も小さい）。
-//   - 削り切れば（半径0）以後は素通り＝貫通。途中で弾速が0になれば弾は消滅し貫通しない。
-// 反対極ほど「壊しやすく・貫通しやすい」：耐久は威力×相性で削れ、速度損は (2−相性) でスケール。
-import type { Attribute, Obstacle } from './types'
+// 障害物（§3.7・#1/#16・Graph War 風）。純粋関数。
+// 形は solids（重なった円の和＝連続したブロブ）で表し、魔法が当たった点を中心に円（carves）を
+// 引き算して物理的にえぐり取る。「素材」＝どれかの solid 円内で、かつどの carve 円にも入らない点。
+//   - えぐる半径 = 威力 × 係数（最大半径でキャップ）。威力が高いほど一撃で広く削れて貫通しやすい。
+//   - えぐるたびに弾は減速。速度が 0 になればその場で消滅し貫通しない。反対極ほど安く削れる。
+import type { Attribute, Obstacle, Vec2 } from './types'
 import { COMBAT } from '../data/constants'
 import { affinityMultiplier } from './attribute'
 
-/** 障害物の現在の大きさ係数（0..1）。小さいほど薄い。 */
-function sizeFrac(ob: Obstacle): number {
-  const maxR = ob.maxRadius ?? ob.hitboxRadius
-  if (maxR <= 0) return 0
-  return Math.min(1, Math.max(0, ob.hitboxRadius / maxR))
-}
-
-/** 障害物衝突による弾の速度損（反対極ほど小さい＝貫通しやすい・残厚 frac で増減・§3.7/#16） */
-export function obstacleSpeedLoss(attackAttr: Attribute, element: Attribute, frac = 1): number {
-  const aff = affinityMultiplier(attackAttr, element)
-  // 相性 1.5(反対)→0.5×base、1.0(中立)→1×base、0.5(同極)→1.5×base。残厚 frac で薄いほど小さい。
-  return COMBAT.obstacleSpeedLoss * (2 - aff) * (0.35 + 0.65 * frac)
-}
-
-/** 障害物耐久の削り量 = 威力 × 極性相性（反対極ほど大きい・§3.7） */
-export function obstacleDurabilityDamage(
-  power: number,
-  attackAttr: Attribute,
-  element: Attribute,
-): number {
-  return power * affinityMultiplier(attackAttr, element)
-}
-
-/** 障害物衝突の結果 */
-export interface ObstacleHitResult {
-  obstacle: Obstacle
-  /** 弾が失う速度 */
-  speedLoss: number
-  /** この衝突で破壊されたか（半径0＝以後貫通） */
-  destroyed: boolean
+/** 点 p が障害物の素材内か（どれかの solid 円内で、かつどの carve 円にも入っていない）。 */
+export function isSolidAt(ob: Obstacle, p: Vec2): boolean {
+  let inSolid = false
+  for (const s of ob.solids) {
+    const dx = p.x - s.x
+    const dy = p.y - s.y
+    if (dx * dx + dy * dy <= s.r * s.r) {
+      inSolid = true
+      break
+    }
+  }
+  if (!inSolid) return false
+  for (const c of ob.carves) {
+    const dx = p.x - c.x
+    const dy = p.y - c.y
+    if (dx * dx + dy * dy <= c.r * c.r) return false
+  }
+  return true
 }
 
 /**
- * 弾が障害物に当たったときの解決：威力に応じて耐久＝半径を削り、速度損を返す（#1/#16）。
- * 残速度の判定（貫通 or 停止）は呼び出し側が速度減衰の結果で行う。
- * すでに破壊済み（耐久0以下）の障害物は素通り（速度損0）。
+ * 1回えぐり取るのに弾が失う速度（#1/#16）。
+ * 相性 1.5(反対極)→×0.5、1.0(中立)→×1、0.5(同極)→×1.5。
  */
-export function applyObstacleHit(
-  obstacle: Obstacle,
-  power: number,
-  attackAttr: Attribute,
-): ObstacleHitResult {
-  const maxR = obstacle.maxRadius ?? obstacle.hitboxRadius
-  if (obstacle.durability <= 0 || obstacle.hitboxRadius <= 0) {
-    return { obstacle: { ...obstacle, maxRadius: maxR }, speedLoss: 0, destroyed: true }
-  }
-  const frac = sizeFrac(obstacle)
-  const speedLoss = obstacleSpeedLoss(attackAttr, obstacle.element, frac)
-  const dmg = obstacleDurabilityDamage(power, attackAttr, obstacle.element)
-  const durability = Math.max(0, obstacle.durability - dmg)
-  // 半径は耐久比に連動（面積基準＝√比）で縮む
-  const ratio = obstacle.maxDurability > 0 ? durability / obstacle.maxDurability : 0
-  const hitboxRadius = maxR * Math.sqrt(ratio)
-  return {
-    obstacle: { ...obstacle, durability, hitboxRadius, maxRadius: maxR },
-    speedLoss,
-    destroyed: durability <= 0,
-  }
+export function carveSpeedLoss(attackAttr: Attribute, element: Attribute): number {
+  const aff = affinityMultiplier(attackAttr, element)
+  return COMBAT.carveCost * (2 - aff)
+}
+
+/** 威力からえぐり取る半径を求める（最大 carveMaxRadius でキャップ）。威力が高いほど広い。 */
+export function carveRadius(power: number): number {
+  return Math.min(COMBAT.carveMaxRadius, Math.max(0, power) * COMBAT.carveRadiusScale)
 }
