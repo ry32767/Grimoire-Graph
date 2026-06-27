@@ -12,6 +12,7 @@ import { simulateFlight } from '../game/physics'
 import { detectMisfire } from '../game/misfire'
 import { trajectoryZ, attributeOf, strengthOf } from '../game/attribute'
 import { classifyTrajectory, type MagicKind } from '../game/loop'
+import { buildRing } from '../game/orbit'
 import { dist } from '../game/coords'
 import { FIELD } from '../data/constants'
 
@@ -92,7 +93,11 @@ export function computePreview(traj: Trajectory | null, speed: number): Preview 
   if (!traj) return EMPTY_PREVIEW
   const kind = classifyTrajectory(traj)
   const flight = simulateFlight(traj, speed)
-  const path: PathPoint[] = flight.samples.map((s) => ({ pos: s.pos, z: trajectoryZ(traj, s.param) }))
+  // 軌道型は結界リング（場外でも一周する全周）をプレビューに使う（#22）。発射型は飛行軌道。
+  const path: PathPoint[] =
+    kind === 'orbit'
+      ? buildRing(traj).map((r) => ({ pos: r.pos, z: r.z }))
+      : flight.samples.map((s) => ({ pos: s.pos, z: trajectoryZ(traj, s.param) }))
   const last = flight.samples[flight.samples.length - 1]
   const endZ = last ? trajectoryZ(traj, last.param) : 0
   const endSpeed = last ? flight.endSpeed : speed

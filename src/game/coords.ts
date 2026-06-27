@@ -96,6 +96,20 @@ export function validPrefix(samples: Sample[]): Sample[] {
   return prefix
 }
 
+/**
+ * 原点側から、最初に「無効（非有限）」になる手前までの有効な連続区間を返す。
+ * 場外（|pos|>R_field）でも切らない＝魔法の範囲制限を設けない（#25）。
+ * 軌道型（結界リング）の閉曲線判定・リング構築に使い、場の端の術者でも円が一周する（#22）。
+ */
+export function validFinitePrefix(samples: Sample[]): Sample[] {
+  const prefix: Sample[] = []
+  for (const s of samples) {
+    if (!s.valid) break
+    prefix.push(s)
+  }
+  return prefix
+}
+
 // ===== ポリライン（弧長で位置を引く） =====
 
 /** 累積弧長つきのポリライン頂点 */
