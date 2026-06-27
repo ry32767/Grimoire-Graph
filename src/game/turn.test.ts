@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { resolveTurn } from './turn'
 import { isSolidAt } from './obstacle'
+import { FIELD } from '../data/constants'
 import type { Ally, AllyCast, Enemy, Mechanics, Obstacle, Trajectory } from './types'
+
+// 新モデル（#30）：属性は z 場（位置の関数）。テスト用の一定 z 場。
+const zLight: (x: number, y: number) => number = () => FIELD.zPeak // 光・最強
+const zDark: (x: number, y: number) => number = () => -FIELD.zPeak // 闇・最強
 
 const onlyHit: Mechanics = { obstacles: false, enemyFire: false }
 const withFire: Mechanics = { obstacles: false, enemyFire: true }
@@ -45,12 +50,13 @@ const cast = (allyId: string, trajectory: Trajectory, speed = 8): AllyCast => ({
   initialSpeed: speed,
 })
 
-// 原点から +x へ飛び z=x で光を帯びる光線
+// 原点から +x へ飛び、z 場で光(最強)を帯びる光線（経路は g=x、属性は z 場で別指定）
 const lightRay = (origin = { x: 0, y: 0 }): Trajectory => ({
   mode: 'rotate',
   g: (x) => x,
   angle: -Math.PI / 4,
   origin,
+  z: zLight,
 })
 
 describe('命中 → ダメージ（#15）', () => {
@@ -99,8 +105,9 @@ describe('暴発（自爆・#3/#9）', () => {
 describe('軌道型（周回結界）の防御（#4）', () => {
   it('円のリングが敵弾を迎撃して止める', () => {
     const res = resolveTurn({
+      // 敵(闇)は中立の味方へ光で攻撃するので、闇のリング(反対極)で強く迎撃する（#28）
       allies: [ally('a', { x: 0, y: 0 })],
-      casts: [cast('a', { mode: 'polar', f: () => 5, origin: { x: 0, y: 0 } })],
+      casts: [cast('a', { mode: 'polar', f: () => 5, origin: { x: 0, y: 0 }, z: zDark })],
       enemies: [enemy('e', { x: 10, y: 0 }, 'dark', 100, 5)],
       castingEnemyIds: ['e'],
       obstacles: [],
@@ -116,9 +123,9 @@ describe('防御の重ね掛け（軌道型＋パリィ）', () => {
     // 敵弾：(0,10)→味方(0,-4) の直線（光・強）。原点まわりの円リングと、下方の闇弾でパリィ。
     const en = enemy('e', { x: 0, y: 10 }, 'light', 100, 6)
     const allies = [ally('ring', { x: 0, y: 0 }), ally('parry', { x: -1, y: -4 }, 'dark')]
-    const ringCast = cast('ring', { mode: 'polar', f: () => 5, origin: { x: 0, y: 0 } })
+    const ringCast = cast('ring', { mode: 'polar', f: () => 5, origin: { x: 0, y: 0 }, z: zDark })
     // 闇の直線（パリィ用）：(-1,-4) から +x 方向へ薙ぐ → 敵弾(0,-y軸付近)と交差
-    const parryCast = cast('parry', { mode: 'rotate', g: (x) => -x, angle: 0, origin: { x: -1, y: -4 } })
+    const parryCast = cast('parry', { mode: 'rotate', g: (x) => -x, angle: 0, origin: { x: -1, y: -4 }, z: zDark })
 
     const both = resolveTurn({
       allies,
@@ -158,7 +165,7 @@ describe('障害物の削り・貫通条件（#1/#16）', () => {
     const res = resolveTurn({
       allies: [ally('a', { x: 0, y: 0 })],
       // 強い光・低速・+x直進（強属性なので加速せず、同極の厚い壁を削り切れない）
-      casts: [cast('a', { mode: 'rotate', g: () => 5, angle: 0, origin: { x: 0, y: 0 } }, 5)],
+      casts: [cast('a', { mode: 'rotate', g: () => 0, angle: 0, origin: { x: 0, y: 0 }, z: zLight }, 5)],
       enemies: [enemy('e', { x: 20, y: 0 }, 'dark')],
       castingEnemyIds: [],
       obstacles: [lightWall(4, 14)], // 同極＝削りにくい厚い壁
@@ -190,7 +197,7 @@ describe('障害物の削り・貫通条件（#1/#16）', () => {
     const fireMax = () => {
       const res = resolveTurn({
         allies: [ally('a', { x: 0, y: 0 })],
-        casts: [cast('a', { mode: 'rotate', g: () => 5, angle: 0, origin: { x: 0, y: 0 } }, 14)],
+        casts: [cast('a', { mode: 'rotate', g: () => 0, angle: 0, origin: { x: 0, y: 0 }, z: zLight }, 14)],
         enemies: [enemy('e', { x: 20, y: 0 }, 'dark')],
         castingEnemyIds: [],
         obstacles,
@@ -214,7 +221,7 @@ describe('障害物の削り・貫通条件（#1/#16）', () => {
   it('低威力の弾は厚い壁で止まる（貫通しない）', () => {
     const res = resolveTurn({
       allies: [ally('a', { x: 0, y: 0 })],
-      casts: [cast('a', { mode: 'rotate', g: () => 5, angle: 0, origin: { x: 0, y: 0 } }, 4)],
+      casts: [cast('a', { mode: 'rotate', g: () => 0, angle: 0, origin: { x: 0, y: 0 }, z: zLight }, 4)],
       enemies: [enemy('e', { x: 20, y: 0 }, 'dark')],
       castingEnemyIds: [],
       obstacles: [lightWall(4, 12)],

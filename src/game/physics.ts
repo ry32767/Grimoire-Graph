@@ -6,12 +6,16 @@
 import type { Flight, FlightEnd, FlightSample, Trajectory, Vec2 } from './types'
 import { FIELD } from '../data/constants'
 import { sampleTrajectory, buildPolyline, pathTermination, dist, type PolyPoint } from './coords'
-import { trajectoryZ } from './attribute'
+import { zfieldAt } from './attribute'
 
-/** 加速度 a = aMax × (1 − clamp(|z|/zRef, 0, 1))。|z|≈0 で最大、|z|≥zRef で 0（§3.4） */
+/**
+ * 加速度 a = aMax × (1 − |z|/zRef)（#31）。
+ * |z|≈0 で最大加速、|z|=zRef で 0、それより 0 から離れると負（減速）に転じる。
+ * 減速は −aDecelMax で頭打ち（上限を定める）。z は位置で評価される z 場（有界）。
+ */
 export function acceleration(z: number): number {
-  const ratio = Math.min(Math.max(Math.abs(z) / FIELD.zRef, 0), 1)
-  return FIELD.aMax * (1 - ratio)
+  const a = FIELD.aMax * (1 - Math.abs(z) / FIELD.zRef)
+  return a < -FIELD.aDecelMax ? -FIELD.aDecelMax : a
 }
 
 /** 速度プロファイル：経路（poly）と各頂点までの加速度積分 A、初速、終端情報。 */
@@ -39,12 +43,12 @@ function accelIntegral(poly: PolyPoint[], zAt: (i: number) => number): number[] 
   return accel
 }
 
-/** 軌道（原点起点）から速度プロファイルを構築する。z は関数値 g(x)/f(θ)。 */
+/** 軌道（原点起点）から速度プロファイルを構築する。z は位置で評価する z 場（#30）。 */
 export function buildSpeedProfile(traj: Trajectory, initialSpeed: number): SpeedProfile {
   const samples = sampleTrajectory(traj)
   const poly = buildPolyline(samples)
   const term = pathTermination(samples)
-  const accel = accelIntegral(poly, (i) => trajectoryZ(traj, poly[i].param))
+  const accel = accelIntegral(poly, (i) => zfieldAt(traj, poly[i].pos))
   return { poly, accel, v0: initialSpeed, end: term.end, endPos: term.pos }
 }
 

@@ -11,18 +11,19 @@ import {
 import { FIELD } from '../data/constants'
 import type { Trajectory } from './types'
 
-// 新モデル：z は関数値。g=()=>0 は中立（最大加速）、g=()=>Smax は強属性（加速0）。
-const lineNeutral: Trajectory = { mode: 'rotate', g: () => 0, angle: 0 }
-const lineStrong: Trajectory = { mode: 'rotate', g: () => FIELD.sMax, angle: 0 }
+// 新モデル（#30）：z は位置の z 場。z=0 は中立（最大加速）、z=zRef は加速0（強属性帯）。
+const lineNeutral: Trajectory = { mode: 'rotate', g: () => 0, angle: 0, z: () => 0 }
+const lineStrong: Trajectory = { mode: 'rotate', g: () => 0, angle: 0, z: () => FIELD.zRef }
 
-describe('加速度場（§3.4）', () => {
-  it('|z|≈0 で aMax、|z|≥zRef で 0', () => {
+describe('加速度場（#31）', () => {
+  it('|z|≈0 で aMax、|z|=zRef で 0、それより離れると負（減速）で頭打ち', () => {
     expect(acceleration(0)).toBeCloseTo(FIELD.aMax, 6)
     expect(acceleration(FIELD.zRef)).toBeCloseTo(0, 6)
-    expect(acceleration(FIELD.zRef + 10)).toBeCloseTo(0, 6)
+    expect(acceleration(FIELD.zRef + 2)).toBeLessThan(0)
+    expect(acceleration(FIELD.zRef + 100)).toBeCloseTo(-FIELD.aDecelMax, 6)
   })
 
-  it('|z| が大きいほど加速度は小さい（単調減少）', () => {
+  it('0→zRef は |z| が大きいほど加速度が小さい（単調減少）', () => {
     expect(acceleration(1)).toBeGreaterThan(acceleration(2))
     expect(acceleration(2)).toBeGreaterThan(acceleration(4))
   })

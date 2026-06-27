@@ -2,8 +2,8 @@
 // リングは閉じた点列＋各点の z（属性）。攻撃＝リングに触れた敵へダメージ、防御＝敵弾がリング境界を横切れば迎撃。
 import type { Attribute, Trajectory, Vec2 } from './types'
 import { COMBAT, FIELD } from '../data/constants'
-import { sampleTrajectory, validPrefix, dist } from './coords'
-import { trajectoryZ, attributeOf, strengthOf, affinityMultiplier } from './attribute'
+import { sampleTrajectory, validFinitePrefix, dist } from './coords'
+import { zfieldAt, attributeOf, strengthOf, affinityMultiplier } from './attribute'
 import { firstCrossing } from './parry'
 
 /** リング上の1点（位置＋属性 z） */
@@ -12,11 +12,11 @@ export interface RingPoint {
   z: number
 }
 
-/** ループ軌道からリング（場内の有効点列＋各点の z）を作る。 */
+/** ループ軌道からリング（有限点列＋各点の z）を作る。場外でも切らない＝結界は一周する（#22/#25）。 */
 export function buildRing(traj: Trajectory): RingPoint[] {
-  return validPrefix(sampleTrajectory(traj)).map((s) => ({
+  return validFinitePrefix(sampleTrajectory(traj)).map((s) => ({
     pos: s.pos,
-    z: trajectoryZ(traj, s.param),
+    z: zfieldAt(traj, s.pos),
   }))
 }
 

@@ -2,7 +2,7 @@
 //  - projectile（発射型・火球）：開いた軌道。術者から飛び、最初に当たった対象へ命中する。
 //  - orbit（軌道型・周回）：閉じた軌道（例 x²+y²=1）。術者の周りを回り続け、掃射＋迎撃（防御）を兼ねる（#4）。
 import type { Trajectory, Vec2 } from './types'
-import { sampleTrajectory, validPrefix, dist } from './coords'
+import { sampleTrajectory, validFinitePrefix, dist } from './coords'
 
 export type MagicKind = 'projectile' | 'orbit'
 
@@ -12,7 +12,8 @@ export type MagicKind = 'projectile' | 'orbit'
  */
 export function isLoop(traj: Trajectory): boolean {
   if (traj.mode === 'rotate') return false
-  const pts = validPrefix(sampleTrajectory(traj)).map((s) => s.pos)
+  // 場外で切らずに（範囲制限なし・#25）有限点で閉曲線を判定する（場の端の円も一周する・#22）
+  const pts = validFinitePrefix(sampleTrajectory(traj)).map((s) => s.pos)
   if (pts.length < 12) return false
   const start = pts[0]
   let maxDepart = 0

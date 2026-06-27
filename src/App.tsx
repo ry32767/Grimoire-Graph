@@ -1,9 +1,11 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Ally, AllyCast, BattleState, Vec2 } from './game/types'
 import { createBattleState, prepareTurn, resolveAllyCasts } from './game/battle'
 import { planEnemyShot, enemyFlight } from './game/enemyAI'
+import { zfieldAt } from './game/attribute'
 import { recommendCast } from './game/recommend'
 import { ROTATE_PRESETS, defaultCoeffs } from './game/functions'
+import { ZFIELD_PRESETS, defaultZCoeffs } from './game/zfields'
 import { STAGES } from './data/stages'
 import { makeParty } from './data/party'
 import { FIELD } from './data/constants'
@@ -20,6 +22,16 @@ import { ensureAudio, playSfx, startMusic, toggleMuted, type SfxKind } from './a
 
 type Screen = 'title' | 'prologue' | 'stageIntro' | 'battle' | 'stageClear' | 'gameover' | 'ending'
 
+/** 開発時のみ：URL の ?stage=N（1始まり）で指定ステージへ直行（通常プレイ＝本番ビルドでは無効・#33）。 */
+const DEV = import.meta.env.DEV
+function devStageFromUrl(): number | null {
+  if (!DEV || typeof window === 'undefined') return null
+  const raw = new URLSearchParams(window.location.search).get('stage')
+  if (!raw) return null
+  const n = Number.parseInt(raw, 10)
+  return Number.isFinite(n) && n >= 1 && n <= STAGES.length ? n - 1 : null
+}
+
 /** from→to を a 直線で狙う角度。 */
 function aimAngle(from: Vec2, to: Vec2, a: number): number {
   return Math.atan2(to.y - from.y, to.x - from.x) - Math.atan(a)
@@ -35,6 +47,8 @@ function formatTime(ms: number): string {
 
 function makeComposer(angle: number): ComposerState {
   const coeffs = defaultCoeffs(ROTATE_PRESETS[0])
+  const zPreset = ZFIELD_PRESETS[0] // 一定（const）
+  const zCoeffs = defaultZCoeffs(zPreset)
   return {
     mode: 'rotate',
     presetId: 'line',
@@ -44,6 +58,11 @@ function makeComposer(angle: number): ComposerState {
     useFree: false,
     freeExpr: ROTATE_PRESETS[0].toExpr(coeffs),
     freeError: null,
+    zPresetId: zPreset.id,
+    zCoeffs,
+    zUseFree: false,
+    zFreeExpr: zPreset.toExpr(zCoeffs),
+    zFreeError: null,
   }
 }
 
@@ -55,8 +74,9 @@ function initComposers(party: Ally[]): Record<string, ComposerState> {
 }
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>('title')
-  const [stageIndex, setStageIndex] = useState(0)
+  const devStage = devStageFromUrl()
+  const [screen, setScreen] = useState<Screen>(devStage !== null ? 'stageIntro' : 'title')
+  const [stageIndex, setStageIndex] = useState(devStage ?? 0)
   const [battle, setBattle] = useState<BattleState | null>(null)
   const [castingIds, setCastingIds] = useState<string[]>([])
   const [impairedIds, setImpairedIds] = useState<string[]>([])
@@ -65,6 +85,8 @@ export default function App() {
   const [animation, setAnimation] = useState<ResolveAnimation | null>(null)
   const [pendingState, setPendingState] = useState<BattleState | null>(null)
   const [codexOpen, setCodexOpen] = useState(false)
+  // #23：図鑑用に「遭遇した敵」を記録（セッション内・永続化しない）
+  const [seenEnemies, setSeenEnemies] = useState<Set<string>>(new Set())
   const [guideOpen, setGuideOpen] = useState(false)
   const [guideShown, setGuideShown] = useState(false)
   // #6：クリアタイム計測
@@ -94,11 +116,12 @@ export default function App() {
     () => aliveAllies.map((a) => previews[a.id]?.path ?? null),
     [aliveAllies, previews],
   )
+  // 着弾点マーカー。#21：プレビューでは属性(z)を見せないので中立色で描く
   const landings = useMemo(
     () =>
       aliveAllies.map((a) => {
         const l = previews[a.id]?.landing
-        return l ? { pos: l.pos, attr: l.attr } : null
+        return l ? { pos: l.pos, attr: 'neutral' as const } : null
       }),
     [aliveAllies, previews],
   )
@@ -110,7 +133,7 @@ export default function App() {
       .filter((e): e is NonNullable<typeof e> => !!e && e.hp > 0)
       .map((e) => {
         const plan = planEnemyShot(e, battle.allies, battle.obstacles)
-        return plan ? enemyFlight(plan.trajectory, e.castInitialSpeed, e.castZ).path : []
+        return plan ? enemyFlight(plan.trajectory, e.castInitialSpeed).path : []
       })
       .filter((p) => p.length > 0)
   }, [battle, castingIds])
@@ -118,9 +141,27 @@ export default function App() {
   const onChange = (patch: Partial<ComposerState>) =>
     setComposers((m) => ({ ...m, [activeAllyId]: { ...m[activeAllyId], ...patch } }))
 
+  // 開発ジャンプ時はクリアタイム計測の起点を初期化（#33）
+  useEffect(() => {
+    if (devStage !== null && runStartMs === null) setRunStartMs(performance.now())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /** 開発用：指定ステージのイントロへ直行する（DEV のみ・#33）。 */
+  const devJumpToStage = (i: number) => {
+    setStageIndex(i)
+    setBattle(null)
+    setAnimation(null)
+    setPendingState(null)
+    if (runStartMs === null) setRunStartMs(performance.now())
+    setScreen('stageIntro')
+  }
+
   // ===== 画面遷移 =====
   const startBattle = () => {
     const stage = STAGES[stageIndex]
+    // 遭遇した敵を図鑑に記録（#23）
+    setSeenEnemies((prev) => new Set([...prev, ...stage.enemies.map((e) => e.name)]))
     const party = makeParty()
     const fresh = createBattleState(stage, stageIndex, party)
     const prep = prepareTurn(fresh)
@@ -145,11 +186,13 @@ export default function App() {
     if (!ally || !target) return
     // 障害物の貫通/迂回を込みで「当たる」術式を探す
     const r = recommendCast(ally.pos, target, battle.mechanics.obstacles ? battle.obstacles : [])
+    // z 場は敵の反対極を最強で当てる一定値（#21）
+    const zPatch = { zPresetId: 'const', zCoeffs: { c: r.zConst }, zUseFree: false }
     setComposers((m) => ({
       ...m,
       [activeAllyId]: r.line
-        ? { ...makeComposer(r.angle), coeffs: { a: r.line.a, b: r.line.b }, freeExpr: `${r.line.a}*x` }
-        : { ...makeComposer(r.angle), useFree: true, freeExpr: r.freeExpr ?? '' },
+        ? { ...makeComposer(r.angle), coeffs: { a: r.line.a, b: r.line.b }, freeExpr: `${r.line.a}*x`, ...zPatch }
+        : { ...makeComposer(r.angle), useFree: true, freeExpr: r.freeExpr ?? '', ...zPatch },
     }))
   }
 
@@ -169,22 +212,34 @@ export default function App() {
     const orbits: AnimOrbit[] = []
     for (const s of resolution.allyShots) {
       if (s.kind === 'orbit') {
-        orbits.push({ ring: s.path })
+        orbits.push({ ring: s.path, hitEnemyIds: s.sweptEnemyIds })
       } else if (s.flight) {
         bullets.push({
-          samples: s.flight.samples.map((x) => ({ pos: x.pos, speed: x.speed, arcLen: x.arcLen })),
+          samples: s.flight.samples.map((x, i) => ({
+            pos: x.pos,
+            speed: x.speed,
+            arcLen: x.arcLen,
+            z: s.path[i]?.z ?? 0, // 発射時の色/形（#21）
+          })),
           side: 'ally',
           misfirePos: s.misfirePos,
           carves: s.carves,
+          impact: s.hitEnemyId ? { id: s.hitEnemyId, side: 'enemy', arcLen: s.hitArcLen } : null,
         })
       }
     }
     for (const es of resolution.enemyShots) {
       bullets.push({
-        samples: es.flight.samples.map((x) => ({ pos: x.pos, speed: x.speed, arcLen: x.arcLen })),
+        samples: es.flight.samples.map((x) => ({
+          pos: x.pos,
+          speed: x.speed,
+          arcLen: x.arcLen,
+          z: zfieldAt(es.traj, x.pos), // 敵弾も z 場で色/形が決まる（#28）
+        })),
         side: 'enemy',
         misfirePos: null,
         carves: es.carves,
+        impact: es.hitAllyId ? { id: es.hitAllyId, side: 'ally', arcLen: es.hitArcLen } : null,
       })
     }
     // 着弾時に鳴らす効果音を予約（#10）
@@ -257,6 +312,16 @@ export default function App() {
           onGuide={() => setGuideOpen(true)}
         />
         {guideOpen && <Guide onClose={() => setGuideOpen(false)} />}
+        {DEV && (
+          <div className="dev-stage-jump">
+            <span>DEV ステージ直行：</span>
+            {STAGES.map((s, i) => (
+              <button key={s.name} className="btn small" onClick={() => devJumpToStage(i)}>
+                {i + 1}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     )
   }
@@ -403,8 +468,8 @@ export default function App() {
                 onOpenCodex={() => setCodexOpen(true)}
               />
               <div className="action-row">
-                <button className="btn primary fire-all" disabled={!anyCastable} onClick={fireAll}>
-                  全員発射
+                <button className="btn primary fire-all" onClick={fireAll}>
+                  {anyCastable ? '全員発射' : 'ターンを進める'}
                 </button>
                 <button className="btn small" onClick={() => setGuideOpen(true)}>
                   遊び方
@@ -434,7 +499,13 @@ export default function App() {
         </div>
       </div>
 
-      {codexOpen && <Codex activePresetId={activeComposer?.presetId} onClose={() => setCodexOpen(false)} />}
+      {codexOpen && (
+        <Codex
+          activePresetId={activeComposer?.presetId}
+          seenEnemies={seenEnemies}
+          onClose={() => setCodexOpen(false)}
+        />
+      )}
       {guideOpen && <Guide onClose={() => setGuideOpen(false)} />}
     </div>
   )

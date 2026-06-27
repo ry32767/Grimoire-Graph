@@ -6,7 +6,7 @@ import { makeParty, PARTY } from './party'
 import { FIELD } from './constants'
 import { dist } from '../game/coords'
 import { isSolidAt } from '../game/obstacle'
-import type { Obstacle, Vec2 } from '../game/types'
+import type { Obstacle, Trajectory, Vec2 } from '../game/types'
 
 /** 線分 a→e のどこかが障害物の素材に当たるか（直線で射線が通らない＝壁で遮られる）。 */
 function segmentBlocked(a: Vec2, e: Vec2, obstacles: Obstacle[]): boolean {
@@ -72,7 +72,9 @@ describe('エンジンとの結線（スモーク）', () => {
     const a = target.element === 'light' ? -1 : 1
     const line = ROTATE_PRESETS[0]
     const angle = Math.atan2(target.pos.y - caster.pos.y, target.pos.x - caster.pos.x) - Math.atan(a)
-    const trajectory = buildTrajectory(line, { a, b: 0 }, angle, caster.pos)
+    // 属性は z 場で別指定（#30）：敵の反対極を最強で当てる
+    const zConst = target.element === 'light' ? -FIELD.zPeak : FIELD.zPeak
+    const trajectory: Trajectory = { ...buildTrajectory(line, { a, b: 0 }, angle, caster.pos), z: () => zConst }
 
     let s = createBattleState(stage, 0, party)
     const prep = prepareTurn(s)

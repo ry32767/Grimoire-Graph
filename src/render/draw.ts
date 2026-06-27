@@ -21,6 +21,48 @@ export interface SceneParams {
   ghostPaths?: Vec2[][]
   /** 予測着弾点とその属性（機能17） */
   landings?: ({ pos: Vec2; attr: Attribute } | null)[]
+  /** 被弾中の対象ID→フラッシュ強度（1→0）。赤く光って揺れる（#20） */
+  flash?: Record<string, number>
+  /** 揺れの位相（時間とともに増加） */
+  shakePhase?: number
+}
+
+/** 被弾の揺れ量（px）。強度と位相・IDシードで上下左右に細かく震える（#20）。 */
+function shakeOffset(intensity: number, phase: number, seed: number): Vec2 {
+  if (intensity <= 0) return { x: 0, y: 0 }
+  const amp = intensity * 5
+  return {
+    x: Math.sin(phase * 1.3 + seed) * amp,
+    y: Math.cos(phase * 1.7 + seed * 1.5) * amp,
+  }
+}
+
+/** 被弾の赤フラッシュを (cx,cy) 中心・半径 r で重ねる（#20）。 */
+function drawHitFlash(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  intensity: number,
+): void {
+  if (intensity <= 0) return
+  ctx.save()
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r)
+  g.addColorStop(0, `rgba(255,72,72,${0.75 * intensity})`)
+  g.addColorStop(0.6, `rgba(255,40,40,${0.4 * intensity})`)
+  g.addColorStop(1, 'rgba(255,0,0,0)')
+  ctx.fillStyle = g
+  ctx.beginPath()
+  ctx.arc(cx, cy, r, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.restore()
+}
+
+/** 文字列IDから安定した擬似乱数シードを作る（揺れの位相ずらし用）。 */
+function idSeed(id: string): number {
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 1000
+  return h
 }
 
 /** 背景：数学グリッドと軸・場外境界（場のタイルは廃止）。 */
@@ -135,10 +177,15 @@ export function drawCasters(
   allies: Ally[],
   vp: Viewport,
   activeAllyId?: string | null,
+  flash?: Record<string, number>,
+  shakePhase = 0,
 ): void {
   const s = scaleOf(vp)
   for (const a of allies) {
-    const o = toScreen(a.pos, vp)
+    const o0 = toScreen(a.pos, vp)
+    const intensity = flash?.[a.id] ?? 0
+    const sh = shakeOffset(intensity, shakePhase, idSeed(a.id))
+    const o = { x: o0.x + sh.x, y: o0.y + sh.y }
     const dead = a.hp <= 0
     const aura =
       a.element === 'light'
@@ -172,6 +219,8 @@ export function drawCasters(
     ctx.font = '9px "DotGothic16", monospace'
     ctx.textAlign = 'center'
     ctx.fillText(a.name, o.x, o.y + px * 5)
+    // 被弾の赤フラッシュ（#20）
+    drawHitFlash(ctx, o.x, o.y, 22, intensity)
   }
 }
 
@@ -221,10 +270,19 @@ function drawFamilyGlyph(
 }
 
 /** 敵の描画（属性ごとのドット絵スプライト＋得意関数記号＋名前）。 */
-export function drawEnemies(ctx: CanvasRenderingContext2D, enemies: Enemy[], vp: Viewport): void {
+export function drawEnemies(
+  ctx: CanvasRenderingContext2D,
+  enemies: Enemy[],
+  vp: Viewport,
+  flash?: Record<string, number>,
+  shakePhase = 0,
+): void {
   for (const e of enemies) {
     if (e.hp <= 0) continue
-    const c = toScreen(e.pos, vp)
+    const c0 = toScreen(e.pos, vp)
+    const intensity = flash?.[e.id] ?? 0
+    const sh = shakeOffset(intensity, shakePhase, idSeed(e.id))
+    const c = { x: c0.x + sh.x, y: c0.y + sh.y }
     const r = e.hitboxRadius * scaleOf(vp)
     const light = e.element === 'light'
     const tint = light ? COLORS.light1 : COLORS.dark1
@@ -236,6 +294,16 @@ export function drawEnemies(ctx: CanvasRenderingContext2D, enemies: Enemy[], vp:
     ctx.beginPath()
     ctx.arc(c.x, c.y, r * 1.6, 0, Math.PI * 2)
     ctx.fill()
+    // 暗い背板＋属性色の縁取り（軌跡や背景に紛れず際立つ・#27）
+    ctx.fillStyle = 'rgba(12,10,24,0.78)'
+    ctx.beginPath()
+    ctx.arc(c.x, c.y, r * 1.18, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = tint
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.arc(c.x, c.y, r * 1.18, 0, Math.PI * 2)
+    ctx.stroke()
     // スプライト
     const rows = light ? LIGHT_ENEMY_ROWS : DARK_ENEMY_ROWS
     const pal = light ? LIGHT_ENEMY_PAL : DARK_ENEMY_PAL
@@ -248,6 +316,8 @@ export function drawEnemies(ctx: CanvasRenderingContext2D, enemies: Enemy[], vp:
     ctx.font = '10px "DotGothic16", monospace'
     ctx.textAlign = 'center'
     ctx.fillText(`${e.name}〔${FAMILY_LABEL[e.family]}〕`, c.x, c.y - r - 6)
+    // 被弾の赤フラッシュ（#20）
+    drawHitFlash(ctx, c.x, c.y, r * 1.5, intensity)
   }
 }
 
@@ -363,9 +433,8 @@ export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
   }
 
   drawObstacles(ctx, p.obstacles, p.vp)
-  drawEnemies(ctx, p.enemies, p.vp)
 
-  // 各味方のプレビュー軌道（z で色分け）
+  // 各味方のプレビュー軌道（z で色分け）。敵より先に描き、敵に被らせない（#27）。
   if (p.playerPaths) {
     for (const path of p.playerPaths) {
       if (path && path.length > 1) strokeZPath(ctx, path, p.vp)
@@ -377,38 +446,55 @@ export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
     for (const l of p.landings) if (l) drawLanding(ctx, l, p.vp)
   }
 
-  drawCasters(ctx, p.allies, p.vp, p.activeAllyId)
+  // 敵・術者は軌跡の上に描く（軌跡で隠れない・#27）
+  drawEnemies(ctx, p.enemies, p.vp, p.flash, p.shakePhase)
+  drawCasters(ctx, p.allies, p.vp, p.activeAllyId, p.flash, p.shakePhase)
 }
 
-/** 飛行中の弾（多層グロー＋脈動コア＋回転スパーク・#11）。phase で煌めきを変える。 */
+/** z（属性の高さ）から弾の色を選ぶ。光=金・闇=紫・中立=淡い白。 */
+export function bulletColorOf(z: number): string {
+  const a = attributeOf(z)
+  return a === 'light' ? COLORS.light1 : a === 'dark' ? COLORS.dark1 : '#d9d4ea'
+}
+
+/**
+ * 飛行中の弾（多層グロー＋脈動コア＋回転スパーク・#11/#21）。
+ * 発射されると z 場の値で色と形が変わる：属性で色、強度(|z|→V付近で最大)でグロー半径・スパーク数が増える。
+ */
 export function drawBullet(
   ctx: CanvasRenderingContext2D,
   pos: Vec2,
-  color: string,
+  z: number,
   vp: Viewport,
   phase = 0,
 ): void {
   const c = toScreen(pos, vp)
+  const color = bulletColorOf(z)
+  const strength = strengthOf(z) // 0..sMax
+  const sFrac = Math.min(1, strength / FIELD.sMax) // 0..1
   const pulse = 1 + Math.sin(phase * 1.7) * 0.25
+  // 強いほど大きく・棘が多い（#21：形が z で変わる）
+  const glowR = (12 + sFrac * 10) * pulse
+  const spikes = 4 + Math.round(sFrac * 4)
+  const coreR = (2.6 + sFrac * 1.6) * pulse
   ctx.save()
-  // 外側グロー
-  const glow = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, 14 * pulse)
+  const glow = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, glowR)
   glow.addColorStop(0, color)
   glow.addColorStop(1, 'rgba(0,0,0,0)')
-  ctx.globalAlpha = 0.5
+  ctx.globalAlpha = 0.5 + sFrac * 0.25
   ctx.fillStyle = glow
   ctx.beginPath()
-  ctx.arc(c.x, c.y, 14 * pulse, 0, Math.PI * 2)
+  ctx.arc(c.x, c.y, glowR, 0, Math.PI * 2)
   ctx.fill()
   ctx.globalAlpha = 1
   ctx.shadowColor = color
-  ctx.shadowBlur = 14
-  // 回転スパーク（4方向＋斜め）
+  ctx.shadowBlur = 12 + sFrac * 10
+  // 回転スパーク（強度で本数が増える）
   ctx.strokeStyle = color
   ctx.lineWidth = 2
-  const len = 7 + Math.sin(phase) * 2.5
-  for (let i = 0; i < 4; i++) {
-    const a = phase * 0.5 + (i * Math.PI) / 2
+  const len = 6 + sFrac * 5 + Math.sin(phase) * 2.5
+  for (let i = 0; i < spikes; i++) {
+    const a = phase * 0.5 + (i * Math.PI * 2) / spikes
     ctx.beginPath()
     ctx.moveTo(c.x, c.y)
     ctx.lineTo(c.x + Math.cos(a) * len, c.y + Math.sin(a) * len)
@@ -417,7 +503,7 @@ export function drawBullet(
   // コア
   ctx.fillStyle = '#fff8e1'
   ctx.beginPath()
-  ctx.arc(c.x, c.y, 3.2 * pulse, 0, Math.PI * 2)
+  ctx.arc(c.x, c.y, coreR, 0, Math.PI * 2)
   ctx.fill()
   ctx.restore()
 }
@@ -517,7 +603,12 @@ export function drawTrail(
   ctx.restore()
 }
 
-/** ドット爆発（暴発・#9）。グリッドに整列した四角ピクセルで 8bit 風に弾ける。progress 0→1。 */
+/**
+ * 暴発の大爆発（#9/#29）。「収縮 → 紫の虚空が弾ける」二段構え。
+ * 序盤(0〜0.3)は周囲のドットが中心へ吸い込まれ特異点が育つ＝虚式・紫の予兆。
+ * 中盤以降(0.3〜1)で紫の球が膨張し、白い閃光・多重衝撃枠・光闇のドットが飛散する。
+ * グリッド整列の四角ピクセルで 8bit 風を保ちつつ、紫の発光球で派手さを足す。
+ */
 export function drawMisfire(
   ctx: CanvasRenderingContext2D,
   pos: Vec2,
@@ -525,46 +616,94 @@ export function drawMisfire(
   vp: Viewport,
 ): void {
   const c = toScreen(pos, vp)
-  const maxR = FIELD.aoeRadius * scaleOf(vp)
-  const px = Math.max(4, Math.round(scaleOf(vp) * 0.32)) // ドットの一辺
-  const r = maxR * progress
+  const s = scaleOf(vp)
+  const maxR = FIELD.aoeRadius * s * 1.3 // 演出は AoE より少し大きく弾けさせる
+  const px = Math.max(4, Math.round(s * 0.32)) // ドットの一辺
   ctx.save()
-  // グリッド整列して四角を置く（ピクセルアート感）
   const cell = (gx: number, gy: number, col: string, a: number) => {
-    ctx.globalAlpha = a
+    ctx.globalAlpha = Math.max(0, Math.min(1, a))
     ctx.fillStyle = col
     ctx.fillRect(Math.round((c.x + gx) / px) * px, Math.round((c.y + gy) / px) * px, px, px)
   }
-  // 中心の閃光（白）：序盤に強く、消える
-  const flash = Math.max(0, 1 - progress * 1.4)
+
+  const VOID2 = '#b483ff' // 虚式・紫の輝き
+
+  if (progress < 0.3) {
+    // ===== 収縮フェーズ：周囲のドットが中心へ吸い込まれる =====
+    const ip = progress / 0.3 // 0→1
+    const n = 22
+    for (let i = 0; i < n; i++) {
+      const ang = (i / n) * Math.PI * 2 + i * 1.3
+      const rr = maxR * (1 - ip) * (0.6 + ((i * 29) % 8) / 10)
+      cell(Math.cos(ang) * rr, Math.sin(ang) * rr, i % 2 === 0 ? VOID2 : COLORS.light2, 0.3 + ip * 0.7)
+    }
+    // 育つ特異点（紫の発光球＋白核）
+    const core = px * (1 + ip * 3)
+    const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, core)
+    g.addColorStop(0, '#fff8e1')
+    g.addColorStop(0.4, VOID2)
+    g.addColorStop(1, 'rgba(106,46,196,0)')
+    ctx.globalAlpha = 0.7 + ip * 0.3
+    ctx.fillStyle = g
+    ctx.beginPath()
+    ctx.arc(c.x, c.y, core, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+    return
+  }
+
+  // ===== 爆発フェーズ =====
+  const ep = (progress - 0.3) / 0.7 // 0→1
+  const r = maxR * ep
+
+  // 紫の虚空球（膨張しながら薄れる）
+  const voidR = maxR * (0.35 + ep * 1.0)
+  const vg = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, voidR)
+  vg.addColorStop(0, `rgba(180,131,255,${0.85 * (1 - ep)})`)
+  vg.addColorStop(0.55, `rgba(106,46,196,${0.6 * (1 - ep)})`)
+  vg.addColorStop(1, 'rgba(40,12,80,0)')
+  ctx.fillStyle = vg
+  ctx.globalAlpha = 1
+  ctx.beginPath()
+  ctx.arc(c.x, c.y, voidR, 0, Math.PI * 2)
+  ctx.fill()
+
+  // 中心の白い閃光（序盤に強く弾ける）
+  const flash = Math.max(0, 1 - ep * 1.7)
   if (flash > 0) {
+    ctx.shadowColor = VOID2
+    ctx.shadowBlur = 16
     cell(0, 0, '#fff8e1', flash)
     cell(px, 0, '#fff8e1', flash * 0.8)
     cell(-px, 0, '#fff8e1', flash * 0.8)
     cell(0, px, '#fff8e1', flash * 0.8)
     cell(0, -px, '#fff8e1', flash * 0.8)
+    ctx.shadowBlur = 0
   }
-  // 放射状に飛び散るドット（光と闇が交互）。リング状に広がる。
-  const rings = 3
+
+  // 放射状に飛び散るドット（光・闇・紫が混ざる。重力で少し落ちる）
+  const rings = 4
   for (let ring = 0; ring < rings; ring++) {
-    const rr = r * (0.5 + ring * 0.28)
-    const count = 8 + ring * 4
-    const fade = (1 - progress) * (1 - ring * 0.18)
+    const rr = r * (0.45 + ring * 0.24)
+    const count = 10 + ring * 5
+    const fade = (1 - ep) * (1 - ring * 0.14)
     if (fade <= 0) continue
     for (let i = 0; i < count; i++) {
-      const ang = (i / count) * Math.PI * 2 + ring * 0.4 + progress * 0.8
+      const ang = (i / count) * Math.PI * 2 + ring * 0.4 + ep * 0.9
       const gx = Math.cos(ang) * rr
-      const gy = Math.sin(ang) * rr
-      const col = (i + ring) % 2 === 0 ? COLORS.light1 : COLORS.dark1
+      const gy = Math.sin(ang) * rr + ep * ep * px * 2
+      const col = (i + ring) % 3 === 0 ? VOID2 : (i + ring) % 3 === 1 ? COLORS.light1 : COLORS.dark1
       cell(gx, gy, col, Math.min(1, fade))
-      // 中間に淡い火の粉
-      if (ring === 0) cell(gx * 0.6, gy * 0.6, COLORS.light2, fade * 0.6)
     }
   }
-  // 衝撃リング（中空の四角枠）
-  ctx.globalAlpha = (1 - progress) * 0.8
-  ctx.strokeStyle = progress < 0.5 ? COLORS.light1 : COLORS.dark1
-  ctx.lineWidth = px * 0.6
-  ctx.strokeRect(c.x - r, c.y - r, r * 2, r * 2)
+
+  // 多重衝撃リング（中空の四角枠が外へ広がる）
+  for (let k = 0; k < 2; k++) {
+    const kr = r * (0.7 + k * 0.5)
+    ctx.globalAlpha = (1 - ep) * 0.8 * (1 - k * 0.3)
+    ctx.strokeStyle = k === 0 ? VOID2 : COLORS.dark1
+    ctx.lineWidth = px * 0.6
+    ctx.strokeRect(c.x - kr, c.y - kr, kr * 2, kr * 2)
+  }
   ctx.restore()
 }

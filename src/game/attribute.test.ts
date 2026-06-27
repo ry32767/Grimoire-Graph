@@ -5,7 +5,7 @@ import {
   affinityMultiplier,
   power,
   computeDamage,
-  trajectoryZ,
+  zfieldAt,
   dominantAttribute,
 } from './attribute'
 import { FIELD, AFFINITY } from '../data/constants'
@@ -21,12 +21,18 @@ describe('属性判定（z 符号）', () => {
   })
 })
 
-describe('属性強度（|z| クランプ）', () => {
-  it('|z| を返し Smax で上限クランプ', () => {
-    expect(strengthOf(3)).toBe(3)
-    expect(strengthOf(-3)).toBe(3)
-    expect(strengthOf(100)).toBe(FIELD.sMax)
+describe('属性強度（山型・|z|=zPeak で最強・#21）', () => {
+  it('|z|=zPeak で最大、0 と 2·zPeak で 0、極端値ほど弱い', () => {
+    expect(strengthOf(FIELD.zPeak)).toBeCloseTo(FIELD.sMax, 6)
+    expect(strengthOf(-FIELD.zPeak)).toBeCloseTo(FIELD.sMax, 6)
     expect(strengthOf(0)).toBe(0)
+    expect(strengthOf(2 * FIELD.zPeak)).toBe(0)
+    expect(strengthOf(100)).toBe(0) // 極端に大きい値は弱い（クランプではなく山型）
+  })
+
+  it('ピークへ近づくほど強い（0→zPeak は単調増加）', () => {
+    expect(strengthOf(1)).toBeLessThan(strengthOf(3))
+    expect(strengthOf(3)).toBeLessThan(strengthOf(FIELD.zPeak))
   })
 })
 
@@ -44,7 +50,7 @@ describe('極性相性（§3.2）', () => {
 describe('威力とダメージ（機能9）', () => {
   it('威力 = 速度 × 強度', () => {
     expect(power(4, 3)).toBe(12)
-    expect(power(4, 100)).toBe(4 * FIELD.sMax) // 強度はクランプ
+    expect(power(4, FIELD.zPeak)).toBe(4 * FIELD.sMax) // ピークで最大威力
   })
 
   it('低速で当たると威力が下がる（単調）', () => {
@@ -76,17 +82,19 @@ describe('威力とダメージ（機能9）', () => {
   })
 })
 
-describe('軌道の z 値（属性源・新モデル）', () => {
-  it('回転は g(x)、極座標は f(θ) を返す。NaN は 0', () => {
-    expect(trajectoryZ({ mode: 'rotate', g: (x) => x * 2, angle: 0 }, 3)).toBe(6)
-    expect(trajectoryZ({ mode: 'polar', f: (t) => t }, 1.5)).toBe(1.5)
-    expect(trajectoryZ({ mode: 'rotate', g: () => NaN, angle: 0 }, 0)).toBe(0)
+describe('z 場（属性源・#30）', () => {
+  it('z 場 z=f(x,y) を位置で評価する。未指定は0、非有限は0', () => {
+    const traj: Trajectory = { mode: 'rotate', g: () => 0, angle: 0, z: (x, y) => x + y }
+    expect(zfieldAt(traj, { x: 2, y: 3 })).toBe(5)
+    expect(zfieldAt({ mode: 'rotate', g: () => 0, angle: 0 }, { x: 1, y: 1 })).toBe(0) // z場なし
+    expect(zfieldAt({ mode: 'rotate', g: () => 0, angle: 0, z: () => NaN }, { x: 0, y: 0 })).toBe(0)
   })
 
-  it('支配属性は経路で |z| が最大の点の属性・強度を返す', () => {
-    const traj: Trajectory = { mode: 'rotate', g: (x) => x, angle: 0 } // z=x → 光
-    const dom = dominantAttribute(traj, [{ param: 0 }, { param: 2 }, { param: 4 }])
+  it('支配属性は経路で強度が最大の点の属性・強度を返す', () => {
+    // z=+zPeak 一定 → どこでも光・最強
+    const traj: Trajectory = { mode: 'rotate', g: () => 0, angle: 0, z: () => FIELD.zPeak }
+    const dom = dominantAttribute(traj, [{ pos: { x: 0, y: 0 } }, { pos: { x: 2, y: 0 } }])
     expect(dom.attr).toBe('light')
-    expect(dom.strength).toBe(4)
+    expect(dom.strength).toBeCloseTo(FIELD.sMax, 6)
   })
 })

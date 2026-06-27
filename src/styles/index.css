@@ -682,3 +682,85 @@ code {
   justify-content: center;
   flex-wrap: wrap;
 }
+
+/* 開発用：タイトルのステージ直行ピッカー（本番ビルドでは描画されない・#33） */
+.dev-stage-jump {
+  position: fixed;
+  bottom: 8px;
+  left: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  border: 1px dashed rgba(180, 160, 90, 0.5);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.5);
+  font-size: 11px;
+  opacity: 0.75;
+}
+.dev-stage-jump span {
+  color: #cdbb88;
+}
+
+/* 状態異常で体力バーの形が変わる（#24） */
+.hp-bar.flinch {
+  border-color: var(--light1, #f4c430);
+  clip-path: polygon(
+    0% 100%, 0% 38%, 8% 0%, 16% 38%, 24% 0%, 32% 38%, 40% 0%, 48% 38%,
+    56% 0%, 64% 38%, 72% 0%, 80% 38%, 88% 0%, 96% 38%, 100% 0%, 100% 100%
+  );
+  animation: hp-flinch-shake 0.32s steps(2) infinite;
+}
+.hp-bar.burn {
+  border-color: #e8923a;
+  clip-path: polygon(
+    0% 0%, 100% 0%, 100% 60%, 92% 100%, 84% 60%, 76% 100%, 68% 60%, 60% 100%,
+    52% 60%, 44% 100%, 36% 60%, 28% 100%, 20% 60%, 12% 100%, 4% 60%, 0% 100%
+  );
+  animation: hp-burn-flicker 0.5s ease-in-out infinite alternate;
+}
+/* 両方付与時はギザギザを優先しつつ炎色の縁取りにする */
+.hp-bar.flinch.burn {
+  border-color: #e8923a;
+}
+@keyframes hp-flinch-shake {
+  0% { transform: translateX(-1px); }
+  100% { transform: translateX(1px); }
+}
+@keyframes hp-burn-flicker {
+  0% { filter: brightness(1); }
+  100% { filter: brightness(1.5) drop-shadow(0 0 3px rgba(232, 146, 58, 0.8)); }
+}
+
+/* 敵図鑑カード（#23） */
+.codex-card.enemy-card {
+  min-height: 70px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.codex-card.enemy-card.unseen {
+  align-items: center;
+  opacity: 0.7;
+  border-style: dashed;
+}
+.codex-card.enemy-card.light {
+  border-left: 3px solid var(--light1, #f4c430);
+}
+.codex-card.enemy-card.dark {
+  border-left: 3px solid var(--dark1, #7b5cc4);
+}
+.enemy-qmark {
+  font-size: 28px;
+  font-weight: bold;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+/* 属性 z 場の入力セクション（#30/#21） */
+.zfield-section {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--panel-bevel);
+}
