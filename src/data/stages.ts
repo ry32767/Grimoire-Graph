@@ -1,6 +1,6 @@
 // ステージ定義（機能14・#15）。敵チームは上方、味方パーティは下方に配置。
 // 段階的導入：ステージが進むほど登場メカニクスが増える。Phase F で5+ボスに拡張。
-import type { Enemy, Obstacle, Stage } from '../game/types'
+import type { Enemy, EnemyFamily, Obstacle, Stage } from '../game/types'
 import { GAME } from './constants'
 
 let seq = 0
@@ -10,6 +10,7 @@ function enemy(
   element: Enemy['element'],
   hp: number,
   castInitialSpeed: number,
+  family: EnemyFamily = 'line',
   castMag = 3,
 ): Enemy {
   // 敵弾の属性（castZ）は防御属性と同極：光の敵は正・闇の敵は負
@@ -23,6 +24,7 @@ function enemy(
     element,
     hitboxRadius: GAME.enemyHitbox,
     statuses: [],
+    family,
     castTrajectory: { mode: 'rotate', g: () => 0, angle: 0 },
     castInitialSpeed,
     castZ,
@@ -43,7 +45,7 @@ function obstacle(
 const stage1: Stage = {
   id: 'stage-1',
   name: '第一の間 ― 遺跡の入口',
-  enemies: [enemy('石像の番人', { x: 0, y: 9 }, 'dark', 60, 5)],
+  enemies: [enemy('石像の番人', { x: 0, y: 9 }, 'dark', 60, 5, 'line')],
   obstacles: [],
   introText: [
     '苔むした石の間。壁面に古代式が薄く光っている。',
@@ -59,10 +61,13 @@ const stage2: Stage = {
   id: 'stage-2',
   name: '第二の間 ― 地下回廊',
   enemies: [
-    enemy('回廊の衛士', { x: -6, y: 8 }, 'dark', 70, 5),
-    enemy('影の射手', { x: 6, y: 9 }, 'dark', 65, 5),
+    enemy('回廊の衛士', { x: -6, y: 8 }, 'dark', 70, 5, 'arc'),
+    enemy('影の射手', { x: 6, y: 9 }, 'dark', 65, 5, 'wave'),
   ],
-  obstacles: [obstacle('o-2a', { x: 0, y: 2 }, 1.4, 'light', 55)],
+  obstacles: [
+    obstacle('o-2a', { x: -3, y: 2 }, 1.4, 'light', 55),
+    obstacle('o-2b', { x: 4, y: 3 }, 1.2, 'dark', 45),
+  ],
   introText: [
     '長い回廊。石柱（障害物）が弾道を遮り、衛士たちが術式を放ってくる。',
     '柱は避けるか削って壊す。円（ループ）を描けば周回結界となり敵弾を弾く（防御）。',
@@ -77,11 +82,15 @@ const stage3: Stage = {
   id: 'stage-3',
   name: '第三の間 ― 最奥の守護者',
   enemies: [
-    enemy('封印の守護者', { x: 0, y: 11 }, 'light', 130, 6, 4),
-    enemy('守護者の眷属', { x: 8, y: 6 }, 'dark', 60, 5, 3),
-    enemy('守護者の眷属', { x: -8, y: 6 }, 'dark', 60, 5, 3),
+    enemy('封印の守護者', { x: 0, y: 11 }, 'light', 130, 6, 'wave', 4),
+    enemy('守護者の眷属', { x: 8, y: 6 }, 'dark', 60, 5, 'spiral', 3),
+    enemy('守護者の眷属', { x: -8, y: 6 }, 'dark', 60, 5, 'arc', 3),
   ],
-  obstacles: [obstacle('o-3a', { x: 0, y: 5 }, 1.5, 'light', 60)],
+  obstacles: [
+    obstacle('o-3a', { x: 0, y: 5 }, 1.5, 'light', 60),
+    obstacle('o-3b', { x: -4, y: 2 }, 1.1, 'dark', 40),
+    obstacle('o-3c', { x: 4, y: 2 }, 1.1, 'dark', 40),
+  ],
   introText: [
     '魔導書の核心を守る、巨大な守護者。眷属を従え、強力な術式を放つ。',
     '敵弾の理を読み、反対の理（光⇔闇）をぶつけて相殺（パリィ）せよ。',

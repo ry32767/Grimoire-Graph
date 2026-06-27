@@ -35,7 +35,8 @@ import {
   type RingPoint,
   type OrbitTarget,
 } from './orbit'
-import { FIELD } from '../data/constants'
+import { planEnemyShot, enemyFlight } from './enemyAI'
+import { FIELD, GAME } from '../data/constants'
 
 /** 敵弾の描画・解決用データ */
 export interface EnemyShot {
@@ -134,17 +135,16 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
   const enemyTargets = (): Target[] =>
     enemies.filter((e) => e.hp > 0).map((e) => ({ id: e.id, pos: e.pos, radius: e.hitboxRadius }))
 
-  // === 1. 敵弾を構築（各敵が狙う味方へ直進・z は castZ 一定） ===
+  // === 1. 敵弾を構築（敵AIが得意関数で最大ダメージへ最適化・#2/#17。z は castZ 一定） ===
   const enemyShots: EnemyShot[] = []
   for (const e of enemies) {
     if (!input.castingEnemyIds.includes(e.id) || e.hp <= 0) continue
-    const target = chooseTarget(e, allies)
-    if (!target) continue
-    const path = straightPath(e.pos, target.pos)
-    const flight = simulatePath(path, e.castInitialSpeed, () => e.castZ)
+    const plan = planEnemyShot(e, allies, obstacles)
+    if (!plan) continue
+    const { path, flight } = enemyFlight(plan.trajectory, e.castInitialSpeed, e.castZ)
     enemyShots.push({
       enemyId: e.id,
-      targetAllyId: target.id,
+      targetAllyId: plan.targetId,
       path,
       flight,
       castZ: e.castZ,
@@ -320,19 +320,19 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     allyShots.push({ allyId: p.cast.allyId, kind: 'projectile', path, flight, misfirePos })
   }
 
-  // === 6. 敵弾が味方へ命中 ===
+  // === 6. 敵弾が味方へ命中（パス上で最初に当たった味方。逸れれば回避） ===
   for (const shot of enemyShots) {
     if (shot.blocked) continue
-    const reachSpeed = shot.flight.end === 'vanished' ? 0 : shot.flight.endSpeed
-    if (reachSpeed <= 0) {
-      shot.blocked = true
-      continue
-    }
+    const allyTargets: Target[] = allies
+      .filter((a) => a.hp > 0)
+      .map((a) => ({ id: a.id, pos: a.pos, radius: GAME.allyHitbox }))
+    const hit = firstHitAmong(shot.flight.samples, allyTargets)
+    if (!hit || hit.speed <= 0) continue
     const bAttr = attributeOf(shot.castZ)
     const bStr = strengthOf(shot.castZ)
-    const idx = allies.findIndex((a) => a.id === shot.targetAllyId)
-    if (idx < 0 || allies[idx].hp <= 0) continue
-    const damage = reachSpeed * bStr * affinityMultiplier(bAttr, allies[idx].element)
+    const idx = allies.findIndex((a) => a.id === hit.id)
+    if (idx < 0) continue
+    const damage = hit.speed * bStr * affinityMultiplier(bAttr, allies[idx].element)
     allies[idx] = {
       ...allies[idx],
       hp: Math.max(0, allies[idx].hp - damage),

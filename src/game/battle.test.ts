@@ -24,6 +24,7 @@ const enemy = (id: string, pos: { x: number; y: number }, hp: number, speed = 5)
   element: 'dark',
   hitboxRadius: 1.1,
   statuses: [],
+  family: 'line',
   castTrajectory: { mode: 'rotate', g: () => 0, angle: 0 },
   castInitialSpeed: speed,
   castZ: -5,

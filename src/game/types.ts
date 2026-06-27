@@ -18,6 +18,9 @@ export interface ZPoint {
 /** 発射方式：回転（y=g(x) をθ回転）／極座標（r=f(θ)） */
 export type FireMode = 'rotate' | 'polar'
 
+/** 敵の得意関数の系統（#17：見た目で判別）。直線/弧/波/渦。 */
+export type EnemyFamily = 'line' | 'arc' | 'wave' | 'spiral'
+
 /** 撃ち主 */
 export type Owner = 'player' | 'enemy'
 
@@ -97,7 +100,9 @@ export interface Enemy {
   element: Attribute
   hitboxRadius: number
   statuses: StatusEffect[]
-  /** このターン敵が先出しする術式（軌道・初速）。AI が決める */
+  /** 得意関数の系統（#17：見た目で判別・AIが最適化する関数族） */
+  family: EnemyFamily
+  /** このターン敵が先出しする術式（軌道・初速）。AI が決める（互換のため保持） */
   castTrajectory: Trajectory
   castInitialSpeed: number
   /** 敵弾が帯びる z（高さ＝属性）。符号=属性, |z|=強度。光の敵は正・闇の敵は負 */

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { Ally, AllyCast, BattleState, Vec2 } from './game/types'
 import { createBattleState, prepareTurn, resolveAllyCasts } from './game/battle'
-import { chooseTarget, straightPath } from './game/turn'
+import { planEnemyShot, enemyFlight } from './game/enemyAI'
 import { ROTATE_PRESETS, defaultCoeffs } from './game/functions'
 import { STAGES } from './data/stages'
 import { makeParty } from './data/party'
@@ -86,14 +86,15 @@ export default function App() {
       }),
     [aliveAllies, previews],
   )
+  // 敵の先出し術式を公開（#17：得意関数の形を見せる）
   const ghostPaths = useMemo<Vec2[][]>(() => {
     if (!battle) return []
     return castingIds
       .map((id) => battle.enemies.find((e) => e.id === id))
       .filter((e): e is NonNullable<typeof e> => !!e && e.hp > 0)
       .map((e) => {
-        const target = chooseTarget(e, battle.allies)
-        return target ? straightPath(e.pos, target.pos) : []
+        const plan = planEnemyShot(e, battle.allies, battle.obstacles)
+        return plan ? enemyFlight(plan.trajectory, e.castInitialSpeed, e.castZ).path : []
       })
       .filter((p) => p.length > 0)
   }, [battle, castingIds])

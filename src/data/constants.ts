@@ -57,7 +57,9 @@ export const GAME = {
   /** プレイヤー最大HP（各ステージ開始時に回復・15分3ステージ想定） */
   playerMaxHp: 120,
   /** 敵の既定ヒットボックス半径（ユニット） */
-  enemyHitbox: 1.1,
+  enemyHitbox: 1.2,
+  /** 味方術者の被弾ヒットボックス半径（ユニット・#15） */
+  allyHitbox: 1.4,
 } as const
 
 /** 軌道サンプリング設定（coords） */

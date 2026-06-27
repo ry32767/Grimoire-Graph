@@ -32,6 +32,7 @@ const enemy = (
   element,
   hitboxRadius: 1.1,
   statuses: [],
+  family: 'line',
   castTrajectory: { mode: 'rotate', g: () => 0, angle: 0 },
   castInitialSpeed: speed,
   castZ,

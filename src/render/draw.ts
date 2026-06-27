@@ -175,13 +175,59 @@ export function drawCasters(
   }
 }
 
-/** 敵の描画（属性ごとのドット絵スプライト＋名前）。 */
+const FAMILY_LABEL: Record<Enemy['family'], string> = {
+  line: '直進',
+  arc: '弧',
+  wave: '波',
+  spiral: '渦',
+}
+
+/** 敵の得意関数（系統）を表す小さなドット記号（#17：見た目で判別）。 */
+function drawFamilyGlyph(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  family: Enemy['family'],
+  color: string,
+): void {
+  ctx.save()
+  ctx.strokeStyle = color
+  ctx.fillStyle = color
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  if (family === 'line') {
+    ctx.moveTo(cx - 9, cy)
+    ctx.lineTo(cx + 9, cy)
+    ctx.stroke()
+  } else if (family === 'arc') {
+    ctx.moveTo(cx - 9, cy + 3)
+    ctx.quadraticCurveTo(cx, cy - 8, cx + 9, cy + 3)
+    ctx.stroke()
+  } else if (family === 'wave') {
+    ctx.moveTo(cx - 9, cy)
+    ctx.quadraticCurveTo(cx - 4.5, cy - 7, cx, cy)
+    ctx.quadraticCurveTo(cx + 4.5, cy + 7, cx + 9, cy)
+    ctx.stroke()
+  } else {
+    // spiral：渦巻き
+    for (let i = 0; i < 16; i++) {
+      const t = i / 3
+      const rr = 1 + t * 1.1
+      ctx.lineTo(cx + Math.cos(t * 2) * rr, cy + Math.sin(t * 2) * rr)
+    }
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
+/** 敵の描画（属性ごとのドット絵スプライト＋得意関数記号＋名前）。 */
 export function drawEnemies(ctx: CanvasRenderingContext2D, enemies: Enemy[], vp: Viewport): void {
   for (const e of enemies) {
     if (e.hp <= 0) continue
     const c = toScreen(e.pos, vp)
     const r = e.hitboxRadius * scaleOf(vp)
     const light = e.element === 'light'
+    const tint = light ? COLORS.light1 : COLORS.dark1
     // 淡いオーラ
     const aura = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, r * 1.6)
     aura.addColorStop(0, light ? 'rgba(244,196,48,0.3)' : 'rgba(123,92,196,0.32)')
@@ -195,11 +241,13 @@ export function drawEnemies(ctx: CanvasRenderingContext2D, enemies: Enemy[], vp:
     const pal = light ? LIGHT_ENEMY_PAL : DARK_ENEMY_PAL
     const px = (e.hitboxRadius * scaleOf(vp) * 2) / rows[0].length
     drawPixelSprite(ctx, c.x, c.y, rows, pal, px)
-    // 名前
+    // 得意関数の記号
+    drawFamilyGlyph(ctx, c.x, c.y + r + 12, e.family, tint)
+    // 名前＋系統ラベル
     ctx.fillStyle = COLORS.text
     ctx.font = '10px "DotGothic16", monospace'
     ctx.textAlign = 'center'
-    ctx.fillText(e.name, c.x, c.y - r - 6)
+    ctx.fillText(`${e.name}〔${FAMILY_LABEL[e.family]}〕`, c.x, c.y - r - 6)
   }
 }
 
