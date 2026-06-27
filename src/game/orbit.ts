@@ -1,6 +1,7 @@
 // 軌道型（ループ）魔法：周回リングによる掃射（攻撃）と迎撃（防御・#4）。純粋関数。
 // リングは閉じた点列＋各点の z（属性）。攻撃＝リングに触れた敵へダメージ、防御＝敵弾がリング境界を横切れば迎撃。
 import type { Attribute, Trajectory, Vec2 } from './types'
+import { COMBAT, FIELD } from '../data/constants'
 import { sampleTrajectory, validPrefix, dist } from './coords'
 import { trajectoryZ, attributeOf, strengthOf, affinityMultiplier } from './attribute'
 import { firstCrossing } from './parry'
@@ -82,6 +83,17 @@ export interface RingInterception {
   ringZ?: number
   /** 敵弾パス上の横断 index */
   enemyIndex?: number
+}
+
+/**
+ * リングが敵弾を迎撃（防御・#4）するときに削る速度。
+ * 反対極のリングほど強く弾く（×1.5）、同極は吸収弱め（×0.5）。リング強度|z|でもスケール。
+ */
+export function orbitBlockLoss(ringZ: number, bulletAttr: Attribute): number {
+  const ringAttr = attributeOf(ringZ)
+  const aff = affinityMultiplier(ringAttr, bulletAttr)
+  const strFrac = Math.min(1, strengthOf(ringZ) / FIELD.sMax)
+  return COMBAT.shieldSpeedLoss * aff * (0.6 + 0.8 * strFrac)
 }
 
 /** 敵弾パスがリング境界を最初に横切る点を返す（横切らなければ crossed=false）。 */

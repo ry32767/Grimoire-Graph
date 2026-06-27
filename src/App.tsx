@@ -1,18 +1,14 @@
 import { useMemo, useState } from 'react'
-import type { BattleState, PlayerAction, Vec2 } from './game/types'
-import { createBattleState, prepareTurn, resolvePlayerAction } from './game/battle'
-import { enemyPath } from './game/turn'
+import type { Ally, AllyCast, BattleState, Vec2 } from './game/types'
+import { createBattleState, prepareTurn, resolveAllyCasts } from './game/battle'
+import { chooseTarget, straightPath } from './game/turn'
 import { ROTATE_PRESETS, defaultCoeffs } from './game/functions'
-import { buildShield } from './data/fields'
 import { STAGES } from './data/stages'
-import { GAME, FIELD } from './data/constants'
+import { makeParty } from './data/party'
+import { FIELD } from './data/constants'
 import { PROLOGUE, EPILOGUE, GAMEOVER_TEXT } from './data/story'
-import {
-  type ComposerState,
-  buildComposerTrajectory,
-  computePreview,
-} from './components/composer'
-import BattleCanvas, { type ResolveAnimation } from './components/BattleCanvas'
+import { type ComposerState, buildComposerTrajectory, computePreview } from './components/composer'
+import BattleCanvas, { type ResolveAnimation, type AnimShot } from './components/BattleCanvas'
 import Hud from './components/Hud'
 import BattleLog from './components/BattleLog'
 import FunctionPanel from './components/FunctionPanel'
@@ -22,22 +18,30 @@ import { TitleScreen, StoryScreen, ResultScreen } from './components/screens'
 
 type Screen = 'title' | 'prologue' | 'stageIntro' | 'battle' | 'stageClear' | 'gameover' | 'ending'
 
-const SHIELD_DURABILITY = 70
+/** from→to を a 直線で狙う角度。 */
+function aimAngle(from: Vec2, to: Vec2, a: number): number {
+  return Math.atan2(to.y - from.y, to.x - from.x) - Math.atan(a)
+}
 
-function makeInitialComposer(): ComposerState {
+function makeComposer(angle: number): ComposerState {
+  const coeffs = defaultCoeffs(ROTATE_PRESETS[0])
   return {
     mode: 'rotate',
     presetId: 'line',
-    coeffs: defaultCoeffs(ROTATE_PRESETS[0]),
-    angle: 0,
+    coeffs,
+    angle,
     speed: FIELD.fixedSpeed,
     useFree: false,
-    freeExpr: '',
+    freeExpr: ROTATE_PRESETS[0].toExpr(coeffs),
     freeError: null,
-    actionKind: 'attack',
-    shieldPresetId: 'circle-shield',
-    shieldElement: 'light',
   }
+}
+
+/** パーティ各自の初期コンポーザ（敵陣（上方）へ向ける）。 */
+function initComposers(party: Ally[]): Record<string, ComposerState> {
+  const m: Record<string, ComposerState> = {}
+  for (const a of party) m[a.id] = makeComposer(aimAngle(a.pos, { x: 0, y: 9 }, 1))
+  return m
 }
 
 export default function App() {
@@ -45,43 +49,69 @@ export default function App() {
   const [stageIndex, setStageIndex] = useState(0)
   const [battle, setBattle] = useState<BattleState | null>(null)
   const [castingIds, setCastingIds] = useState<string[]>([])
-  const [composer, setComposer] = useState<ComposerState>(makeInitialComposer)
+  const [impairedIds, setImpairedIds] = useState<string[]>([])
+  const [composers, setComposers] = useState<Record<string, ComposerState>>({})
+  const [activeAllyId, setActiveAllyId] = useState<string>('')
   const [animation, setAnimation] = useState<ResolveAnimation | null>(null)
   const [pendingState, setPendingState] = useState<BattleState | null>(null)
   const [codexOpen, setCodexOpen] = useState(false)
   const [guideOpen, setGuideOpen] = useState(false)
   const [guideShown, setGuideShown] = useState(false)
 
-  // 軌道とプレビュー（作成フェーズ）
-  const trajectory = useMemo(
-    () => (battle ? buildComposerTrajectory(composer) : null),
-    [composer, battle],
+  const aliveAllies = useMemo(() => battle?.allies.filter((a) => a.hp > 0) ?? [], [battle])
+
+  // 各味方の軌道・プレビュー（作成フェーズ）
+  const previews = useMemo(() => {
+    if (!battle) return {} as Record<string, ReturnType<typeof computePreview>>
+    const out: Record<string, ReturnType<typeof computePreview>> = {}
+    for (const a of battle.allies) {
+      if (a.hp <= 0) continue
+      const c = composers[a.id]
+      if (!c) continue
+      const traj = buildComposerTrajectory(c, a.pos)
+      out[a.id] = computePreview(traj, c.speed)
+    }
+    return out
+  }, [battle, composers])
+
+  const playerPaths = useMemo(
+    () => aliveAllies.map((a) => previews[a.id]?.path ?? null),
+    [aliveAllies, previews],
   )
-  const preview = useMemo(
+  const landings = useMemo(
     () =>
-      battle
-        ? computePreview(trajectory, composer.speed)
-        : { path: [], landing: null, powerEstimate: 0, maxStrength: 0, selfMisfireWarning: false },
-    [trajectory, composer.speed, battle],
+      aliveAllies.map((a) => {
+        const l = previews[a.id]?.landing
+        return l ? { pos: l.pos, attr: l.attr } : null
+      }),
+    [aliveAllies, previews],
   )
   const ghostPaths = useMemo<Vec2[][]>(() => {
     if (!battle) return []
     return castingIds
       .map((id) => battle.enemies.find((e) => e.id === id))
       .filter((e): e is NonNullable<typeof e> => !!e && e.hp > 0)
-      .map((e) => enemyPath(e.pos))
+      .map((e) => {
+        const target = chooseTarget(e, battle.allies)
+        return target ? straightPath(e.pos, target.pos) : []
+      })
+      .filter((p) => p.length > 0)
   }, [battle, castingIds])
 
-  const onChange = (patch: Partial<ComposerState>) => setComposer((c) => ({ ...c, ...patch }))
+  const onChange = (patch: Partial<ComposerState>) =>
+    setComposers((m) => ({ ...m, [activeAllyId]: { ...m[activeAllyId], ...patch } }))
 
   // ===== 画面遷移 =====
   const startBattle = () => {
     const stage = STAGES[stageIndex]
-    const fresh = createBattleState(stage, stageIndex, GAME.playerMaxHp)
+    const party = makeParty()
+    const fresh = createBattleState(stage, stageIndex, party)
     const prep = prepareTurn(fresh)
     setBattle(prep.state)
     setCastingIds(prep.castingEnemyIds)
-    setComposer(makeInitialComposer())
+    setImpairedIds(prep.impairedAllyIds)
+    setComposers(initComposers(party))
+    setActiveAllyId(party[0].id)
     setAnimation(null)
     setPendingState(null)
     setScreen('battle')
@@ -92,43 +122,43 @@ export default function App() {
   }
 
   const recommend = () => {
-    if (!battle) return
+    if (!battle || !activeAllyId) return
+    const ally = battle.allies.find((a) => a.id === activeAllyId)
     const target = battle.enemies.find((e) => e.hp > 0)
-    if (!target) return
-    // 敵へ向かう直線 g(x)=a·x。a の符号で属性（敵の反対極）を作り、原点(中立)から
-    // 敵の位置で最大強度に帯びる。光の敵→闇(a<0)、闇の敵→光(a>0)。
-    const phi = Math.atan2(target.pos.y, target.pos.x)
+    if (!ally || !target) return
+    // 敵の反対極を作る直線 g(x)=a·x。光の敵→闇(a<0)、闇/中立→光(a>0)。
     const a = target.element === 'light' ? -1 : 1
-    const angle = phi - Math.atan(a)
-    setComposer({
-      ...makeInitialComposer(),
-      presetId: 'line',
-      coeffs: { a, b: 0 },
-      angle,
-      speed: FIELD.fixedSpeed,
-    })
+    const coeffs = { a, b: 0 }
+    setComposers((m) => ({
+      ...m,
+      [activeAllyId]: {
+        ...makeComposer(aimAngle(ally.pos, target.pos, a)),
+        coeffs,
+        freeExpr: `${a}*x`,
+      },
+    }))
   }
 
-  const fire = () => {
+  const fireAll = () => {
     if (!battle) return
-    let action: PlayerAction
-    if (composer.actionKind === 'attack') {
-      if (!trajectory) return
-      action = { kind: 'attack', trajectory, initialSpeed: composer.speed }
-    } else {
-      action = {
-        kind: 'shield',
-        shield: buildShield(composer.shieldPresetId, composer.shieldElement, SHIELD_DURABILITY),
-      }
+    const casts: AllyCast[] = []
+    for (const a of battle.allies) {
+      if (a.hp <= 0 || impairedIds.includes(a.id)) continue
+      const c = composers[a.id]
+      if (!c) continue
+      const traj = buildComposerTrajectory(c, a.pos)
+      if (!traj) continue
+      casts.push({ allyId: a.id, trajectory: traj, initialSpeed: c.speed })
     }
-    const { state: after, resolution } = resolvePlayerAction(battle, action, castingIds)
-    const playerPath = resolution.playerFlight?.samples.map((s) => s.pos) ?? null
+    const { state: after, resolution } = resolveAllyCasts(battle, casts, castingIds)
+    const allyShots: AnimShot[] = resolution.allyShots.map((s) =>
+      s.kind === 'orbit'
+        ? { kind: 'orbit', path: s.path.map((z) => z.pos), ring: s.path, misfirePos: s.misfirePos }
+        : { kind: 'projectile', path: s.path.map((z) => z.pos), ring: null, misfirePos: s.misfirePos },
+    )
     const enemyPaths = resolution.enemyShots.map((s) => s.path)
-    const misfirePos = resolution.log.some((l) => l.kind === 'misfire')
-      ? (resolution.playerFlight?.endPos ?? null)
-      : null
     setBattle({ ...battle, phase: 'resolve' })
-    setAnimation({ playerPath, enemyPaths, misfirePos })
+    setAnimation({ allyShots, enemyPaths })
     setPendingState(after)
   }
 
@@ -150,11 +180,17 @@ export default function App() {
     const prep = prepareTurn(after)
     setBattle(prep.state)
     setCastingIds(prep.castingEnemyIds)
+    setImpairedIds(prep.impairedAllyIds)
+    const stillActive = prep.state.allies.find((a) => a.id === activeAllyId)
+    if (!stillActive || stillActive.hp <= 0) {
+      const firstAlive = prep.state.allies.find((a) => a.hp > 0)
+      if (firstAlive) setActiveAllyId(firstAlive.id)
+    }
     if (prep.state.outcome === 'cleared') setScreen('stageClear')
     else if (prep.state.outcome === 'gameover') setScreen('gameover')
   }
 
-  // ===== レンダリング =====
+  // ===== 全画面（タイトル/物語/結果） =====
   if (screen === 'title') {
     return (
       <div className="app">
@@ -163,7 +199,6 @@ export default function App() {
       </div>
     )
   }
-
   if (screen === 'prologue') {
     return (
       <div className="app">
@@ -179,7 +214,6 @@ export default function App() {
       </div>
     )
   }
-
   if (screen === 'stageIntro') {
     const stage = STAGES[stageIndex]
     return (
@@ -188,7 +222,6 @@ export default function App() {
       </div>
     )
   }
-
   if (screen === 'stageClear') {
     const stage = STAGES[stageIndex]
     const isLast = stageIndex >= STAGES.length - 1
@@ -213,7 +246,6 @@ export default function App() {
       </div>
     )
   }
-
   if (screen === 'gameover') {
     return (
       <div className="app">
@@ -228,7 +260,6 @@ export default function App() {
       </div>
     )
   }
-
   if (screen === 'ending') {
     return (
       <div className="app">
@@ -244,6 +275,9 @@ export default function App() {
   // ===== バトル画面 =====
   if (!battle) return null
   const composing = battle.phase === 'compose' && !animation
+  const activeComposer = composers[activeAllyId]
+  const activePreview = previews[activeAllyId]
+  const anyCastable = battle.allies.some((a) => a.hp > 0 && !impairedIds.includes(a.id))
 
   return (
     <div className="app">
@@ -257,50 +291,71 @@ export default function App() {
           </div>
           <div className="canvas-wrap">
             <BattleCanvas
+              allies={battle.allies}
               enemies={battle.enemies}
               obstacles={battle.obstacles}
-              shield={battle.player.shield}
-              playerPath={composing && composer.actionKind === 'attack' ? preview.path : null}
+              activeAllyId={composing ? activeAllyId : null}
+              playerPaths={composing ? playerPaths : undefined}
+              landings={composing ? landings : undefined}
               ghostPaths={ghostPaths}
-              landing={composing && preview.landing ? { pos: preview.landing.pos, attr: preview.landing.attr } : null}
               animation={animation}
               onAnimationDone={onAnimationDone}
             />
           </div>
-          <Hud player={battle.player} enemies={battle.enemies} />
+          <Hud allies={battle.allies} enemies={battle.enemies} activeAllyId={activeAllyId} />
         </div>
 
         <div className="battle-right">
-          {composing ? (
-            <FunctionPanel
-              composer={composer}
-              onChange={onChange}
-              preview={preview}
-              mechanics={battle.mechanics}
-              canFire={composer.actionKind === 'shield' || !!trajectory}
-              onFire={fire}
-              onRecommend={recommend}
-              onOpenCodex={() => setCodexOpen(true)}
-            />
+          {composing && activeComposer && activePreview ? (
+            <>
+              <div className="ally-tabs">
+                {battle.allies.map((a) => {
+                  const impaired = impairedIds.includes(a.id)
+                  const dead = a.hp <= 0
+                  return (
+                    <button
+                      key={a.id}
+                      className={`btn small ally-tab${a.id === activeAllyId ? ' selected' : ''}${dead ? ' dead' : ''}`}
+                      disabled={dead}
+                      onClick={() => setActiveAllyId(a.id)}
+                    >
+                      {a.name}
+                      {impaired && !dead ? '（ひるみ）' : ''}
+                    </button>
+                  )
+                })}
+              </div>
+              <FunctionPanel
+                allyName={battle.allies.find((a) => a.id === activeAllyId)?.name ?? ''}
+                composer={activeComposer}
+                onChange={onChange}
+                preview={activePreview}
+                onRecommend={recommend}
+                onOpenCodex={() => setCodexOpen(true)}
+              />
+              <div className="action-row">
+                <button className="btn primary fire-all" disabled={!anyCastable} onClick={fireAll}>
+                  全員発射
+                </button>
+                <button className="btn small" onClick={() => setGuideOpen(true)}>
+                  遊び方
+                </button>
+                <button className="btn small" onClick={() => setCodexOpen(true)}>
+                  図鑑
+                </button>
+              </div>
+            </>
           ) : (
             <div className="panel">
               <div className="section-title">解決中…</div>
               <p className="hint">魔法が進行・解決しています。</p>
             </div>
           )}
-          <div className="action-row">
-            <button className="btn small" onClick={() => setGuideOpen(true)}>
-              遊び方
-            </button>
-            <button className="btn small" onClick={() => setCodexOpen(true)}>
-              図鑑
-            </button>
-          </div>
           <BattleLog log={battle.log} />
         </div>
       </div>
 
-      {codexOpen && <Codex activePresetId={composer.presetId} onClose={() => setCodexOpen(false)} />}
+      {codexOpen && <Codex activePresetId={activeComposer?.presetId} onClose={() => setCodexOpen(false)} />}
       {guideOpen && <Guide onClose={() => setGuideOpen(false)} />}
     </div>
   )

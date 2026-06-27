@@ -1,28 +1,26 @@
-// Canvas 描画関数（機能3・5）。座標変換は coords に集約したものを使う。
-import type { Attribute, Enemy, Obstacle, Shield, Vec2 } from '../game/types'
+// Canvas 描画関数（機能3・5・#15）。座標変換は coords に集約したものを使う。
+import type { Ally, Attribute, Enemy, Obstacle, Vec2, ZPoint } from '../game/types'
 import { FIELD } from '../data/constants'
 import { toScreen, scaleOf, type Viewport } from '../game/coords'
 import { attributeOf, strengthOf } from '../game/attribute'
 import { COLORS, attrColor } from './theme'
 
-/** z つきの軌道点 */
-export interface ZPoint {
-  pos: Vec2
-  z: number
-}
+export type { ZPoint }
 
 /** 静的シーンの描画パラメータ */
 export interface SceneParams {
   vp: Viewport
+  allies: Ally[]
   enemies: Enemy[]
   obstacles: Obstacle[]
-  shield: Shield | null
-  /** プレイヤーのプレビュー軌道（z つき＝属性で色分け） */
-  playerPath?: ZPoint[] | null
+  /** 現在編集中の味方（強調表示） */
+  activeAllyId?: string | null
+  /** 各味方のプレビュー軌道（z つき＝属性で色分け。発射型=飛行軌道／軌道型=リング） */
+  playerPaths?: (ZPoint[] | null)[]
   /** 敵ゴースト軌道（数学座標の点列の配列） */
   ghostPaths?: Vec2[][]
   /** 予測着弾点とその属性（機能17） */
-  landing?: { pos: Vec2; attr: Attribute } | null
+  landings?: ({ pos: Vec2; attr: Attribute } | null)[]
 }
 
 /** 背景：数学グリッドと軸・場外境界（場のタイルは廃止）。 */
@@ -131,19 +129,50 @@ const LIGHT_ENEMY_PAL: Record<string, string> = { G: '#F4C430', W: '#FFF8E1', e:
 const DARK_ENEMY_ROWS = ['.PPP.', 'PPPPP', 'PeWeP', 'PPPPP', '.PPP.', 'P.P.P']
 const DARK_ENEMY_PAL: Record<string, string> = { P: '#7B5CC4', W: '#1E2A6B', e: '#FFF8E1' }
 
-/** 術者（原点）：魔導士のドット絵＋淡いオーラ。 */
-export function drawCaster(ctx: CanvasRenderingContext2D, vp: Viewport): void {
-  const o = toScreen({ x: 0, y: 0 }, vp)
-  // オーラ
-  const grad = ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, 22)
-  grad.addColorStop(0, 'rgba(244,196,48,0.35)')
-  grad.addColorStop(1, 'rgba(244,196,48,0)')
-  ctx.fillStyle = grad
-  ctx.beginPath()
-  ctx.arc(o.x, o.y, 22, 0, Math.PI * 2)
-  ctx.fill()
-  const px = Math.max(2.5, scaleOf(vp) * 0.2)
-  drawPixelSprite(ctx, o.x, o.y, MAGE_ROWS, MAGE_PAL, px)
+/** 味方術者（#15）：各自の配置に魔導士のドット絵＋属性オーラ＋名前。active は強調。 */
+export function drawCasters(
+  ctx: CanvasRenderingContext2D,
+  allies: Ally[],
+  vp: Viewport,
+  activeAllyId?: string | null,
+): void {
+  const s = scaleOf(vp)
+  for (const a of allies) {
+    const o = toScreen(a.pos, vp)
+    const dead = a.hp <= 0
+    const aura =
+      a.element === 'light'
+        ? 'rgba(244,196,48,'
+        : a.element === 'dark'
+          ? 'rgba(123,92,196,'
+          : 'rgba(180,180,200,'
+    const grad = ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, 20)
+    grad.addColorStop(0, aura + (dead ? 0.06 : 0.36) + ')')
+    grad.addColorStop(1, aura + '0)')
+    ctx.fillStyle = grad
+    ctx.beginPath()
+    ctx.arc(o.x, o.y, 20, 0, Math.PI * 2)
+    ctx.fill()
+    // アクティブ強調リング
+    if (a.id === activeAllyId && !dead) {
+      ctx.strokeStyle = COLORS.light2
+      ctx.lineWidth = 2
+      ctx.setLineDash([4, 3])
+      ctx.beginPath()
+      ctx.arc(o.x, o.y, 18, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.setLineDash([])
+    }
+    const px = Math.max(2, s * 0.16)
+    ctx.globalAlpha = dead ? 0.3 : 1
+    drawPixelSprite(ctx, o.x, o.y, MAGE_ROWS, MAGE_PAL, px)
+    ctx.globalAlpha = 1
+    // 名前
+    ctx.fillStyle = dead ? '#666' : COLORS.text
+    ctx.font = '9px "DotGothic16", monospace'
+    ctx.textAlign = 'center'
+    ctx.fillText(a.name, o.x, o.y + px * 5)
+  }
 }
 
 /** 敵の描画（属性ごとのドット絵スプライト＋名前）。 */
@@ -192,25 +221,8 @@ export function drawObstacles(ctx: CanvasRenderingContext2D, obstacles: Obstacle
   }
 }
 
-/** 結界の描画 */
-export function drawShield(ctx: CanvasRenderingContext2D, shield: Shield, vp: Viewport): void {
-  const o = toScreen({ x: 0, y: 0 }, vp)
-  const s = scaleOf(vp)
-  ctx.strokeStyle = shield.element === 'light' ? COLORS.light1 : COLORS.dark1
-  ctx.lineWidth = 3
-  ctx.globalAlpha = 0.7
-  ctx.beginPath()
-  if (shield.shape === 'circle') {
-    ctx.arc(o.x, o.y, (shield.params.R ?? 1) * s, 0, Math.PI * 2)
-  } else {
-    ctx.ellipse(o.x, o.y, (shield.params.a ?? 1) * s, (shield.params.b ?? 1) * s, 0, 0, Math.PI * 2)
-  }
-  ctx.stroke()
-  ctx.globalAlpha = 1
-}
-
 /** z（属性）で色分けして軌道を描く。中立は淡く、光=金・闇=紫。 */
-function strokeZPath(ctx: CanvasRenderingContext2D, pts: ZPoint[], vp: Viewport): void {
+export function strokeZPath(ctx: CanvasRenderingContext2D, pts: ZPoint[], vp: Viewport): void {
   ctx.lineWidth = 3
   ctx.lineCap = 'round'
   for (let i = 1; i < pts.length; i++) {
@@ -234,6 +246,26 @@ function strokeZPath(ctx: CanvasRenderingContext2D, pts: ZPoint[], vp: Viewport)
   ctx.lineCap = 'butt'
 }
 
+/** 予測着弾点マーカー。 */
+function drawLanding(
+  ctx: CanvasRenderingContext2D,
+  landing: { pos: Vec2; attr: Attribute },
+  vp: Viewport,
+): void {
+  const c = toScreen(landing.pos, vp)
+  ctx.strokeStyle = attrColor(landing.attr)
+  ctx.fillStyle = attrColor(landing.attr)
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.arc(c.x, c.y, 8, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.globalAlpha = 0.4
+  ctx.beginPath()
+  ctx.arc(c.x, c.y, 4, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.globalAlpha = 1
+}
+
 /** 静的シーン一式を描画する。 */
 export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
   drawBackground(ctx, p.vp)
@@ -248,31 +280,21 @@ export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
   }
 
   drawObstacles(ctx, p.obstacles, p.vp)
-  if (p.shield) drawShield(ctx, p.shield, p.vp)
   drawEnemies(ctx, p.enemies, p.vp)
 
-  // プレイヤーのプレビュー軌道（z で色分け）
-  if (p.playerPath && p.playerPath.length > 1) {
-    strokeZPath(ctx, p.playerPath, p.vp)
+  // 各味方のプレビュー軌道（z で色分け）
+  if (p.playerPaths) {
+    for (const path of p.playerPaths) {
+      if (path && path.length > 1) strokeZPath(ctx, path, p.vp)
+    }
   }
 
   // 予測着弾点
-  if (p.landing) {
-    const c = toScreen(p.landing.pos, p.vp)
-    ctx.strokeStyle = attrColor(p.landing.attr)
-    ctx.fillStyle = attrColor(p.landing.attr)
-    ctx.lineWidth = 2
-    ctx.beginPath()
-    ctx.arc(c.x, c.y, 8, 0, Math.PI * 2)
-    ctx.stroke()
-    ctx.globalAlpha = 0.4
-    ctx.beginPath()
-    ctx.arc(c.x, c.y, 4, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.globalAlpha = 1
+  if (p.landings) {
+    for (const l of p.landings) if (l) drawLanding(ctx, l, p.vp)
   }
 
-  drawCaster(ctx, p.vp)
+  drawCasters(ctx, p.allies, p.vp, p.activeAllyId)
 }
 
 /** 飛行中の弾（十字スパーク＋グロー）。phase で煌めきを変える。 */

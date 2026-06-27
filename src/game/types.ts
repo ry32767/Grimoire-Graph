@@ -9,6 +9,12 @@ export interface Vec2 {
 /** 属性タイプ：命中位置の z 符号で決定（§3.2） */
 export type Attribute = 'light' | 'dark' | 'neutral'
 
+/** z（属性の高さ）つきの軌道点。描画の色分けに使う */
+export interface ZPoint {
+  pos: Vec2
+  z: number
+}
+
 /** 発射方式：回転（y=g(x) をθ回転）／極座標（r=f(θ)） */
 export type FireMode = 'rotate' | 'polar'
 
@@ -110,7 +116,7 @@ export interface Obstacle {
   maxRadius?: number
 }
 
-/** 閉曲線シールド（§3.6） */
+/** 閉曲線シールド（§3.6・旧防御。#4 で軌道型魔法に統合され state では未使用） */
 export interface Shield {
   shape: 'circle' | 'ellipse'
   /** circle: R / ellipse: a,b */
@@ -120,20 +126,23 @@ export interface Shield {
   maxDurability: number
 }
 
-/** プレイヤーの状態 */
-export interface PlayerState {
+/** 味方術者（#15：自陣営3人）。各自が配置（発射元）を持つ */
+export interface Ally {
+  id: string
+  name: string
+  /** 配置＝術者位置＝発射元（#14） */
+  pos: Vec2
   hp: number
   maxHp: number
+  /** 被ダメージ相性に使う防御属性 */
+  element: Attribute
   statuses: StatusEffect[]
-  shield: Shield | null
 }
 
-/** どのメカニクスを解禁しているか（段階的導入・機能17） */
+/** どのメカニクスを解禁しているか（段階的導入・機能17）。防御/パリィは軌道型に統合され常時 */
 export interface Mechanics {
   obstacles: boolean
-  shield: boolean
   enemyFire: boolean
-  parry: boolean
 }
 
 /** ステージ定義（§5・機能14）。データは src/data/ に分離 */
@@ -147,12 +156,8 @@ export interface Stage {
   /** クリアテキスト（ステージ後） */
   clearText: string[]
   mechanics: Mechanics
-  /** 「困ったらこれ」のおすすめ関数プリセットID（機能17） */
-  recommendedPresetId: string
-  /** おすすめ関数の係数（未指定ならプリセット既定値） */
-  recommendedCoeffs?: Record<string, number>
-  /** おすすめ関数の初速（未指定なら中速） */
-  recommendedSpeed?: number
+  /** ボス戦か（#6） */
+  boss?: boolean
 }
 
 /** ターンのフェーズ（敵公開→作成→解決・§4） */
@@ -168,21 +173,24 @@ export interface LogEntry {
     | 'misfire'
     | 'parry'
     | 'shield'
+    | 'orbit'
     | 'obstacle'
     | 'status'
     | 'miss'
   text: string
 }
 
-/** プレイヤーの行動：攻撃（術式発射）か防御（結界展開）（行動枠は1つ） */
-export type PlayerAction =
-  | { kind: 'attack'; trajectory: Trajectory; initialSpeed: number }
-  | { kind: 'shield'; shield: Shield }
+/** 味方の発射（#4：関数を撃つだけ。ループなら防御も兼ねる）。trajectory は味方位置を origin に持つ */
+export interface AllyCast {
+  allyId: string
+  trajectory: Trajectory
+  initialSpeed: number
+}
 
 /** 戦闘状態（メモリ上のみ・永続化なし） */
 export interface BattleState {
   stageIndex: number
-  player: PlayerState
+  allies: Ally[]
   enemies: Enemy[]
   obstacles: Obstacle[]
   mechanics: Mechanics
