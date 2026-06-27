@@ -12,12 +12,14 @@ export interface RingPoint {
   z: number
 }
 
-/** ループ軌道からリング（有限点列＋各点の z）を作る。場外でも切らない＝結界は一周する（#22/#25）。 */
+/**
+ * ループ軌道からリング（有限点列＋各点の z）を作る。場外でも切らない＝結界は一周する（#22/#25）。
+ * θ は 1周分（≤2π）に制限する：閉曲線は1周で形が完結し、2周分だと周回演出が倍速・粒子が重複するため（#22 演出修正）。
+ */
 export function buildRing(traj: Trajectory): RingPoint[] {
-  return validFinitePrefix(sampleTrajectory(traj)).map((s) => ({
-    pos: s.pos,
-    z: zfieldAt(traj, s.pos),
-  }))
+  return validFinitePrefix(sampleTrajectory(traj))
+    .filter((s) => s.param <= 2 * Math.PI + 1e-6)
+    .map((s) => ({ pos: s.pos, z: zfieldAt(traj, s.pos) }))
 }
 
 /** リング上で対象に最も近い点の index と距離。 */
