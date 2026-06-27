@@ -39,10 +39,14 @@ describe('敵AIの攻撃計画（#2/#17）', () => {
   it('直進型は狙った味方に命中する軌道を選ぶ', () => {
     const e = enemy({ x: 0, y: 8 }, 'line')
     const target = ally('t', { x: 0, y: -8 })
-    const plan = planEnemyShot(e, [ally('o', { x: 9, y: 9 }), target])
+    const decoy = ally('o', { x: 9, y: 9 })
+    const allies = [decoy, target]
+    const plan = planEnemyShot(e, allies)
     expect(plan).not.toBeNull()
+    // AI が狙うと宣言した相手に実際に命中する軌道であること（誰を狙うかは AI 次第）
+    const aimed = allies.find((a) => a.id === plan!.targetId)!
     const { flight } = enemyFlight(plan!.trajectory, e.castInitialSpeed)
-    expect(firstHit(flight.samples, target.pos, GAME.allyHitbox)).not.toBeNull()
+    expect(firstHit(flight.samples, aimed.pos, GAME.allyHitbox)).not.toBeNull()
   })
 
   it('相性有利（反対極）かつ低HPの相手を優先して狙う', () => {

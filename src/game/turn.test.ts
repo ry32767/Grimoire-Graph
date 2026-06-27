@@ -105,8 +105,9 @@ describe('暴発（自爆・#3/#9）', () => {
 describe('軌道型（周回結界）の防御（#4）', () => {
   it('円のリングが敵弾を迎撃して止める', () => {
     const res = resolveTurn({
+      // 敵(闇)は中立の味方へ光で攻撃するので、闇のリング(反対極)で強く迎撃する（#28）
       allies: [ally('a', { x: 0, y: 0 })],
-      casts: [cast('a', { mode: 'polar', f: () => 5, origin: { x: 0, y: 0 }, z: zLight })],
+      casts: [cast('a', { mode: 'polar', f: () => 5, origin: { x: 0, y: 0 }, z: zDark })],
       enemies: [enemy('e', { x: 10, y: 0 }, 'dark', 100, 5)],
       castingEnemyIds: ['e'],
       obstacles: [],

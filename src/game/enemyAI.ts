@@ -7,11 +7,17 @@ import { simulatePath } from './physics'
 import { firstHit } from './collision'
 import { isSolidAt } from './obstacle'
 import { attributeOf, strengthOf, affinityMultiplier, zfieldAt } from './attribute'
-import { GAME } from '../data/constants'
+import { constZField } from './zfields'
+import { FIELD, GAME } from '../data/constants'
 
-/** 敵の z 場を取り出す（#28）。castZField があればそれ、無ければ定数 castZ の場。 */
-export function enemyZField(enemy: Enemy): ZField {
-  return enemy.castZField ?? (() => enemy.castZ)
+/**
+ * 攻撃用の z 場を選ぶ（#28：敵は属性に関係なく光・闇を自由に使う）。
+ * 署名の castZField があればそれ、無ければ対象の反対極を最強(|z|=zPeak)で突く一定場。
+ */
+function attackZField(enemy: Enemy, targetElement: Enemy['element']): { z: ZField; zVal: number } {
+  if (enemy.castZField) return { z: enemy.castZField, zVal: enemy.castZ }
+  const zVal = targetElement === 'light' ? -FIELD.zPeak : FIELD.zPeak
+  return { z: constZField(zVal), zVal }
 }
 
 /** family の見た目情報（スプライトの記号・名称）。 */
@@ -87,15 +93,16 @@ export function planEnemyShot(enemy: Enemy, allies: Ally[], obstacles: Obstacle[
   const alive = allies.filter((a) => a.hp > 0)
   if (alive.length === 0) return null
 
-  const zField = enemyZField(enemy)
-  const bAttr = attributeOf(enemy.castZ)
-  const bStr = strengthOf(enemy.castZ)
   const shapes = shapeCandidates(enemy.family)
   const aimOffsets = enemy.family === 'spiral' ? [0] : [-0.28, -0.14, 0, 0.14, 0.28]
 
   let best: EnemyPlan | null = null
   for (const ally of alive) {
     const base = aimAt(enemy.pos, ally.pos)
+    // 攻撃の z 場は対象の弱点（反対極）を最強で突く（#28：光・闇を自由に使う）
+    const { z: zField, zVal } = attackZField(enemy, ally.element)
+    const bAttr = attributeOf(zVal)
+    const bStr = strengthOf(zVal)
     for (const off of aimOffsets) {
       for (const shape of shapes) {
         const traj = buildEnemyTrajectory(enemy.family, enemy.pos, base + off, shape, zField)
@@ -126,10 +133,11 @@ export function planEnemyShot(enemy: Enemy, allies: Ally[], obstacles: Obstacle[
   }
   if (best) return best
 
-  // 命中見込みなし：最もHPが低い味方へ直進で牽制
+  // 命中見込みなし：最もHPが低い味方へ直進で牽制（その対象の反対極で）
   const target = alive.reduce((lo, a) => (a.hp < lo.hp ? a : lo))
+  const { z: fallbackZ } = attackZField(enemy, target.element)
   return {
-    trajectory: buildEnemyTrajectory('line', enemy.pos, aimAt(enemy.pos, target.pos), 0, zField),
+    trajectory: buildEnemyTrajectory('line', enemy.pos, aimAt(enemy.pos, target.pos), 0, fallbackZ),
     targetId: target.id,
     expectedDamage: 0,
   }
