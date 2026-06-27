@@ -1,22 +1,24 @@
 // 関数パネルの状態 → 軌道・プレビューへの橋渡し（純粋ヘルパー、React 非依存）。
-import type { Attribute, Trajectory, Vec2 } from '../game/types'
+import type { Attribute, Trajectory, Vec2, ZField } from '../game/types'
 import {
   ALL_PRESETS,
   ROTATE_PRESETS,
   POLAR_PRESETS,
   parseExpression,
+  parseZExpression,
   buildTrajectory,
   type Preset,
 } from '../game/functions'
+import { findZPreset } from '../game/zfields'
 import { simulateFlight } from '../game/physics'
 import { detectMisfire } from '../game/misfire'
-import { trajectoryZ, attributeOf, strengthOf } from '../game/attribute'
+import { zfieldAt, attributeOf, strengthOf } from '../game/attribute'
 import { classifyTrajectory, type MagicKind } from '../game/loop'
 import { buildRing } from '../game/orbit'
 import { dist } from '../game/coords'
 import { FIELD } from '../data/constants'
 
-/** 関数パネルの状態（#4：攻防は分けず関数を撃つだけ） */
+/** 関数パネルの状態（#4：攻防は分けず関数を撃つだけ。z 場は軌道と別入力・#30/#21） */
 export interface ComposerState {
   mode: 'rotate' | 'polar'
   presetId: string
@@ -26,6 +28,23 @@ export interface ComposerState {
   useFree: boolean
   freeExpr: string
   freeError: string | null
+  /** z 場（属性 z=f(x,y)）の状態（#30/#21） */
+  zPresetId: string
+  zCoeffs: Record<string, number>
+  zUseFree: boolean
+  zFreeExpr: string
+  zFreeError: string | null
+}
+
+/** 状態から z 場（属性 z=f(x,y)）を組み立てる（#30）。組み立てられなければ中立(0)。 */
+export function buildZField(c: ComposerState): ZField {
+  if (c.zUseFree) {
+    const f = parseZExpression(c.zFreeExpr)
+    if (f) return f
+  }
+  const preset = findZPreset(c.zPresetId)
+  if (preset) return preset.build(c.zCoeffs)
+  return () => 0
 }
 
 export function findPreset(id: string): Preset | undefined {
@@ -36,26 +55,27 @@ export function presetsFor(mode: 'rotate' | 'polar'): Preset[] {
   return mode === 'rotate' ? ROTATE_PRESETS : POLAR_PRESETS
 }
 
-/** 状態から軌道を組み立てる（origin=術者位置・#14）。組み立てられなければ null。 */
+/** 状態から軌道を組み立てる（origin=術者位置・z 場つき・#14/#30）。組み立てられなければ null。 */
 export function buildComposerTrajectory(c: ComposerState, origin?: Vec2): Trajectory | null {
+  const z = buildZField(c)
   if (c.mode === 'rotate') {
     if (c.useFree) {
       const g = parseExpression(c.freeExpr)
       if (!g) return null
-      return { mode: 'rotate', g, angle: c.angle, origin }
+      return { mode: 'rotate', g, angle: c.angle, origin, z }
     }
     const preset = findPreset(c.presetId)
     if (!preset || preset.category !== 'rotate') return null
-    return buildTrajectory(preset, c.coeffs, c.angle, origin)
+    return { ...buildTrajectory(preset, c.coeffs, c.angle, origin), z }
   }
   if (c.useFree) {
     const f = parseExpression(c.freeExpr, 't')
     if (!f) return null
-    return { mode: 'polar', f, origin }
+    return { mode: 'polar', f, origin, z }
   }
   const preset = findPreset(c.presetId)
   if (!preset || preset.category !== 'polar') return null
-  return buildTrajectory(preset, c.coeffs, 0, origin)
+  return { ...buildTrajectory(preset, c.coeffs, 0, origin), z }
 }
 
 /** 軌道上の1点（描画で z により色分けする） */
@@ -94,14 +114,15 @@ export function computePreview(traj: Trajectory | null, speed: number): Preview 
   const kind = classifyTrajectory(traj)
   const flight = simulateFlight(traj, speed)
   // 軌道型は結界リング（場外でも一周する全周）をプレビューに使う（#22）。発射型は飛行軌道。
-  const path: PathPoint[] =
-    kind === 'orbit'
-      ? buildRing(traj).map((r) => ({ pos: r.pos, z: r.z }))
-      : flight.samples.map((s) => ({ pos: s.pos, z: trajectoryZ(traj, s.param) }))
+  const geomPts: Vec2[] =
+    kind === 'orbit' ? buildRing(traj).map((r) => r.pos) : flight.samples.map((s) => s.pos)
+  // #21：プレビューの canvas では z（属性）を見せない。経路は中立色（z=0）で描く。
+  const path: PathPoint[] = geomPts.map((pos) => ({ pos, z: 0 }))
   const last = flight.samples[flight.samples.length - 1]
-  const endZ = last ? trajectoryZ(traj, last.param) : 0
+  const endZ = last ? zfieldAt(traj, last.pos) : 0
   const endSpeed = last ? flight.endSpeed : speed
-  const maxStrength = path.reduce((m, p) => Math.max(m, strengthOf(p.z)), 0)
+  // パネルの計算補助用に、実際の z 場での最大強度を求める（canvas には出さない）
+  const maxStrength = geomPts.reduce((m, pos) => Math.max(m, strengthOf(zfieldAt(traj, pos))), 0)
 
   const mis = detectMisfire(traj)
   const selfMisfireWarning = !!mis && mis.type === 'invalid' && dist(mis.pos) <= FIELD.aoeRadius + 1

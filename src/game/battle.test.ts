@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createBattleState, prepareTurn, resolveAllyCasts } from './battle'
+import { FIELD } from '../data/constants'
 import type { Ally, AllyCast, Enemy, Mechanics, Stage, Trajectory } from './types'
 
 const mech: Mechanics = { obstacles: false, enemyFire: true }
@@ -41,8 +42,8 @@ const stage = (enemies: Enemy[]): Stage => ({
 })
 
 const cast = (allyId: string, trajectory: Trajectory, speed = 8): AllyCast => ({ allyId, trajectory, initialSpeed: speed })
-// 原点から +x の光線
-const ray = (origin: { x: number; y: number }): Trajectory => ({ mode: 'rotate', g: (x) => x, angle: -Math.PI / 4, origin })
+// 原点から +x の光線（経路は g=x、属性は z 場で光・最強）
+const ray = (origin: { x: number; y: number }): Trajectory => ({ mode: 'rotate', g: (x) => x, angle: -Math.PI / 4, origin, z: () => FIELD.zPeak })
 
 describe('戦闘状態の初期化', () => {
   it('味方HP満タン・敵クローン・ターン1で開始', () => {

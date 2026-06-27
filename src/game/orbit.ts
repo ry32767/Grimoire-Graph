@@ -3,7 +3,7 @@
 import type { Attribute, Trajectory, Vec2 } from './types'
 import { COMBAT, FIELD } from '../data/constants'
 import { sampleTrajectory, validFinitePrefix, dist } from './coords'
-import { trajectoryZ, attributeOf, strengthOf, affinityMultiplier } from './attribute'
+import { zfieldAt, attributeOf, strengthOf, affinityMultiplier } from './attribute'
 import { firstCrossing } from './parry'
 
 /** リング上の1点（位置＋属性 z） */
@@ -16,7 +16,7 @@ export interface RingPoint {
 export function buildRing(traj: Trajectory): RingPoint[] {
   return validFinitePrefix(sampleTrajectory(traj)).map((s) => ({
     pos: s.pos,
-    z: trajectoryZ(traj, s.param),
+    z: zfieldAt(traj, s.pos),
   }))
 }
 

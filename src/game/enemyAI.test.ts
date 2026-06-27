@@ -41,7 +41,7 @@ describe('敵AIの攻撃計画（#2/#17）', () => {
     const target = ally('t', { x: 0, y: -8 })
     const plan = planEnemyShot(e, [ally('o', { x: 9, y: 9 }), target])
     expect(plan).not.toBeNull()
-    const { flight } = enemyFlight(plan!.trajectory, e.castInitialSpeed, e.castZ)
+    const { flight } = enemyFlight(plan!.trajectory, e.castInitialSpeed)
     expect(firstHit(flight.samples, target.pos, GAME.allyHitbox)).not.toBeNull()
   })
 

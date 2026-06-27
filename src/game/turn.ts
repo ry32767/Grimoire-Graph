@@ -20,7 +20,7 @@ import {
   strengthOf,
   computeDamage,
   affinityMultiplier,
-  trajectoryZ,
+  zfieldAt,
 } from './attribute'
 import {
   simulateFlight,
@@ -55,6 +55,8 @@ export interface EnemyShot {
   path: Vec2[]
   flight: Flight
   castZ: number
+  /** 敵弾の軌道（z 場つき）。位置ごとの属性・強度の評価に使う（#28） */
+  traj: Trajectory
   blocked: boolean
   reachedTarget: boolean
   damage: number
@@ -158,7 +160,7 @@ interface AllyPlan {
 function carveAlong(
   geom: FlightSample[],
   obstacles: Obstacle[],
-  zAt: (param: number) => number,
+  zAt: (pos: Vec2) => number,
   losses: LossEvent[],
   resim: (losses: LossEvent[]) => Flight,
   current: Flight,
@@ -182,7 +184,7 @@ function carveAlong(
       vanished = true
       break
     }
-    const z = zAt(geom[s].param)
+    const z = zAt(geom[s].pos)
     const attr = attributeOf(z)
     const power = cur.speed * (strengthOf(z) + 1) // 中立弾でも運動量で少しえぐれる
     const r = carveRadius(power)
@@ -210,7 +212,7 @@ export function traverseObstacles(
   const r = carveAlong(
     freeFlight.samples,
     obstacles,
-    (param) => trajectoryZ(traj, param),
+    (pos) => zfieldAt(traj, pos),
     losses,
     (ls) => simulateWithLosses(traj, initSpeed, ls),
     freeFlight,
@@ -245,13 +247,14 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     if (!input.castingEnemyIds.includes(e.id) || e.hp <= 0) continue
     const plan = planEnemyShot(e, allies, obstacles)
     if (!plan) continue
-    const { path, flight } = enemyFlight(plan.trajectory, e.castInitialSpeed, e.castZ)
+    const { path, flight } = enemyFlight(plan.trajectory, e.castInitialSpeed)
     enemyShots.push({
       enemyId: e.id,
       targetAllyId: plan.targetId,
       path,
       flight,
       castZ: e.castZ,
+      traj: plan.trajectory,
       blocked: false,
       reachedTarget: false,
       damage: 0,
@@ -285,9 +288,11 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     const geom = shot.flight.samples // 幾何（位置・弧長）は減衰で変わらない
     const pathPoly = polyFromPoints(shot.path)
     const arcAt = (idx: number) => pathPoly[Math.min(idx, pathPoly.length - 1)]?.cumLen ?? 0
+    // 敵弾の z は軌道に紐づく z 場をパス位置で評価する（#28）
+    const enemyZByIdx = (i: number) => zfieldAt(shot.traj, shot.path[Math.min(i, shot.path.length - 1)])
     const losses: LossEvent[] = []
     const resim = () => {
-      shot.flight = simulatePath(shot.path, initSpeed, () => shot.castZ, losses)
+      shot.flight = simulatePath(shot.path, initSpeed, enemyZByIdx, losses)
     }
 
     // 3z. 障害物は敵弾も削りながら遮る（味方の盾になる・#16）。削り切れず速度0で止まれば消滅。
@@ -295,9 +300,9 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       const r = carveAlong(
         geom,
         obstacles,
-        () => shot.castZ,
+        (pos) => zfieldAt(shot.traj, pos),
         losses,
-        (ls) => simulatePath(shot.path, initSpeed, () => shot.castZ, ls),
+        (ls) => simulatePath(shot.path, initSpeed, enemyZByIdx, ls),
         shot.flight,
       )
       shot.flight = r.flight
@@ -317,7 +322,8 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       if (p.kind !== 'orbit' || !p.ring || shot.blocked) continue
       const inter = ringInterception(p.ring, shot.path)
       if (!inter.crossed || inter.ringZ === undefined || inter.enemyIndex === undefined) continue
-      losses.push({ arcLen: arcAt(inter.enemyIndex), deltaV: orbitBlockLoss(inter.ringZ, attributeOf(shot.castZ)) })
+      const eAttrHere = attributeOf(inter.pos ? zfieldAt(shot.traj, inter.pos) : shot.castZ)
+      losses.push({ arcLen: arcAt(inter.enemyIndex), deltaV: orbitBlockLoss(inter.ringZ, eAttrHere) })
       resim()
       const aName = nameOf(allies, p.cast.allyId)
       if (shot.flight.end === 'vanished') {
@@ -339,11 +345,12 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       const crossArc = arcAt(cross.indexB)
       // 直前までの減衰を反映した現在の飛行から、交差点（弧長基準）の速度を引く
       const eSample = sampleAtLength(shot.flight, crossArc) ?? shot.flight.samples[shot.flight.samples.length - 1]
-      const pZ = trajectoryZ(p.cast.trajectory, pSample.param)
+      const pZ = zfieldAt(p.cast.trajectory, pSample.pos)
       const pAttr = attributeOf(pZ)
       const pStr = strengthOf(pZ)
-      const eAttr = attributeOf(shot.castZ)
-      const eStr = strengthOf(shot.castZ)
+      const eZ = zfieldAt(shot.traj, eSample.pos)
+      const eAttr = attributeOf(eZ)
+      const eStr = strengthOf(eZ)
       const parry = resolveParry(pAttr, pSample.speed, pSample.speed * pStr, eAttr, eSample.speed, eSample.speed * eStr)
       if (parry.passthrough) continue
       losses.push({ arcLen: crossArc, deltaV: eSample.speed - parry.speedB })
@@ -408,7 +415,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     // 発射型
     const flight = p.freeFlight!
     const traj = p.cast.trajectory
-    const path: ZPoint[] = flight.samples.map((s) => ({ pos: s.pos, z: trajectoryZ(traj, s.param) }))
+    const path: ZPoint[] = flight.samples.map((s) => ({ pos: s.pos, z: zfieldAt(traj, s.pos) }))
     let misfirePos: Vec2 | null = null
     let hitEnemyId: string | null = null
     let hitArcLen = 0
@@ -418,7 +425,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       hitArcLen = hit.arcLen
       const idx = enemies.findIndex((e) => e.id === hit.id)
       const enemy = enemies[idx]
-      const z = trajectoryZ(traj, hit.param)
+      const z = zfieldAt(traj, hit.pos)
       const dmg = computeDamage(hit.speed, z, enemy.element)
       enemies[idx] = {
         ...enemy,
@@ -481,8 +488,9 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       .map((a) => ({ id: a.id, pos: a.pos, radius: GAME.allyHitbox }))
     const hit = firstHitAmong(shot.flight.samples, allyTargets)
     if (!hit || hit.speed <= 0) continue
-    const bAttr = attributeOf(shot.castZ)
-    const bStr = strengthOf(shot.castZ)
+    const bZ = zfieldAt(shot.traj, hit.pos)
+    const bAttr = attributeOf(bZ)
+    const bStr = strengthOf(bZ)
     const idx = allies.findIndex((a) => a.id === hit.id)
     if (idx < 0) continue
     const damage = hit.speed * bStr * affinityMultiplier(bAttr, allies[idx].element)

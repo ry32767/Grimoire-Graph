@@ -1,13 +1,18 @@
 // 敵AI（#2・#17）：敵ごとの「得意関数（系統）」で攻撃を最適化する。純粋関数。
 // 各敵は family（直線/弧/波/渦）を持ち、AI は狙い角と形状係数の候補から、
 // 狙う味方へ最大ダメージを与える軌道を選ぶ（軌跡型は陣営有利＝強属性で展開）。
-import type { Ally, Enemy, EnemyFamily, Flight, Obstacle, Trajectory, Vec2 } from './types'
+import type { Ally, Enemy, EnemyFamily, Flight, Obstacle, Trajectory, Vec2, ZField } from './types'
 import { sampleTrajectory, validPrefix } from './coords'
 import { simulatePath } from './physics'
 import { firstHit } from './collision'
 import { isSolidAt } from './obstacle'
-import { attributeOf, strengthOf, affinityMultiplier } from './attribute'
+import { attributeOf, strengthOf, affinityMultiplier, zfieldAt } from './attribute'
 import { GAME } from '../data/constants'
+
+/** 敵の z 場を取り出す（#28）。castZField があればそれ、無ければ定数 castZ の場。 */
+export function enemyZField(enemy: Enemy): ZField {
+  return enemy.castZField ?? (() => enemy.castZ)
+}
 
 /** family の見た目情報（スプライトの記号・名称）。 */
 export const ARCHETYPES: Record<EnemyFamily, { label: string; glyph: EnemyFamily }> = {
@@ -22,25 +27,26 @@ function aimAt(from: Vec2, to: Vec2): number {
   return Math.atan2(to.y - from.y, to.x - from.x)
 }
 
-/** family＋狙い角＋形状係数から敵の軌道を組み立てる（origin=敵位置）。 */
+/** family＋狙い角＋形状係数から敵の軌道を組み立てる（origin=敵位置・z 場つき）。 */
 function buildEnemyTrajectory(
   family: EnemyFamily,
   origin: Vec2,
   angle: number,
   shape: number,
+  z: ZField,
 ): Trajectory {
   switch (family) {
     case 'line':
-      return { mode: 'rotate', g: () => 0, angle, origin }
+      return { mode: 'rotate', g: () => 0, angle, origin, z }
     case 'arc':
       // 緩い放物の弧（左右に曲がる）
-      return { mode: 'rotate', g: (x) => shape * x * x, angle, origin }
+      return { mode: 'rotate', g: (x) => shape * x * x, angle, origin, z }
     case 'wave':
       // 波打って進む（shape=振幅）
-      return { mode: 'rotate', g: (x) => shape * Math.sin(0.45 * x), angle, origin }
+      return { mode: 'rotate', g: (x) => shape * Math.sin(0.45 * x), angle, origin, z }
     case 'spiral':
       // 渦巻き（shape=巻きの強さ）。狙い角ぶん回す
-      return { mode: 'polar', f: (t) => shape * (t + angle), origin }
+      return { mode: 'polar', f: (t) => shape * (t + angle), origin, z }
   }
 }
 
@@ -58,10 +64,10 @@ function shapeCandidates(family: EnemyFamily): number[] {
   }
 }
 
-/** 敵の軌道から path と飛行を作る（z は castZ 一定＝敵の属性）。 */
-export function enemyFlight(traj: Trajectory, speed: number, castZ: number): { path: Vec2[]; flight: Flight } {
+/** 敵の軌道から path と飛行を作る（z は軌道の z 場を位置で評価・#28）。 */
+export function enemyFlight(traj: Trajectory, speed: number): { path: Vec2[]; flight: Flight } {
   const path = validPrefix(sampleTrajectory(traj)).map((s) => s.pos)
-  const flight = simulatePath(path, speed, () => castZ)
+  const flight = simulatePath(path, speed, (i) => zfieldAt(traj, path[Math.min(i, path.length - 1)]))
   return { path, flight }
 }
 
@@ -81,6 +87,7 @@ export function planEnemyShot(enemy: Enemy, allies: Ally[], obstacles: Obstacle[
   const alive = allies.filter((a) => a.hp > 0)
   if (alive.length === 0) return null
 
+  const zField = enemyZField(enemy)
   const bAttr = attributeOf(enemy.castZ)
   const bStr = strengthOf(enemy.castZ)
   const shapes = shapeCandidates(enemy.family)
@@ -91,8 +98,8 @@ export function planEnemyShot(enemy: Enemy, allies: Ally[], obstacles: Obstacle[
     const base = aimAt(enemy.pos, ally.pos)
     for (const off of aimOffsets) {
       for (const shape of shapes) {
-        const traj = buildEnemyTrajectory(enemy.family, enemy.pos, base + off, shape)
-        const { flight } = enemyFlight(traj, enemy.castInitialSpeed, enemy.castZ)
+        const traj = buildEnemyTrajectory(enemy.family, enemy.pos, base + off, shape, zField)
+        const { flight } = enemyFlight(traj, enemy.castInitialSpeed)
         const hit = firstHit(flight.samples, ally.pos, GAME.allyHitbox)
         if (!hit) continue
         // 障害物（素材）が手前にあると弾が削れる＝評価を下げる
@@ -122,7 +129,7 @@ export function planEnemyShot(enemy: Enemy, allies: Ally[], obstacles: Obstacle[
   // 命中見込みなし：最もHPが低い味方へ直進で牽制
   const target = alive.reduce((lo, a) => (a.hp < lo.hp ? a : lo))
   return {
-    trajectory: buildEnemyTrajectory('line', enemy.pos, aimAt(enemy.pos, target.pos), 0),
+    trajectory: buildEnemyTrajectory('line', enemy.pos, aimAt(enemy.pos, target.pos), 0, zField),
     targetId: target.id,
     expectedDamage: 0,
   }

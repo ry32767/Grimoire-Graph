@@ -18,6 +18,13 @@ export interface ZPoint {
 /** 発射方式：回転（y=g(x) をθ回転）／極座標（r=f(θ)） */
 export type FireMode = 'rotate' | 'polar'
 
+/**
+ * z 場（属性の高さ）＝位置の2変数関数 z=f(x,y)（#30/#21）。
+ * 軌道（経路）とは別物で、弾が通る各点の (x,y) で評価して属性・強度・加速度を決める。
+ * 符号で属性（+光/−闇）、|z| が V に近いほど強い（attribute.strengthOf）。未指定なら中立(0)。
+ */
+export type ZField = (x: number, y: number) => number
+
 /** 敵の得意関数の系統（#17：見た目で判別）。直線/弧/波/渦。 */
 export type EnemyFamily = 'line' | 'arc' | 'wave' | 'spiral'
 
@@ -34,6 +41,8 @@ export interface RotateTrajectory {
   angle: number
   /** 発射元（術者位置）。未指定は原点 */
   origin?: Vec2
+  /** 属性の z 場 z=f(x,y)（#30/#21）。未指定は中立(0)。経路上の位置で評価する */
+  z?: ZField
 }
 
 /** 極座標方式の軌道：r=f(θ)（術者位置 origin を極の中心に・全方向） */
@@ -42,6 +51,8 @@ export interface PolarTrajectory {
   f: (theta: number) => number
   /** 極の中心（術者位置）。未指定は原点 */
   origin?: Vec2
+  /** 属性の z 場 z=f(x,y)（#30/#21）。未指定は中立(0）。経路上の位置で評価する */
+  z?: ZField
 }
 
 /** 軌道（発射方式の判別共用体） */
@@ -105,8 +116,10 @@ export interface Enemy {
   /** このターン敵が先出しする術式（軌道・初速）。AI が決める（互換のため保持） */
   castTrajectory: Trajectory
   castInitialSpeed: number
-  /** 敵弾が帯びる z（高さ＝属性）。符号=属性, |z|=強度。光の敵は正・闇の敵は負 */
+  /** 敵弾の代表 z（符号=属性、UI/AI の基準）。実際の属性は castZField を位置で評価して決める */
   castZ: number
+  /** 敵弾の z 場 z=f(x,y)（#28）。未指定なら定数 castZ の場として扱う */
+  castZField?: ZField
 }
 
 /** 円（障害物の基本形・削り穴の両方に使う）。中心 (x,y)・半径 r。 */

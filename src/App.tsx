@@ -4,6 +4,7 @@ import { createBattleState, prepareTurn, resolveAllyCasts } from './game/battle'
 import { planEnemyShot, enemyFlight } from './game/enemyAI'
 import { recommendCast } from './game/recommend'
 import { ROTATE_PRESETS, defaultCoeffs } from './game/functions'
+import { ZFIELD_PRESETS, defaultZCoeffs } from './game/zfields'
 import { STAGES } from './data/stages'
 import { makeParty } from './data/party'
 import { FIELD } from './data/constants'
@@ -45,6 +46,8 @@ function formatTime(ms: number): string {
 
 function makeComposer(angle: number): ComposerState {
   const coeffs = defaultCoeffs(ROTATE_PRESETS[0])
+  const zPreset = ZFIELD_PRESETS[0] // 一定（const）
+  const zCoeffs = defaultZCoeffs(zPreset)
   return {
     mode: 'rotate',
     presetId: 'line',
@@ -54,6 +57,11 @@ function makeComposer(angle: number): ComposerState {
     useFree: false,
     freeExpr: ROTATE_PRESETS[0].toExpr(coeffs),
     freeError: null,
+    zPresetId: zPreset.id,
+    zCoeffs,
+    zUseFree: false,
+    zFreeExpr: zPreset.toExpr(zCoeffs),
+    zFreeError: null,
   }
 }
 
@@ -107,11 +115,12 @@ export default function App() {
     () => aliveAllies.map((a) => previews[a.id]?.path ?? null),
     [aliveAllies, previews],
   )
+  // 着弾点マーカー。#21：プレビューでは属性(z)を見せないので中立色で描く
   const landings = useMemo(
     () =>
       aliveAllies.map((a) => {
         const l = previews[a.id]?.landing
-        return l ? { pos: l.pos, attr: l.attr } : null
+        return l ? { pos: l.pos, attr: 'neutral' as const } : null
       }),
     [aliveAllies, previews],
   )
@@ -123,7 +132,7 @@ export default function App() {
       .filter((e): e is NonNullable<typeof e> => !!e && e.hp > 0)
       .map((e) => {
         const plan = planEnemyShot(e, battle.allies, battle.obstacles)
-        return plan ? enemyFlight(plan.trajectory, e.castInitialSpeed, e.castZ).path : []
+        return plan ? enemyFlight(plan.trajectory, e.castInitialSpeed).path : []
       })
       .filter((p) => p.length > 0)
   }, [battle, castingIds])
@@ -176,11 +185,13 @@ export default function App() {
     if (!ally || !target) return
     // 障害物の貫通/迂回を込みで「当たる」術式を探す
     const r = recommendCast(ally.pos, target, battle.mechanics.obstacles ? battle.obstacles : [])
+    // z 場は敵の反対極を最強で当てる一定値（#21）
+    const zPatch = { zPresetId: 'const', zCoeffs: { c: r.zConst }, zUseFree: false }
     setComposers((m) => ({
       ...m,
       [activeAllyId]: r.line
-        ? { ...makeComposer(r.angle), coeffs: { a: r.line.a, b: r.line.b }, freeExpr: `${r.line.a}*x` }
-        : { ...makeComposer(r.angle), useFree: true, freeExpr: r.freeExpr ?? '' },
+        ? { ...makeComposer(r.angle), coeffs: { a: r.line.a, b: r.line.b }, freeExpr: `${r.line.a}*x`, ...zPatch }
+        : { ...makeComposer(r.angle), useFree: true, freeExpr: r.freeExpr ?? '', ...zPatch },
     }))
   }
 

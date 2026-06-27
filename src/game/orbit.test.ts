@@ -2,16 +2,18 @@ import { describe, it, expect } from 'vitest'
 import { buildRing, orbitSweep, ringInterception, type OrbitTarget } from './orbit'
 import { dist } from './coords'
 import type { Trajectory } from './types'
+import { FIELD } from '../data/constants'
 
-const circle: Trajectory = { mode: 'polar', f: () => 6 }
+// 半径6の円・z 場は一定 zPeak(=5・光・最強)。経路と属性は別物（#30）。
+const circle: Trajectory = { mode: 'polar', f: () => 6, z: () => FIELD.zPeak }
 
 describe('リング生成（軌道型の周回）', () => {
-  it('円 r=6 のリングは半径6・z=6（光）', () => {
+  it('円 r=6 のリングは半径6・z=zPeak（光）', () => {
     const ring = buildRing(circle)
     expect(ring.length).toBeGreaterThan(20)
     for (const p of ring.slice(0, 30)) {
       expect(dist(p.pos)).toBeCloseTo(6, 4)
-      expect(p.z).toBeCloseTo(6, 6)
+      expect(p.z).toBeCloseTo(FIELD.zPeak, 6)
     }
   })
 })
@@ -27,7 +29,7 @@ describe('掃射（攻撃・#4/#12）', () => {
     expect(ids).toContain('on')
     expect(ids).not.toContain('off')
     const on = hits.find((h) => h.id === 'on')!
-    expect(on.damage).toBeCloseTo(5 * 5 * 1.5, 4) // 速度5×強度5(clamp)×相性1.5
+    expect(on.damage).toBeCloseTo(5 * 5 * 1.5, 4) // 速度5×強度5(ピーク)×相性1.5
   })
 })
 
