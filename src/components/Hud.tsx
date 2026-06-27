@@ -30,10 +30,14 @@ function HpRow({
 }) {
   const pct = Math.max(0, Math.min(100, (hp / maxHp) * 100))
   const dead = hp <= 0
+  // 状態異常でバーの形を変える（#24）：ひるみ＝ギザギザ、継続ダメージ＝炎の波形
+  const hasFlinch = statuses.some((s) => s.kind === 'flinch')
+  const hasBurn = statuses.some((s) => s.kind === 'burn')
+  const barClass = `hp-bar${hasFlinch ? ' flinch' : ''}${hasBurn ? ' burn' : ''}`
   return (
     <div className={`hp-row${active ? ' active' : ''}${dead ? ' dead' : ''}`}>
       <span className="hp-name">{name}</span>
-      <span className="hp-bar">
+      <span className={barClass}>
         <span className={`hp-fill${enemy ? ' enemy' : ''}`} style={{ width: `${pct}%` }} />
       </span>
       <span className="hp-num">
