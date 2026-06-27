@@ -76,6 +76,8 @@ export default function App() {
   const [animation, setAnimation] = useState<ResolveAnimation | null>(null)
   const [pendingState, setPendingState] = useState<BattleState | null>(null)
   const [codexOpen, setCodexOpen] = useState(false)
+  // #23：図鑑用に「遭遇した敵」を記録（セッション内・永続化しない）
+  const [seenEnemies, setSeenEnemies] = useState<Set<string>>(new Set())
   const [guideOpen, setGuideOpen] = useState(false)
   const [guideShown, setGuideShown] = useState(false)
   // #6：クリアタイム計測
@@ -148,6 +150,8 @@ export default function App() {
   // ===== 画面遷移 =====
   const startBattle = () => {
     const stage = STAGES[stageIndex]
+    // 遭遇した敵を図鑑に記録（#23）
+    setSeenEnemies((prev) => new Set([...prev, ...stage.enemies.map((e) => e.name)]))
     const party = makeParty()
     const fresh = createBattleState(stage, stageIndex, party)
     const prep = prepareTurn(fresh)
@@ -473,7 +477,13 @@ export default function App() {
         </div>
       </div>
 
-      {codexOpen && <Codex activePresetId={activeComposer?.presetId} onClose={() => setCodexOpen(false)} />}
+      {codexOpen && (
+        <Codex
+          activePresetId={activeComposer?.presetId}
+          seenEnemies={seenEnemies}
+          onClose={() => setCodexOpen(false)}
+        />
+      )}
       {guideOpen && <Guide onClose={() => setGuideOpen(false)} />}
     </div>
   )

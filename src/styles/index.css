@@ -732,3 +732,28 @@ code {
   0% { filter: brightness(1); }
   100% { filter: brightness(1.5) drop-shadow(0 0 3px rgba(232, 146, 58, 0.8)); }
 }
+
+/* 敵図鑑カード（#23） */
+.codex-card.enemy-card {
+  min-height: 70px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.codex-card.enemy-card.unseen {
+  align-items: center;
+  opacity: 0.7;
+  border-style: dashed;
+}
+.codex-card.enemy-card.light {
+  border-left: 3px solid var(--light1, #f4c430);
+}
+.codex-card.enemy-card.dark {
+  border-left: 3px solid var(--dark1, #7b5cc4);
+}
+.enemy-qmark {
+  font-size: 28px;
+  font-weight: bold;
+  color: var(--text-dim);
+  text-align: center;
+}
