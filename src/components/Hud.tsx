@@ -1,4 +1,4 @@
-import type { Enemy, PlayerState, StatusEffect } from '../game/types'
+import type { Ally, Enemy, StatusEffect } from '../game/types'
 
 function StatusBadges({ statuses }: { statuses: StatusEffect[] }) {
   if (statuses.length === 0) return null
@@ -18,17 +18,20 @@ function HpRow({
   hp,
   maxHp,
   enemy,
+  active,
   statuses,
 }: {
   name: string
   hp: number
   maxHp: number
   enemy?: boolean
+  active?: boolean
   statuses: StatusEffect[]
 }) {
   const pct = Math.max(0, Math.min(100, (hp / maxHp) * 100))
+  const dead = hp <= 0
   return (
-    <div className="hp-row">
+    <div className={`hp-row${active ? ' active' : ''}${dead ? ' dead' : ''}`}>
       <span className="hp-name">{name}</span>
       <span className="hp-bar">
         <span className={`hp-fill${enemy ? ' enemy' : ''}`} style={{ width: `${pct}%` }} />
@@ -42,32 +45,33 @@ function HpRow({
 }
 
 interface Props {
-  player: PlayerState
+  allies: Ally[]
   enemies: Enemy[]
+  activeAllyId?: string | null
 }
 
-export default function Hud({ player, enemies }: Props) {
+export default function Hud({ allies, enemies, activeAllyId }: Props) {
   return (
     <div className="hud panel">
-      <HpRow name="術者（あなた）" hp={player.hp} maxHp={player.maxHp} statuses={player.statuses} />
-      {enemies.map((e) => (
-        <HpRow key={e.id} name={e.name} hp={e.hp} maxHp={e.maxHp} enemy statuses={e.statuses} />
-      ))}
-      {player.shield && (
-        <div className="hp-row">
-          <span className="hp-name">結界</span>
-          <span className="hp-bar">
-            <span
-              className="hp-fill"
-              style={{
-                width: `${Math.max(0, (player.shield.durability / player.shield.maxDurability) * 100)}%`,
-                background: 'linear-gradient(180deg,#8ab0ff,#3a5aa0)',
-              }}
-            />
-          </span>
-          <span className="hp-num">{Math.ceil(player.shield.durability)}</span>
-        </div>
-      )}
+      <div className="hud-col">
+        <div className="hud-label">自陣営</div>
+        {allies.map((a) => (
+          <HpRow
+            key={a.id}
+            name={a.name}
+            hp={a.hp}
+            maxHp={a.maxHp}
+            active={a.id === activeAllyId}
+            statuses={a.statuses}
+          />
+        ))}
+      </div>
+      <div className="hud-col">
+        <div className="hud-label">敵陣営</div>
+        {enemies.map((e) => (
+          <HpRow key={e.id} name={e.name} hp={e.hp} maxHp={e.maxHp} enemy statuses={e.statuses} />
+        ))}
+      </div>
     </div>
   )
 }

@@ -181,6 +181,21 @@ h3 {
   color: var(--text-dim);
   font-size: 15px;
 }
+.clear-time {
+  font-family: var(--font-pixel);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.clear-time .time-value {
+  color: var(--light-1);
+  font-size: 18px;
+}
+.phase-bar .boss-tag {
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  padding: 1px 6px;
+  margin-left: 6px;
+}
 .story-text {
   text-align: left;
   font-size: 16px;
@@ -246,17 +261,39 @@ h3 {
   color: var(--text-dim);
 }
 
-/* HUD（HP・状態） */
+/* HUD（HP・状態）：自陣営／敵陣営の2列 */
 .hud {
   display: flex;
+  flex-direction: row;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.hud-col {
+  flex: 1;
+  min-width: 220px;
+  display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
+}
+.hud-label {
+  font-family: var(--font-pixel);
+  font-size: 10px;
+  color: var(--text-dim);
+  border-bottom: 2px dotted var(--panel-bevel);
+  padding-bottom: 3px;
 }
 .hp-row {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 13px;
+}
+.hp-row.active {
+  background: rgba(244, 196, 48, 0.1);
+  outline: 1px solid var(--panel-bevel);
+}
+.hp-row.dead {
+  opacity: 0.4;
 }
 .hp-name {
   width: 92px;
@@ -314,8 +351,52 @@ h3 {
 }
 
 /* =========================================================
-   関数パネル
+   関数パネル（#15：味方タブ＋種別バッジ）
    ========================================================= */
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.panel-ally {
+  font-family: var(--font-pixel);
+  font-size: 11px;
+  color: var(--light-1);
+}
+.kind-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border: 1px solid;
+  white-space: nowrap;
+}
+.kind-badge.projectile {
+  color: var(--light-1);
+  border-color: var(--light-1);
+}
+.kind-badge.orbit {
+  color: #8ab0ff;
+  border-color: #8ab0ff;
+}
+.ally-tabs {
+  display: flex;
+  gap: 6px;
+}
+.ally-tabs .btn {
+  flex: 1;
+  font-size: 11px;
+  padding: 6px 4px;
+}
+.ally-tab.dead {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+.btn.fire-all {
+  flex: 2;
+  font-size: 14px;
+}
+
 .section-title {
   font-family: var(--font-pixel);
   font-size: 11px;

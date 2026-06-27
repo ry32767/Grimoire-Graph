@@ -1,27 +1,20 @@
 import { describe, it, expect } from 'vitest'
 import { STAGES } from './stages'
-import { ALL_PRESETS, buildTrajectory } from '../game/functions'
-import { createBattleState, prepareTurn, resolvePlayerAction } from '../game/battle'
+import { ROTATE_PRESETS, buildTrajectory } from '../game/functions'
+import { createBattleState, prepareTurn, resolveAllyCasts } from '../game/battle'
+import { makeParty } from './party'
 import { FIELD } from './constants'
 import { dist } from '../game/coords'
 
-describe('ステージ定義（機能14）', () => {
-  it('3ステージある', () => {
-    expect(STAGES).toHaveLength(3)
+describe('ステージ定義（機能14・#15）', () => {
+  it('3ステージ以上ある', () => {
+    expect(STAGES.length).toBeGreaterThanOrEqual(3)
   })
 
-  it('段階的導入：メカニクスが後半ほど増える（機能17）', () => {
-    const count = (m: { obstacles: boolean; shield: boolean; enemyFire: boolean; parry: boolean }) =>
-      [m.obstacles, m.shield, m.enemyFire, m.parry].filter(Boolean).length
-    const c1 = count(STAGES[0].mechanics)
-    const c2 = count(STAGES[1].mechanics)
-    const c3 = count(STAGES[2].mechanics)
-    expect(c1).toBeLessThan(c2)
-    expect(c2).toBeLessThan(c3)
-    // ステージ1は命中だけ
-    expect(STAGES[0].mechanics).toEqual({ obstacles: false, shield: false, enemyFire: false, parry: false })
-    // ステージ3はパリィまで解禁
-    expect(STAGES[2].mechanics.parry).toBe(true)
+  it('段階的導入：序盤は命中だけ、後半は敵弾・障害物が登場', () => {
+    expect(STAGES[0].mechanics).toEqual({ obstacles: false, enemyFire: false })
+    const last = STAGES[STAGES.length - 1]
+    expect(last.mechanics.enemyFire).toBe(true)
   })
 
   it('敵・障害物は場内に配置され、HP/耐久は正', () => {
@@ -39,28 +32,23 @@ describe('ステージ定義（機能14）', () => {
       }
     }
   })
-
-  it('おすすめプリセットIDはカタログに存在する', () => {
-    for (const s of STAGES) {
-      expect(ALL_PRESETS.some((p) => p.id === s.recommendedPresetId)).toBe(true)
-    }
-  })
 })
 
 describe('エンジンとの結線（スモーク）', () => {
   it('ステージ1でおすすめ光線を敵に当てるとHPが減る', () => {
     const stage = STAGES[0]
     const target = stage.enemies[0]
-    const preset = ALL_PRESETS.find((p) => p.id === stage.recommendedPresetId)!
+    const party = makeParty()
+    const caster = party[1] // 中央の術者
     // おすすめ：敵の反対極を作る直線 g(x)=a·x（闇の敵→光 a=1）
     const a = target.element === 'light' ? -1 : 1
-    const phi = Math.atan2(target.pos.y, target.pos.x)
-    const angle = phi - Math.atan(a)
-    const trajectory = buildTrajectory(preset, { a, b: 0 }, angle)
+    const line = ROTATE_PRESETS[0]
+    const angle = Math.atan2(target.pos.y - caster.pos.y, target.pos.x - caster.pos.x) - Math.atan(a)
+    const trajectory = buildTrajectory(line, { a, b: 0 }, angle, caster.pos)
 
-    let s = createBattleState(stage, 0, 100)
+    let s = createBattleState(stage, 0, party)
     const prep = prepareTurn(s)
-    const out = resolvePlayerAction(prep.state, { kind: 'attack', trajectory, initialSpeed: stage.recommendedSpeed ?? 8 }, prep.castingEnemyIds)
+    const out = resolveAllyCasts(prep.state, [{ allyId: caster.id, trajectory, initialSpeed: FIELD.fixedSpeed }], prep.castingEnemyIds)
     s = out.state
     expect(s.enemies[0].hp).toBeLessThan(target.maxHp)
   })

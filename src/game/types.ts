@@ -9,23 +9,39 @@ export interface Vec2 {
 /** 属性タイプ：命中位置の z 符号で決定（§3.2） */
 export type Attribute = 'light' | 'dark' | 'neutral'
 
+/** z（属性の高さ）つきの軌道点。描画の色分けに使う */
+export interface ZPoint {
+  pos: Vec2
+  z: number
+}
+
 /** 発射方式：回転（y=g(x) をθ回転）／極座標（r=f(θ)） */
 export type FireMode = 'rotate' | 'polar'
+
+/** 敵の得意関数の系統（#17：見た目で判別）。直線/弧/波/渦。 */
+export type EnemyFamily = 'line' | 'arc' | 'wave' | 'spiral'
 
 /** 撃ち主 */
 export type Owner = 'player' | 'enemy'
 
-/** 回転方式の軌道：y=g(x) を angle[rad] だけ回転（原点起点） */
+/**
+ * 回転方式の軌道：y=g(x) を angle[rad] 回転し、術者位置 origin から発射（#14）。
+ * 平面軌道は origin を始点に平行移動する（局所 y は g(x)-g(0)）。属性 z は g(x)（生値）。
+ */
 export interface RotateTrajectory {
   mode: 'rotate'
   g: (x: number) => number
   angle: number
+  /** 発射元（術者位置）。未指定は原点 */
+  origin?: Vec2
 }
 
-/** 極座標方式の軌道：r=f(θ)（原点起点・全方向） */
+/** 極座標方式の軌道：r=f(θ)（術者位置 origin を極の中心に・全方向） */
 export interface PolarTrajectory {
   mode: 'polar'
   f: (theta: number) => number
+  /** 極の中心（術者位置）。未指定は原点 */
+  origin?: Vec2
 }
 
 /** 軌道（発射方式の判別共用体） */
@@ -84,14 +100,16 @@ export interface Enemy {
   element: Attribute
   hitboxRadius: number
   statuses: StatusEffect[]
-  /** このターン敵が先出しする術式（軌道・初速）。AI が決める */
+  /** 得意関数の系統（#17：見た目で判別・AIが最適化する関数族） */
+  family: EnemyFamily
+  /** このターン敵が先出しする術式（軌道・初速）。AI が決める（互換のため保持） */
   castTrajectory: Trajectory
   castInitialSpeed: number
   /** 敵弾が帯びる z（高さ＝属性）。符号=属性, |z|=強度。光の敵は正・闇の敵は負 */
   castZ: number
 }
 
-/** 属性付き障害物（§3.7） */
+/** 属性付き障害物（§3.7・#1/#16：被弾で半径が削れる） */
 export interface Obstacle {
   id: string
   pos: Vec2
@@ -99,32 +117,27 @@ export interface Obstacle {
   element: Attribute
   durability: number
   maxDurability: number
+  /** 初期半径（半径は耐久比に連動して縮む）。未指定は hitboxRadius を初期値とみなす */
+  maxRadius?: number
 }
 
-/** 閉曲線シールド（§3.6） */
-export interface Shield {
-  shape: 'circle' | 'ellipse'
-  /** circle: R / ellipse: a,b */
-  params: { R?: number; a?: number; b?: number }
-  element: Attribute
-  durability: number
-  maxDurability: number
-}
-
-/** プレイヤーの状態 */
-export interface PlayerState {
+/** 味方術者（#15：自陣営3人）。各自が配置（発射元）を持つ */
+export interface Ally {
+  id: string
+  name: string
+  /** 配置＝術者位置＝発射元（#14） */
+  pos: Vec2
   hp: number
   maxHp: number
+  /** 被ダメージ相性に使う防御属性 */
+  element: Attribute
   statuses: StatusEffect[]
-  shield: Shield | null
 }
 
-/** どのメカニクスを解禁しているか（段階的導入・機能17） */
+/** どのメカニクスを解禁しているか（段階的導入・機能17）。防御/パリィは軌道型に統合され常時 */
 export interface Mechanics {
   obstacles: boolean
-  shield: boolean
   enemyFire: boolean
-  parry: boolean
 }
 
 /** ステージ定義（§5・機能14）。データは src/data/ に分離 */
@@ -138,12 +151,8 @@ export interface Stage {
   /** クリアテキスト（ステージ後） */
   clearText: string[]
   mechanics: Mechanics
-  /** 「困ったらこれ」のおすすめ関数プリセットID（機能17） */
-  recommendedPresetId: string
-  /** おすすめ関数の係数（未指定ならプリセット既定値） */
-  recommendedCoeffs?: Record<string, number>
-  /** おすすめ関数の初速（未指定なら中速） */
-  recommendedSpeed?: number
+  /** ボス戦か（#6） */
+  boss?: boolean
 }
 
 /** ターンのフェーズ（敵公開→作成→解決・§4） */
@@ -159,21 +168,24 @@ export interface LogEntry {
     | 'misfire'
     | 'parry'
     | 'shield'
+    | 'orbit'
     | 'obstacle'
     | 'status'
     | 'miss'
   text: string
 }
 
-/** プレイヤーの行動：攻撃（術式発射）か防御（結界展開）（行動枠は1つ） */
-export type PlayerAction =
-  | { kind: 'attack'; trajectory: Trajectory; initialSpeed: number }
-  | { kind: 'shield'; shield: Shield }
+/** 味方の発射（#4：関数を撃つだけ。ループなら防御も兼ねる）。trajectory は味方位置を origin に持つ */
+export interface AllyCast {
+  allyId: string
+  trajectory: Trajectory
+  initialSpeed: number
+}
 
 /** 戦闘状態（メモリ上のみ・永続化なし） */
 export interface BattleState {
   stageIndex: number
-  player: PlayerState
+  allies: Ally[]
   enemies: Enemy[]
   obstacles: Obstacle[]
   mechanics: Mechanics

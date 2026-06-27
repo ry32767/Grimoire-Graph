@@ -1,15 +1,15 @@
-// 戦闘ループ＆勝敗判定（機能13）。HP・状態異常・シールド・障害物・ターン状態の遷移。純粋関数。
-import type { BattleState, LogEntry, PlayerAction, Stage } from './types'
+// 戦闘ループ＆勝敗判定（#15：パーティ戦）。HP・状態異常・障害物・ターン状態の遷移。純粋関数。
+import type { Ally, AllyCast, BattleState, LogEntry, Stage } from './types'
 import { tickStatuses } from './status'
 import { resolveTurn, type ResolveResult } from './turn'
 
-/** ステージ定義から戦闘状態を初期化する（ステージデータは変更しない）。 */
-export function createBattleState(stage: Stage, stageIndex: number, playerMaxHp: number): BattleState {
+/** ステージ定義＋パーティから戦闘状態を初期化する（HPは各ステージ開始時に全快）。 */
+export function createBattleState(stage: Stage, stageIndex: number, party: Ally[]): BattleState {
   return {
     stageIndex,
-    player: { hp: playerMaxHp, maxHp: playerMaxHp, statuses: [], shield: null },
+    allies: party.map((a) => ({ ...a, hp: a.maxHp, statuses: [] })),
     enemies: stage.enemies.map((e) => ({ ...e, statuses: [...e.statuses] })),
-    obstacles: stage.obstacles.map((o) => ({ ...o })),
+    obstacles: stage.obstacles.map((o) => ({ ...o, maxRadius: o.maxRadius ?? o.hitboxRadius })),
     mechanics: stage.mechanics,
     turn: 1,
     phase: 'enemyReveal',
@@ -19,25 +19,38 @@ export function createBattleState(stage: Stage, stageIndex: number, playerMaxHp:
 }
 
 function checkOutcome(state: BattleState): BattleState['outcome'] {
-  if (state.player.hp <= 0) return 'gameover'
+  if (state.allies.every((a) => a.hp <= 0)) return 'gameover'
   if (state.enemies.every((e) => e.hp <= 0)) return 'cleared'
   return 'ongoing'
 }
 
 /**
- * ターン開始処理：状態異常をターン減衰（DoT 適用・ひるみ判定）し、敵の発射可否を決める。
- * 敵公開フェーズへ移り、このターン発射する敵IDを返す。
+ * ターン開始処理：状態異常をターン減衰（DoT適用・ひるみ判定）し、
+ * このターン発射できる敵ID・行動できない（ひるみ）味方IDを返す。
  */
-export function prepareTurn(state: BattleState): { state: BattleState; castingEnemyIds: string[] } {
+export function prepareTurn(state: BattleState): {
+  state: BattleState
+  castingEnemyIds: string[]
+  impairedAllyIds: string[]
+} {
   const log: LogEntry[] = []
 
-  // プレイヤーの状態異常を減衰（DoT）
-  const pTick = tickStatuses(state.player.statuses)
-  let playerHp = state.player.hp
-  if (pTick.burnDamage > 0) {
-    playerHp = Math.max(0, playerHp - pTick.burnDamage)
-    log.push({ kind: 'status', text: `継続ダメージ：術者に ${pTick.burnDamage.toFixed(0)}` })
-  }
+  // 味方の状態異常を減衰（DoT・ひるみ）
+  const impairedAllyIds: string[] = []
+  const allies = state.allies.map((a) => {
+    if (a.hp <= 0) return a
+    const t = tickStatuses(a.statuses)
+    let hp = a.hp
+    if (t.burnDamage > 0) {
+      hp = Math.max(0, hp - t.burnDamage)
+      log.push({ kind: 'status', text: `継続ダメージ：${a.name}に ${t.burnDamage.toFixed(0)}` })
+    }
+    if (t.impaired) {
+      impairedAllyIds.push(a.id)
+      log.push({ kind: 'status', text: `${a.name}はひるんで動けない` })
+    }
+    return { ...a, hp, statuses: t.statuses }
+  })
 
   // 敵の状態異常を減衰し、ひるみ中の敵は発射しない
   const castingEnemyIds: string[] = []
@@ -57,33 +70,33 @@ export function prepareTurn(state: BattleState): { state: BattleState; castingEn
 
   const next: BattleState = {
     ...state,
-    player: { ...state.player, hp: playerHp, statuses: pTick.statuses },
+    allies,
     enemies,
     phase: 'compose',
     log: [...state.log, ...log],
   }
   next.outcome = checkOutcome(next)
-  return { state: next, castingEnemyIds }
+  return { state: next, castingEnemyIds, impairedAllyIds }
 }
 
-/** プレイヤーの行動を適用して同時発射を解決し、勝敗を判定する。 */
-export function resolvePlayerAction(
+/** 味方の同時発射を適用して解決し、勝敗を判定する。 */
+export function resolveAllyCasts(
   state: BattleState,
-  action: PlayerAction,
+  casts: AllyCast[],
   castingEnemyIds: string[],
 ): { state: BattleState; resolution: ResolveResult } {
   const resolution = resolveTurn({
-    player: state.player,
+    allies: state.allies,
+    casts,
     enemies: state.enemies,
     castingEnemyIds,
     obstacles: state.obstacles,
-    action,
     mechanics: state.mechanics,
   })
 
   const next: BattleState = {
     ...state,
-    player: resolution.player,
+    allies: resolution.allies,
     enemies: resolution.enemies,
     obstacles: resolution.obstacles,
     turn: state.turn + 1,
@@ -92,7 +105,7 @@ export function resolvePlayerAction(
   }
   next.outcome = checkOutcome(next)
   if (next.outcome === 'cleared') next.log = [...next.log, { kind: 'info', text: '全ての敵を撃破した！' }]
-  if (next.outcome === 'gameover') next.log = [...next.log, { kind: 'info', text: '術者は倒れた…' }]
+  if (next.outcome === 'gameover') next.log = [...next.log, { kind: 'info', text: '自陣営は全滅した…' }]
   return { state: next, resolution }
 }
 

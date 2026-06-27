@@ -11,10 +11,11 @@ import {
 import { simulateFlight } from '../game/physics'
 import { detectMisfire } from '../game/misfire'
 import { trajectoryZ, attributeOf, strengthOf } from '../game/attribute'
+import { classifyTrajectory, type MagicKind } from '../game/loop'
 import { dist } from '../game/coords'
 import { FIELD } from '../data/constants'
 
-/** 関数パネルの状態 */
+/** 関数パネルの状態（#4：攻防は分けず関数を撃つだけ） */
 export interface ComposerState {
   mode: 'rotate' | 'polar'
   presetId: string
@@ -24,9 +25,6 @@ export interface ComposerState {
   useFree: boolean
   freeExpr: string
   freeError: string | null
-  actionKind: 'attack' | 'shield'
-  shieldPresetId: string
-  shieldElement: 'light' | 'dark'
 }
 
 export function findPreset(id: string): Preset | undefined {
@@ -37,22 +35,21 @@ export function presetsFor(mode: 'rotate' | 'polar'): Preset[] {
   return mode === 'rotate' ? ROTATE_PRESETS : POLAR_PRESETS
 }
 
-/** 状態から軌道を組み立てる。組み立てられなければ null（不正な自由式など）。 */
-export function buildComposerTrajectory(c: ComposerState): Trajectory | null {
-  if (c.actionKind !== 'attack') return null
+/** 状態から軌道を組み立てる（origin=術者位置・#14）。組み立てられなければ null。 */
+export function buildComposerTrajectory(c: ComposerState, origin?: Vec2): Trajectory | null {
   if (c.mode === 'rotate') {
     if (c.useFree) {
       const g = parseExpression(c.freeExpr)
       if (!g) return null
-      return { mode: 'rotate', g, angle: c.angle }
+      return { mode: 'rotate', g, angle: c.angle, origin }
     }
     const preset = findPreset(c.presetId)
     if (!preset || preset.category !== 'rotate') return null
-    return buildTrajectory(preset, c.coeffs, c.angle)
+    return buildTrajectory(preset, c.coeffs, c.angle, origin)
   }
   const preset = findPreset(c.presetId)
   if (!preset || preset.category !== 'polar') return null
-  return buildTrajectory(preset, c.coeffs, 0)
+  return buildTrajectory(preset, c.coeffs, 0, origin)
 }
 
 /** 軌道上の1点（描画で z により色分けする） */
@@ -63,7 +60,9 @@ export interface PathPoint {
 
 /** プレビュー結果 */
 export interface Preview {
-  /** z つきの予測軌道（描画で属性ごとに色分け） */
+  /** 発射型／軌道型（#12） */
+  kind: MagicKind
+  /** z つきの予測軌道（描画で属性ごとに色分け。軌道型はリング） */
   path: PathPoint[]
   landing: { pos: Vec2; attr: Attribute; strength: number } | null
   /** 見込み威力の目安（着弾点・動的なのであくまで目安） */
@@ -74,10 +73,19 @@ export interface Preview {
   selfMisfireWarning: boolean
 }
 
-/** 軌道からプレビュー（予測軌道・着弾点・属性・威力目安・暴発警告）を計算する。 */
+const EMPTY_PREVIEW: Preview = {
+  kind: 'projectile',
+  path: [],
+  landing: null,
+  powerEstimate: 0,
+  maxStrength: 0,
+  selfMisfireWarning: false,
+}
+
+/** 軌道からプレビュー（種別・予測軌道・着弾点・属性・威力目安・暴発警告）を計算する。 */
 export function computePreview(traj: Trajectory | null, speed: number): Preview {
-  if (!traj)
-    return { path: [], landing: null, powerEstimate: 0, maxStrength: 0, selfMisfireWarning: false }
+  if (!traj) return EMPTY_PREVIEW
+  const kind = classifyTrajectory(traj)
   const flight = simulateFlight(traj, speed)
   const path: PathPoint[] = flight.samples.map((s) => ({ pos: s.pos, z: trajectoryZ(traj, s.param) }))
   const last = flight.samples[flight.samples.length - 1]
@@ -89,6 +97,7 @@ export function computePreview(traj: Trajectory | null, speed: number): Preview 
   const selfMisfireWarning = !!mis && mis.type === 'invalid' && dist(mis.pos) <= FIELD.aoeRadius + 1
 
   return {
+    kind,
     path,
     landing: last
       ? { pos: last.pos, attr: attributeOf(endZ), strength: strengthOf(endZ) }

@@ -1,10 +1,21 @@
 import { describe, it, expect } from 'vitest'
-import { createBattleState, prepareTurn, resolvePlayerAction } from './battle'
-import type { Enemy, Mechanics, Stage, Trajectory } from './types'
+import { createBattleState, prepareTurn, resolveAllyCasts } from './battle'
+import type { Ally, AllyCast, Enemy, Mechanics, Stage, Trajectory } from './types'
 
-const mech: Mechanics = { obstacles: false, shield: false, enemyFire: true, parry: false }
+const mech: Mechanics = { obstacles: false, enemyFire: true }
 
-const enemy = (id: string, pos: { x: number; y: number }, hp: number, speed = 4): Enemy => ({
+const party = (...allies: Ally[]): Ally[] => allies
+const ally = (id: string, pos: { x: number; y: number }, hp = 100, element: Ally['element'] = 'neutral'): Ally => ({
+  id,
+  name: id,
+  pos,
+  hp,
+  maxHp: hp,
+  element,
+  statuses: [],
+})
+
+const enemy = (id: string, pos: { x: number; y: number }, hp: number, speed = 5): Enemy => ({
   id,
   name: id,
   pos,
@@ -13,9 +24,10 @@ const enemy = (id: string, pos: { x: number; y: number }, hp: number, speed = 4)
   element: 'dark',
   hitboxRadius: 1.1,
   statuses: [],
+  family: 'line',
   castTrajectory: { mode: 'rotate', g: () => 0, angle: 0 },
   castInitialSpeed: speed,
-  castZ: -3, // 闇の敵弾
+  castZ: -5,
 })
 
 const stage = (enemies: Enemy[]): Stage => ({
@@ -26,69 +38,68 @@ const stage = (enemies: Enemy[]): Stage => ({
   introText: [],
   clearText: [],
   mechanics: mech,
-  recommendedPresetId: 'line',
 })
 
-// +x 軸に沿って飛び、関数値 z=x で光を帯びる光線（敵を反対極で撃てる）
-const rayAttack = (speed = 8): { kind: 'attack'; trajectory: Trajectory; initialSpeed: number } => ({
-  kind: 'attack',
-  trajectory: { mode: 'rotate', g: (x) => x, angle: -Math.PI / 4 },
-  initialSpeed: speed,
-})
+const cast = (allyId: string, trajectory: Trajectory, speed = 8): AllyCast => ({ allyId, trajectory, initialSpeed: speed })
+// 原点から +x の光線
+const ray = (origin: { x: number; y: number }): Trajectory => ({ mode: 'rotate', g: (x) => x, angle: -Math.PI / 4, origin })
 
 describe('戦闘状態の初期化', () => {
-  it('プレイヤーHP満タン・敵クローン・ターン1で開始', () => {
-    const s = createBattleState(stage([enemy('e', { x: 5, y: 0 }, 100)]), 0, 120)
-    expect(s.player.hp).toBe(120)
+  it('味方HP満タン・敵クローン・ターン1で開始', () => {
+    const s = createBattleState(stage([enemy('e', { x: 0, y: 8 }, 100)]), 0, party(ally('a', { x: 0, y: 0 })))
+    expect(s.allies[0].hp).toBe(100)
     expect(s.enemies).toHaveLength(1)
     expect(s.turn).toBe(1)
     expect(s.outcome).toBe('ongoing')
   })
 })
 
-describe('勝敗判定（機能13）', () => {
+describe('勝敗判定（#15）', () => {
   it('敵を全滅させるとクリア', () => {
-    let s = createBattleState(stage([enemy('e', { x: 5, y: 0 }, 10)]), 0, 120)
+    let s = createBattleState(stage([enemy('e', { x: 5, y: 0 }, 10)]), 0, party(ally('a', { x: 0, y: 0 })))
     const prep = prepareTurn(s)
-    const out = resolvePlayerAction(prep.state, rayAttack(9), [])
+    const out = resolveAllyCasts(prep.state, [cast('a', ray({ x: 0, y: 0 }))], [])
     s = out.state
     expect(s.enemies[0].hp).toBe(0)
     expect(s.outcome).toBe('cleared')
   })
 
-  it('プレイヤーHPが0でゲームオーバー', () => {
-    let s = createBattleState(stage([enemy('e', { x: 6, y: 0 }, 1000, 10)]), 0, 5)
+  it('全味方のHPが0でゲームオーバー', () => {
+    let s = createBattleState(stage([enemy('e', { x: 0, y: 6 }, 1000, 12)]), 0, party(ally('a', { x: 0, y: 0 }, 5)))
     const prep = prepareTurn(s)
-    const out = resolvePlayerAction(prep.state, rayAttack(3), prep.castingEnemyIds)
+    // 敵だけ発射（味方は当てない＝原点から上へ逸らす）
+    const out = resolveAllyCasts(prep.state, [cast('a', { mode: 'rotate', g: () => 0, angle: 0, origin: { x: 0, y: 0 } })], prep.castingEnemyIds)
     s = out.state
-    expect(s.player.hp).toBe(0)
+    expect(s.allies[0].hp).toBe(0)
     expect(s.outcome).toBe('gameover')
   })
 
   it('HPは0未満にならない', () => {
-    let s = createBattleState(stage([enemy('e', { x: 5, y: 0 }, 5)]), 0, 120)
+    let s = createBattleState(stage([enemy('e', { x: 5, y: 0 }, 5)]), 0, party(ally('a', { x: 0, y: 0 })))
     const prep = prepareTurn(s)
-    const out = resolvePlayerAction(prep.state, rayAttack(10), [])
+    const out = resolveAllyCasts(prep.state, [cast('a', ray({ x: 0, y: 0 }), 10)], [])
     s = out.state
     expect(s.enemies[0].hp).toBeGreaterThanOrEqual(0)
   })
 })
 
 describe('状態異常のターン処理', () => {
-  it('継続ダメージ（DoT）でターン開始時にHPが減る', () => {
-    let s = createBattleState(stage([enemy('e', { x: 5, y: 0 }, 100)]), 0, 120)
-    s = { ...s, player: { ...s.player, statuses: [{ kind: 'burn', magnitude: 5, remainingTurns: 2 }] } }
+  it('継続ダメージ（DoT）でターン開始時に味方HPが減る', () => {
+    let s = createBattleState(stage([enemy('e', { x: 0, y: 8 }, 100)]), 0, party(ally('a', { x: 0, y: 0 })))
+    s = { ...s, allies: [{ ...s.allies[0], statuses: [{ kind: 'burn', magnitude: 5, remainingTurns: 2 }] }] }
     const prep = prepareTurn(s)
-    expect(prep.state.player.hp).toBeLessThan(120)
+    expect(prep.state.allies[0].hp).toBeLessThan(100)
   })
 
-  it('ひるみ中の敵は発射しない', () => {
-    let s = createBattleState(stage([enemy('e', { x: 5, y: 0 }, 100)]), 0, 120)
+  it('ひるみ中の敵は発射しない／味方は impaired に入る', () => {
+    let s = createBattleState(stage([enemy('e', { x: 0, y: 8 }, 100)]), 0, party(ally('a', { x: 0, y: 0 })))
     s = {
       ...s,
       enemies: [{ ...s.enemies[0], statuses: [{ kind: 'flinch', magnitude: 3, remainingTurns: 1 }] }],
+      allies: [{ ...s.allies[0], statuses: [{ kind: 'flinch', magnitude: 3, remainingTurns: 1 }] }],
     }
     const prep = prepareTurn(s)
     expect(prep.castingEnemyIds).not.toContain('e')
+    expect(prep.impairedAllyIds).toContain('a')
   })
 })
