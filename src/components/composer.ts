@@ -37,22 +37,22 @@ export function presetsFor(mode: 'rotate' | 'polar'): Preset[] {
   return mode === 'rotate' ? ROTATE_PRESETS : POLAR_PRESETS
 }
 
-/** 状態から軌道を組み立てる。組み立てられなければ null（不正な自由式など）。 */
-export function buildComposerTrajectory(c: ComposerState): Trajectory | null {
+/** 状態から軌道を組み立てる（origin=術者位置・#14）。組み立てられなければ null。 */
+export function buildComposerTrajectory(c: ComposerState, origin?: Vec2): Trajectory | null {
   if (c.actionKind !== 'attack') return null
   if (c.mode === 'rotate') {
     if (c.useFree) {
       const g = parseExpression(c.freeExpr)
       if (!g) return null
-      return { mode: 'rotate', g, angle: c.angle }
+      return { mode: 'rotate', g, angle: c.angle, origin }
     }
     const preset = findPreset(c.presetId)
     if (!preset || preset.category !== 'rotate') return null
-    return buildTrajectory(preset, c.coeffs, c.angle)
+    return buildTrajectory(preset, c.coeffs, c.angle, origin)
   }
   const preset = findPreset(c.presetId)
   if (!preset || preset.category !== 'polar') return null
-  return buildTrajectory(preset, c.coeffs, 0)
+  return buildTrajectory(preset, c.coeffs, 0, origin)
 }
 
 /** 軌道上の1点（描画で z により色分けする） */

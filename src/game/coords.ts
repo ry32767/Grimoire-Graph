@@ -61,17 +61,25 @@ export interface Sample {
 export function sampleTrajectory(traj: Trajectory): Sample[] {
   const out: Sample[] = []
   if (traj.mode === 'rotate') {
+    const o = traj.origin ?? { x: 0, y: 0 }
+    // #14：局所 y を g(0) だけ平行移動し、術者位置 origin を始点にする
+    const g0raw = traj.g(0)
+    const g0 = Number.isFinite(g0raw) ? g0raw : 0
     for (let x = 0; x <= SAMPLING.rotateXMax + 1e-9; x += SAMPLING.rotateStep) {
       const y = traj.g(x)
       const valid = Number.isFinite(y)
-      const pos = valid ? rotate({ x, y }, traj.angle) : { x: NaN, y: NaN }
+      const local = valid ? rotate({ x, y: y - g0 }, traj.angle) : { x: NaN, y: NaN }
+      const pos = valid ? { x: o.x + local.x, y: o.y + local.y } : { x: NaN, y: NaN }
       out.push({ param: x, pos, valid, inField: valid && dist(pos) <= FIELD.rField })
     }
   } else {
+    const o = traj.origin ?? { x: 0, y: 0 }
     for (let t = 0; t <= SAMPLING.polarThetaMax + 1e-9; t += SAMPLING.polarStep) {
       const r = traj.f(t)
       const valid = Number.isFinite(r)
-      const pos = valid ? { x: r * Math.cos(t), y: r * Math.sin(t) } : { x: NaN, y: NaN }
+      const pos = valid
+        ? { x: o.x + r * Math.cos(t), y: o.y + r * Math.sin(t) }
+        : { x: NaN, y: NaN }
       out.push({ param: t, pos, valid, inField: valid && dist(pos) <= FIELD.rField })
     }
   }

@@ -166,18 +166,7 @@ export default function FunctionPanel(props: Props) {
             </div>
           )}
 
-          <div className="slider-row">
-            <label>初速</label>
-            <input
-              type="range"
-              min={FIELD.minSpeed}
-              max={FIELD.maxSpeed}
-              step={0.5}
-              value={c.speed}
-              onChange={(e) => onChange({ speed: Number(e.target.value) })}
-            />
-            <span className="val">{c.speed.toFixed(1)}</span>
-          </div>
+          <div className="hint">初速は固定（{FIELD.fixedSpeed}）。当てる位置の関数値で威力が決まる。</div>
 
           <div className="section-title">計算補助</div>
           <div className="readout">

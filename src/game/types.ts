@@ -15,17 +15,24 @@ export type FireMode = 'rotate' | 'polar'
 /** 撃ち主 */
 export type Owner = 'player' | 'enemy'
 
-/** 回転方式の軌道：y=g(x) を angle[rad] だけ回転（原点起点） */
+/**
+ * 回転方式の軌道：y=g(x) を angle[rad] 回転し、術者位置 origin から発射（#14）。
+ * 平面軌道は origin を始点に平行移動する（局所 y は g(x)-g(0)）。属性 z は g(x)（生値）。
+ */
 export interface RotateTrajectory {
   mode: 'rotate'
   g: (x: number) => number
   angle: number
+  /** 発射元（術者位置）。未指定は原点 */
+  origin?: Vec2
 }
 
-/** 極座標方式の軌道：r=f(θ)（原点起点・全方向） */
+/** 極座標方式の軌道：r=f(θ)（術者位置 origin を極の中心に・全方向） */
 export interface PolarTrajectory {
   mode: 'polar'
   f: (theta: number) => number
+  /** 極の中心（術者位置）。未指定は原点 */
+  origin?: Vec2
 }
 
 /** 軌道（発射方式の判別共用体） */

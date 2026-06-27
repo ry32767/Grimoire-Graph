@@ -5,7 +5,7 @@ import { enemyPath } from './game/turn'
 import { ROTATE_PRESETS, defaultCoeffs } from './game/functions'
 import { buildShield } from './data/fields'
 import { STAGES } from './data/stages'
-import { GAME } from './data/constants'
+import { GAME, FIELD } from './data/constants'
 import { PROLOGUE, EPILOGUE, GAMEOVER_TEXT } from './data/story'
 import {
   type ComposerState,
@@ -30,7 +30,7 @@ function makeInitialComposer(): ComposerState {
     presetId: 'line',
     coeffs: defaultCoeffs(ROTATE_PRESETS[0]),
     angle: 0,
-    speed: 6,
+    speed: FIELD.fixedSpeed,
     useFree: false,
     freeExpr: '',
     freeError: null,
@@ -93,7 +93,6 @@ export default function App() {
 
   const recommend = () => {
     if (!battle) return
-    const stage = STAGES[stageIndex]
     const target = battle.enemies.find((e) => e.hp > 0)
     if (!target) return
     // 敵へ向かう直線 g(x)=a·x。a の符号で属性（敵の反対極）を作り、原点(中立)から
@@ -106,7 +105,7 @@ export default function App() {
       presetId: 'line',
       coeffs: { a, b: 0 },
       angle,
-      speed: stage.recommendedSpeed ?? 9,
+      speed: FIELD.fixedSpeed,
     })
   }
 

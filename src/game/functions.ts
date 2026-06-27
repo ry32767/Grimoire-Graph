@@ -1,6 +1,6 @@
 // 関数カタログ（§3.10 A/B）・自由入力式の安全評価（mathjs）・サンプル出力（機能1・2）。
 import { compile } from 'mathjs'
-import type { Trajectory } from './types'
+import type { Trajectory, Vec2 } from './types'
 
 /** 係数スライダーの定義 */
 export interface Coefficient {
@@ -63,7 +63,7 @@ export const ROTATE_PRESETS: RotatePreset[] = [
     formula: 'y = a·x + b',
     freeName: 'x（一次式）',
     description: 'まっすぐ飛ぶ基本の術式。狙いを定めやすい。',
-    coeffs: [coeff('a', 'a', -3, 3, 0.1, 1), coeff('b', 'b', -5, 5, 0.1, 0)],
+    coeffs: [coeff('a', 'a', -5, 5, 0.1, 1), coeff('b', 'b', -12, 12, 0.2, 0)],
     buildG: (c) => (x) => c.a * x + c.b,
     toExpr: (c) => `${num(c.a)}*x + ${num(c.b)}`,
   },
@@ -75,9 +75,9 @@ export const ROTATE_PRESETS: RotatePreset[] = [
     freeName: '(x-h)^2（二次式）',
     description: '山なり／谷なりの弧。障害物を山越えできる。',
     coeffs: [
-      coeff('a', 'a', -1, 1, 0.05, 0.3),
-      coeff('h', 'h', 0, 10, 0.1, 4),
-      coeff('k', 'k', -5, 5, 0.1, -3),
+      coeff('a', 'a', -2, 2, 0.05, 0.3),
+      coeff('h', 'h', 0, 16, 0.2, 5),
+      coeff('k', 'k', -12, 12, 0.2, -4),
     ],
     buildG: (c) => (x) => c.a * (x - c.h) ** 2 + c.k,
     toExpr: (c) => `${num(c.a)}*(x - ${num(c.h)})^2 + ${num(c.k)}`,
@@ -90,9 +90,9 @@ export const ROTATE_PRESETS: RotatePreset[] = [
     freeName: 'sin',
     description: '波打って飛ぶ。光と闇を交互に帯びる。変異が大きい。',
     coeffs: [
-      coeff('A', 'A', 0, 4, 0.1, 3),
-      coeff('B', 'B', 0.2, 2, 0.05, 1),
-      coeff('C', 'C', -3, 3, 0.1, 0),
+      coeff('A', 'A', 0, 8, 0.1, 4),
+      coeff('B', 'B', 0.1, 3, 0.05, 0.8),
+      coeff('C', 'C', -6, 6, 0.1, 0),
     ],
     buildG: (c) => (x) => c.A * Math.sin(c.B * x) + c.C,
     toExpr: (c) => `${num(c.A)}*sin(${num(c.B)}*x) + ${num(c.C)}`,
@@ -105,9 +105,9 @@ export const ROTATE_PRESETS: RotatePreset[] = [
     freeName: 'exp',
     description: '終盤で急上昇。遠くで一気に跳ね上がる。',
     coeffs: [
-      coeff('a', 'a', 0, 2, 0.1, 1),
-      coeff('b', 'b', -1, 1, 0.05, 0.3),
-      coeff('c', 'c', -3, 3, 0.1, -2),
+      coeff('a', 'a', 0, 3, 0.1, 1),
+      coeff('b', 'b', -1, 1, 0.05, 0.25),
+      coeff('c', 'c', -6, 6, 0.1, -3),
     ],
     buildG: (c) => (x) => c.a * Math.exp(c.b * x) + c.c,
     toExpr: (c) => `${num(c.a)}*exp(${num(c.b)}*x) + ${num(c.c)}`,
@@ -120,9 +120,9 @@ export const ROTATE_PRESETS: RotatePreset[] = [
     freeName: 'abs',
     description: 'V字に鋭く折れる。きっかけで方向を変える。',
     coeffs: [
-      coeff('a', 'a', -2, 2, 0.1, 1),
-      coeff('h', 'h', 0, 10, 0.1, 4),
-      coeff('k', 'k', -5, 5, 0.1, -3),
+      coeff('a', 'a', -4, 4, 0.1, 1),
+      coeff('h', 'h', 0, 16, 0.2, 5),
+      coeff('k', 'k', -12, 12, 0.2, -4),
     ],
     buildG: (c) => (x) => c.a * Math.abs(x - c.h) + c.k,
     toExpr: (c) => `${num(c.a)}*abs(x - ${num(c.h)}) + ${num(c.k)}`,
@@ -139,7 +139,7 @@ export const POLAR_PRESETS: PolarPreset[] = [
     formula: 'r = R',
     freeName: 'R（定数）',
     description: '一定半径で全周をなめる。結界の基本形にも。',
-    coeffs: [coeff('R', 'R', 1, 12, 0.5, 6)],
+    coeffs: [coeff('R', 'R', 1, 18, 0.5, 7)],
     buildF: (c) => () => c.R,
   },
   {
@@ -149,7 +149,7 @@ export const POLAR_PRESETS: PolarPreset[] = [
     formula: 'r = a·θ',
     freeName: 'a*θ',
     description: '渦巻き状に外へ。全方向を順に薙ぐ。',
-    coeffs: [coeff('a', 'a', 0.2, 2, 0.1, 1)],
+    coeffs: [coeff('a', 'a', 0.2, 3, 0.1, 1)],
     buildF: (c) => (t) => c.a * t,
   },
   {
@@ -159,7 +159,7 @@ export const POLAR_PRESETS: PolarPreset[] = [
     formula: 'r = a·cos(k·θ)',
     freeName: 'cos',
     description: '花びら状に複数方向へ同時に伸びる。光と闇を交互に帯びる。',
-    coeffs: [coeff('a', 'a', 1, 10, 0.5, 6), coeff('k', 'k', 2, 5, 1, 4)],
+    coeffs: [coeff('a', 'a', 1, 16, 0.5, 8), coeff('k', 'k', 2, 6, 1, 4)],
     buildF: (c) => (t) => c.a * Math.cos(c.k * t),
   },
   {
@@ -169,7 +169,7 @@ export const POLAR_PRESETS: PolarPreset[] = [
     formula: 'r = a + b·cos(θ)',
     freeName: 'cos',
     description: 'ハート／くぼみ形。片側に強く張り出す。',
-    coeffs: [coeff('a', 'a', 1, 6, 0.5, 3), coeff('b', 'b', 1, 6, 0.5, 3)],
+    coeffs: [coeff('a', 'a', 1, 10, 0.5, 4), coeff('b', 'b', 1, 10, 0.5, 4)],
     buildF: (c) => (t) => c.a + c.b * Math.cos(t),
   },
 ]
@@ -183,16 +183,17 @@ export function defaultCoeffs(preset: Preset): CoeffMap {
   return m
 }
 
-/** プリセット＋係数＋（回転時の）角度から Trajectory を組み立てる */
+/** プリセット＋係数＋（回転時の）角度＋術者位置から Trajectory を組み立てる（#14） */
 export function buildTrajectory(
   preset: Preset,
   coeffs: CoeffMap,
   angle: number,
+  origin?: Vec2,
 ): Trajectory {
   if (preset.category === 'rotate') {
-    return { mode: 'rotate', g: preset.buildG(coeffs), angle }
+    return { mode: 'rotate', g: preset.buildG(coeffs), angle, origin }
   }
-  return { mode: 'polar', f: preset.buildF(coeffs) }
+  return { mode: 'polar', f: preset.buildF(coeffs), origin }
 }
 
 // ===== 自由入力式（x の式）の安全評価（mathjs のみ・eval 禁止） =====
