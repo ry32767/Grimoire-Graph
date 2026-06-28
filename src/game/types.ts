@@ -145,9 +145,19 @@ export interface Disc {
 }
 
 /**
+ * 壁の耐久種別（#40）。削れやすさ（えぐり半径・速度損）が変わる。
+ * - normal：従来の属性付き壁（element=light/dark で相性が効く）。
+ * - fragile：無属性の壊れやすい壁（一撃で大きく削れる）。
+ * - tough：無属性の壊れにくい壁（最大火力でも貫通に複数発かかる目安）。
+ * - unbreakable：壊れない壁（素材は削れず、当たった魔法はその場で止まる）。
+ */
+export type ObstacleKind = 'normal' | 'fragile' | 'tough' | 'unbreakable'
+
+/**
  * 障害物（§3.7・#1/#16・Graph War 風）。形は solids（重なった円の和＝連続したブロブ）で表す。
  * 耐久値は持たず、魔法が当たった点を中心に円（carves）を引き算して物理的にえぐり取る
  * （＝solids にありつつ どの carves にも入らない点が「素材」。穴は滑らかな円形に削れる）。
+ * kind で削れやすさが変わる（#40）。未指定は normal。
  */
 export interface Obstacle {
   id: string
@@ -156,6 +166,8 @@ export interface Obstacle {
   solids: Disc[]
   /** 魔法に削り取られた円（穴）。solids から引く */
   carves: Disc[]
+  /** 耐久種別（#40）。未指定は normal。 */
+  kind?: ObstacleKind
 }
 
 /** 障害物を削った1回分の演出データ（#11：削る瞬間のパーティクル＆穴の開示）。 */
@@ -185,9 +197,14 @@ export interface Ally {
   statuses: StatusEffect[]
   /**
    * 闇の周回で囲まれている重数（#35）。1 で敵の狙いがずれ、orbitConcealFull で視認不可。
-   * 各ターンの周回で再計算される（持続は1ターン）。未指定は 0。
+   * 各ターンの周回で再計算される。未指定は 0。
    */
   concealed?: number
+  /**
+   * 闇の周回による敵の狙いのブレ幅 RMSE（#39）。囲む円の半径に連動（1重=半径/2、2重=半径）。
+   * 敵はこの大きさだけ味方の見かけ位置をずらして狙う。未指定は 0。
+   */
+  concealRmse?: number
 }
 
 /** どのメカニクスを解禁しているか（段階的導入・機能17）。防御/パリィは軌道型に統合され常時 */
@@ -209,6 +226,21 @@ export interface Stage {
   mechanics: Mechanics
   /** ボス戦か（#6） */
   boss?: boolean
+}
+
+/**
+ * 永続する周回結界（#39）。一度張った周回は破壊されるまでターンをまたいで残り、
+ * 毎ターン内側へ効果（光=回復／闇=隠蔽）を及ぼし、敵弾を迎撃する。反対属性の弾に相殺されると消える。
+ */
+export interface ActiveOrbit {
+  id: string
+  /** 張った術者ID */
+  ownerId: string
+  owner: Owner
+  /** リング点列（位置＋属性 z）。描画・囲み判定・迎撃に使う */
+  ring: ZPoint[]
+  /** 迎撃の相殺計算に使う代表速度（#21/#34） */
+  ringSpeed: number
 }
 
 /** ターンのフェーズ（敵公開→作成→解決・§4） */
@@ -249,4 +281,6 @@ export interface BattleState {
   phase: Phase
   log: LogEntry[]
   outcome: 'ongoing' | 'cleared' | 'gameover'
+  /** 持続中の周回結界（#39：破壊されるまでターンをまたいで残る）。未指定は空。 */
+  orbits?: ActiveOrbit[]
 }

@@ -54,3 +54,24 @@ describe('えぐり取る半径（威力依存・#1）', () => {
     expect(carveRadius(-10)).toBe(0)
   })
 })
+
+describe('壁の種別ごとの削れやすさ（#40）', () => {
+  it('えぐり半径：fragile > normal > tough、unbreakable は 0', () => {
+    const p = 60
+    expect(carveRadius(p, 'fragile')).toBeGreaterThan(carveRadius(p, 'normal'))
+    expect(carveRadius(p, 'normal')).toBeGreaterThan(carveRadius(p, 'tough'))
+    expect(carveRadius(p, 'tough')).toBeGreaterThan(0)
+    expect(carveRadius(p, 'unbreakable')).toBe(0)
+  })
+
+  it('速度損：tough > normal > fragile（頑丈ほど止まりやすい）', () => {
+    const loss = (k: Parameters<typeof carveSpeedLoss>[2]) => carveSpeedLoss('neutral', 'neutral', k)
+    expect(loss('tough')).toBeGreaterThan(loss('normal'))
+    expect(loss('normal')).toBeGreaterThan(loss('fragile'))
+  })
+
+  it('種別を省略すると normal と同じ（後方互換）', () => {
+    expect(carveRadius(60)).toBe(carveRadius(60, 'normal'))
+    expect(carveSpeedLoss('dark', 'light')).toBe(carveSpeedLoss('dark', 'light', 'normal'))
+  })
+})

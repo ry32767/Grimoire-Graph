@@ -2,7 +2,7 @@
 // 各敵は family（直線/弧/波/渦）を持ち、AI は狙い角と形状係数の候補から、
 // 狙う味方へ最大ダメージを与える軌道を選ぶ（軌跡型は陣営有利＝強属性で展開）。
 import type { Ally, Enemy, EnemyFamily, Flight, Obstacle, Trajectory, Vec2, ZField } from './types'
-import { sampleTrajectory, validPrefix } from './coords'
+import { sampleTrajectory, validPrefix, dist } from './coords'
 import { simulatePath } from './physics'
 import { firstHit } from './collision'
 import { isSolidAt } from './obstacle'
@@ -21,12 +21,16 @@ function idDir(id: string): Vec2 {
   return { x: Math.cos(ang), y: Math.sin(ang) }
 }
 
-/** 敵が認識する味方位置（#35）。闇の周回で隠れているほど真の位置から離れて見える。 */
+/**
+ * 敵が認識する味方位置（#35/#39）。闇の周回で隠れているほど真の位置から離れて見える。
+ * ブレ幅は囲む円の半径に連動した RMSE（concealRmse・1重=半径/2、2重=半径）。
+ * 方向は id 由来で安定（純粋関数を保つ＝同ターンの再評価で揺らがない）。RMSE 未設定の旧データは重数×既定幅。
+ */
 function perceivedPos(ally: Ally): Vec2 {
   const conceal = ally.concealed ?? 0
   if (conceal <= 0) return ally.pos
+  const mag = ally.concealRmse && ally.concealRmse > 0 ? ally.concealRmse : conceal * CONCEAL_JITTER
   const d = idDir(ally.id)
-  const mag = conceal * CONCEAL_JITTER
   return { x: ally.pos.x + d.x * mag, y: ally.pos.y + d.y * mag }
 }
 
@@ -99,6 +103,77 @@ function shapeCandidates(family: EnemyFamily): number[] {
   }
 }
 
+// ===== 壁を避ける軌道生成（#28：通過点を選び、それを通る近似曲線＝多項式を作る） =====
+
+/** ローカル系（origin 起点・angle 方向）の (x, y) を数学座標へ写す。x=進行方向, y=横。 */
+function localToWorld(origin: Vec2, angle: number, x: number, y: number): Vec2 {
+  const c = Math.cos(angle)
+  const s = Math.sin(angle)
+  return { x: origin.x + x * c - y * s, y: origin.y + x * s + y * c }
+}
+
+/**
+ * 通過点 (x_i, y_i) を全て通る多項式 g(x) を作る（ラグランジュ補間・#28）。
+ * 点数 n でちょうど (n−1) 次の曲線になり、機械らしい複雑な軌跡が生まれる。x は相異なる前提。
+ */
+function fitPolynomial(points: { x: number; y: number }[]): (x: number) => number {
+  return (x: number) => {
+    let y = 0
+    for (let i = 0; i < points.length; i++) {
+      let term = points[i].y
+      for (let j = 0; j < points.length; j++) {
+        if (j === i) continue
+        const denom = points[i].x - points[j].x
+        if (Math.abs(denom) < 1e-9) return NaN
+        term *= (x - points[j].x) / denom
+      }
+      y += term
+    }
+    return y
+  }
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v
+}
+
+/**
+ * 壁を避けて aimPos へ届く候補軌道（#28）。直線が最初に素材へ触れる地点を迂回起点に取り、
+ * そこを横へ膨らませる通過点を選んで近似曲線を引く。単一の弓なりと S 字（より複雑）を出す。
+ * 障害物が無ければ空（迂回不要）。breaker（壁を壊す）には呼び出し側が渡さない。
+ */
+function avoiderTrajectories(origin: Vec2, aimPos: Vec2, z: ZField, obstacles: Obstacle[]): Trajectory[] {
+  if (obstacles.length === 0) return []
+  const angle = aimAt(origin, aimPos)
+  const L = dist(origin, aimPos)
+  if (L < 4) return []
+  // 直線（局所 y=0）で最初に素材へ触れる局所 x（迂回の起点）。無ければ中央。
+  let xb = L * 0.5
+  for (let x = 0.5; x <= L; x += 0.5) {
+    if (obstacles.some((o) => isSolidAt(o, localToWorld(origin, angle, x, 0)))) {
+      xb = x
+      break
+    }
+  }
+  const out: Trajectory[] = []
+  const mid = clamp(xb, 1.5, L - 1.5)
+  // 単一の弓なり：迂回起点を横へ膨らませて壁の脇/上を抜ける
+  for (const off of [4, 7, 10, -4, -7, -10]) {
+    const g = fitPolynomial([{ x: 0, y: 0 }, { x: mid, y: off }, { x: L, y: 0 }])
+    out.push({ mode: 'rotate', g, angle, origin, z })
+  }
+  // S 字：2つの通過点で複雑に回り込む（#28：独特な軌跡）
+  const xa = clamp(xb * 0.7, 1.5, L - 3)
+  const xc = clamp(xb * 1.2, xa + 1.5, L - 1.5)
+  if (xc > xa) {
+    for (const off of [6, 9, -6, -9]) {
+      const g = fitPolynomial([{ x: 0, y: 0 }, { x: xa, y: off }, { x: xc, y: -off * 0.7 }, { x: L, y: 0 }])
+      out.push({ mode: 'rotate', g, angle, origin, z })
+    }
+  }
+  return out
+}
+
 /** 敵の軌道から path と飛行を作る（z は軌道の z 場を位置で評価・#28）。 */
 export function enemyFlight(traj: Trajectory, speed: number): { path: Vec2[]; flight: Flight } {
   const path = validPrefix(sampleTrajectory(traj)).map((s) => s.pos)
@@ -157,6 +232,37 @@ export function planEnemyShot(enemy: Enemy, allies: Ally[], obstacles: Obstacle[
   const families = enemyFamilies(enemy)
 
   let best: EnemyPlan | null = null
+  // 候補軌道を1つ評価して best を更新する（#28：直進系も迂回系も同じ採点）。
+  // maneuver は迂回の取り回しコスト（1=直進・<1=遠回り）。同条件なら直進/貫通が勝つ。
+  const consider = (traj: Trajectory, ally: Ally, aimPos: Vec2, bAttr: ReturnType<typeof attributeOf>, bStr: number, maneuver: number) => {
+    const { flight } = enemyFlight(traj, enemy.castInitialSpeed)
+    const hit = firstHit(flight.samples, aimPos, GAME.allyHitbox)
+    if (!hit || hit.speed <= 0) return // 失速して届かない（速度0）候補は捨てる（#31）
+    // 障害物（素材）が手前にあると弾が削れる＝評価を下げる（breaker は貫くので無視）
+    let penalty = 1
+    if (!breaker) {
+      for (const sm of flight.samples) {
+        if (sm.arcLen >= hit.arcLen) break
+        if (obstacles.some((ob) => isSolidAt(ob, sm.pos))) {
+          penalty = 0.55
+          break
+        }
+      }
+    }
+    const baseDmg = hit.speed * bStr * affinityMultiplier(bAttr, ally.element) * penalty * maneuver
+    // とどめを刺せる相手を最優先、次に手負い（割合）を優先
+    const killBonus = baseDmg >= ally.hp ? 2.2 : 1
+    const woundFocus = 1 + (1 - ally.hp / ally.maxHp) * 0.5
+    // 絶対HPが低い相手をわずかに優先（同割合なら低HPを狙う）
+    const lowHpBias = 1 + Math.max(0, (60 - ally.hp) / 60) * 0.25
+    const score = baseDmg * killBonus * woundFocus * lowHpBias
+    if (!best || score > best.expectedDamage) {
+      best = { trajectory: traj, targetId: ally.id, expectedDamage: score }
+    }
+  }
+
+  // 迂回（壁よけ）の取り回しコスト：遠回りなので直進よりわずかに不利（#28）
+  const MANEUVER = 0.9
   for (const ally of candidates) {
     // 隠れている味方は見かけの位置（ずれた位置）で狙う＝命中評価もそこに対して行う（#35）
     const aimPos = perceivedPos(ally)
@@ -168,37 +274,20 @@ export function planEnemyShot(enemy: Enemy, allies: Ally[], obstacles: Obstacle[
       const shapes = shapeCandidates(fam)
       const aimOffsets = fam === 'spiral' ? [0] : [-0.28, -0.14, 0, 0.14, 0.28]
       for (const off of aimOffsets) {
-       for (const shape of shapes) {
-        for (const zc of zCands) {
-        const bAttr = attributeOf(zc.zVal)
-        const bStr = strengthOf(zc.zVal)
-        const traj = buildEnemyTrajectory(fam, enemy.pos, base + off, shape, zc.z)
-        const { flight } = enemyFlight(traj, enemy.castInitialSpeed)
-        const hit = firstHit(flight.samples, aimPos, GAME.allyHitbox)
-        if (!hit || hit.speed <= 0) continue // 失速して届かない（速度0）候補は捨てる（#31）
-        // 障害物（素材）が手前にあると弾が削れる＝評価を下げる（breaker は貫くので無視）
-        let penalty = 1
-        if (!breaker) {
-          for (const sm of flight.samples) {
-            if (sm.arcLen >= hit.arcLen) break
-            if (obstacles.some((ob) => isSolidAt(ob, sm.pos))) {
-              penalty = 0.55
-              break
-            }
+        for (const shape of shapes) {
+          for (const zc of zCands) {
+            const traj = buildEnemyTrajectory(fam, enemy.pos, base + off, shape, zc.z)
+            consider(traj, ally, aimPos, attributeOf(zc.zVal), strengthOf(zc.zVal), 1)
           }
         }
-        const baseDmg = hit.speed * bStr * affinityMultiplier(bAttr, ally.element) * penalty
-        // とどめを刺せる相手を最優先、次に手負い（割合）を優先
-        const killBonus = baseDmg >= ally.hp ? 2.2 : 1
-        const woundFocus = 1 + (1 - ally.hp / ally.maxHp) * 0.5
-        // 絶対HPが低い相手をわずかに優先（同割合なら低HPを狙う）
-        const lowHpBias = 1 + Math.max(0, (60 - ally.hp) / 60) * 0.25
-        const score = baseDmg * killBonus * woundFocus * lowHpBias
-        if (!best || score > best.expectedDamage) {
-          best = { trajectory: traj, targetId: ally.id, expectedDamage: score }
+      }
+    }
+    // 壁よけ（#28）：通過点を選んで近似曲線で回り込む。breaker は壊して進むので使わない。
+    if (!breaker) {
+      for (const zc of zCands) {
+        for (const traj of avoiderTrajectories(enemy.pos, aimPos, zc.z, obstacles)) {
+          consider(traj, ally, aimPos, attributeOf(zc.zVal), strengthOf(zc.zVal), MANEUVER)
         }
-        }
-       }
       }
     }
   }

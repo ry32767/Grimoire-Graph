@@ -284,6 +284,129 @@ describe('障害物の削り・貫通条件（#1/#16）', () => {
   })
 })
 
+describe('周回オーラ（#39：固定回復・重複・入れ子は内側優先）', () => {
+  const healAlly = (id: string, pos: { x: number; y: number }, hp: number, maxHp: number): Ally => ({
+    id,
+    name: id,
+    pos,
+    hp,
+    maxHp,
+    element: 'neutral',
+    statuses: [],
+  })
+
+  it('光リング1重で囲まれた味方は固定量(30)回復する（強度に依らない）', () => {
+    const res = resolveTurn({
+      allies: [healAlly('a', { x: 0, y: 0 }, 50, 200)],
+      casts: [cast('a', { mode: 'polar', f: () => 5, origin: { x: 0, y: 0 }, z: zLightMid })],
+      enemies: [enemy('e', { x: 0, y: 20 }, 'dark')],
+      castingEnemyIds: [],
+      obstacles: [],
+      mechanics: onlyHit,
+    })
+    expect(res.allies[0].hp).toBe(80) // 50 + 30
+  })
+
+  it('光リング2重なら回復は重複する（30×2）', () => {
+    const res = resolveTurn({
+      allies: [healAlly('a', { x: 0, y: 0 }, 50, 200), healAlly('b', { x: 0, y: 0 }, 100, 200)],
+      casts: [
+        cast('a', { mode: 'polar', f: () => 5, origin: { x: 0, y: 0 }, z: zLightMid }),
+        cast('b', { mode: 'polar', f: () => 9, origin: { x: 0, y: 0 }, z: zLightMid }),
+      ],
+      enemies: [enemy('e', { x: 0, y: 26 }, 'dark')],
+      castingEnemyIds: [],
+      obstacles: [],
+      mechanics: onlyHit,
+    })
+    expect(res.allies.find((x) => x.id === 'a')!.hp).toBe(110) // 50 + 30 + 30
+  })
+
+  it('入れ子（光・闇・光）は内側2つだけ効く＝内の光と中の闇のみ', () => {
+    const res = resolveTurn({
+      allies: [
+        healAlly('t', { x: 0, y: 0 }, 50, 200),
+        healAlly('c1', { x: 0, y: 0 }, 100, 200),
+        healAlly('c2', { x: 0, y: 0 }, 100, 200),
+        healAlly('c3', { x: 0, y: 0 }, 100, 200),
+      ],
+      casts: [
+        cast('c1', { mode: 'polar', f: () => 4, origin: { x: 0, y: 0 }, z: zLightMid }), // 内・光
+        cast('c2', { mode: 'polar', f: () => 7, origin: { x: 0, y: 0 }, z: zDarkMid }), // 中・闇
+        cast('c3', { mode: 'polar', f: () => 10, origin: { x: 0, y: 0 }, z: zLightMid }), // 外・光（無視）
+      ],
+      enemies: [enemy('e', { x: 0, y: 28 }, 'dark')],
+      castingEnemyIds: [],
+      obstacles: [],
+      mechanics: onlyHit,
+    })
+    const t = res.allies.find((x) => x.id === 't')!
+    expect(t.hp).toBe(80) // 50 + 30（内側の光のみ。外側の光は入れ子で無視）
+    expect(t.concealed).toBe(1) // 中の闇で1重
+  })
+})
+
+describe('周回の永続化（#39：破壊されるまで残る）', () => {
+  const lightAlly = (id: string, pos: { x: number; y: number }, hp: number, maxHp: number): Ally => ({
+    id,
+    name: id,
+    pos,
+    hp,
+    maxHp,
+    element: 'light',
+    statuses: [],
+  })
+
+  it('前ターンの周回が残り、撃ち直さなくても回復し続ける', () => {
+    const t1 = resolveTurn({
+      allies: [lightAlly('a', { x: 0, y: 0 }, 50, 200)],
+      casts: [cast('a', { mode: 'polar', f: () => 5, origin: { x: 0, y: 0 }, z: zLightMid })],
+      enemies: [enemy('e', { x: 0, y: 20 }, 'dark')],
+      castingEnemyIds: [],
+      obstacles: [],
+      mechanics: onlyHit,
+    })
+    expect(t1.orbits.length).toBe(1)
+    expect(t1.allies[0].hp).toBe(80) // 50 + 30
+    // 次ターン：新規キャストなし。永続周回だけで回復する
+    const t2 = resolveTurn({
+      allies: t1.allies,
+      casts: [],
+      enemies: t1.enemies,
+      castingEnemyIds: [],
+      obstacles: [],
+      mechanics: onlyHit,
+      activeOrbits: t1.orbits,
+    })
+    expect(t2.allies[0].hp).toBe(110) // さらに +30
+    expect(t2.orbits.length).toBe(1) // 残り続ける
+  })
+
+  it('反対属性の敵弾に相殺されると永続周回は消える', () => {
+    const t1 = resolveTurn({
+      allies: [lightAlly('a', { x: 0, y: 0 }, 100, 200)],
+      casts: [cast('a', { mode: 'polar', f: () => 5, origin: { x: 0, y: 0 }, z: zLightMid })],
+      enemies: [enemy('e', { x: 10, y: 0 }, 'dark', 100, 14)],
+      castingEnemyIds: [],
+      obstacles: [],
+      mechanics: onlyHit,
+    })
+    expect(t1.orbits.length).toBe(1)
+    // 次ターン：速い闇の敵弾（光の味方を狙う＝闇）が光リングを破る
+    const t2 = resolveTurn({
+      allies: t1.allies,
+      casts: [],
+      enemies: [enemy('e', { x: 10, y: 0 }, 'dark', 100, 14)],
+      castingEnemyIds: ['e'],
+      obstacles: [],
+      mechanics: withFire,
+      activeOrbits: t1.orbits,
+    })
+    expect(t2.orbits.length).toBe(0) // 相殺で消滅
+    expect(t2.log.some((l) => l.text.includes('消滅'))).toBe(true)
+  })
+})
+
 describe('敵弾が味方へ命中（#15）', () => {
   it('防御なしなら狙われた味方のHPが減る', () => {
     const res = resolveTurn({

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { planEnemyShot, enemyFlight, ARCHETYPES } from './enemyAI'
 import { firstHit } from './collision'
+import { isSolidAt } from './obstacle'
 import { classifyTrajectory } from './loop'
 import { GAME } from '../data/constants'
 import type { Ally, Enemy, EnemyFamily, Obstacle } from './types'
@@ -102,6 +103,32 @@ describe('敵AIの攻撃計画（#2/#17）', () => {
     expect(aPlan).not.toBeNull()
     expect(bPlan).not.toBeNull()
     expect(bPlan!.expectedDamage).toBeGreaterThan(aPlan!.expectedDamage)
+  })
+
+  it('壁を避ける：壁ごしの相手に回り込む曲線軌道を選ぶ（#28）', () => {
+    // 敵(0,10)→味方(0,-10) の直線を塞ぐ横長の壁。attacker は貫けないので通過点を選んで回り込む。
+    const wall: Obstacle = {
+      id: 'w',
+      element: 'dark',
+      solids: [
+        { x: -2, y: 0, r: 2.4 },
+        { x: 0, y: 0, r: 2.4 },
+        { x: 2, y: 0, r: 2.4 },
+      ],
+      carves: [],
+    }
+    const e = enemy({ x: 0, y: 10 }, 'line')
+    const target = ally('t', { x: 0, y: -10 }, 'light')
+    const plan = planEnemyShot(e, [target], [wall])
+    expect(plan).not.toBeNull()
+    const { flight } = enemyFlight(plan!.trajectory, e.castInitialSpeed)
+    const hit = firstHit(flight.samples, target.pos, GAME.allyHitbox)
+    expect(hit).not.toBeNull()
+    // 選ばれた軌道は命中までに壁の素材へ触れない＝回り込んでいる（直進では貫けない壁）
+    const touchesWall = flight.samples.some(
+      (sm) => sm.arcLen < hit!.arcLen && isSolidAt(wall, sm.pos),
+    )
+    expect(touchesWall).toBe(false)
   })
 
   it('複数得意関数（families）を持つ敵も軌道を返す（#28）', () => {

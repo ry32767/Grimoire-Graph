@@ -15,6 +15,7 @@ export function createBattleState(stage: Stage, stageIndex: number, party: Ally[
     phase: 'enemyReveal',
     log: [{ kind: 'info', text: `${stage.name} 開始` }],
     outcome: 'ongoing',
+    orbits: [],
   }
 }
 
@@ -92,6 +93,7 @@ export function resolveAllyCasts(
     castingEnemyIds,
     obstacles: state.obstacles,
     mechanics: state.mechanics,
+    activeOrbits: state.orbits ?? [],
   })
 
   const next: BattleState = {
@@ -99,6 +101,7 @@ export function resolveAllyCasts(
     allies: resolution.allies,
     enemies: resolution.enemies,
     obstacles: resolution.obstacles,
+    orbits: resolution.orbits,
     turn: state.turn + 1,
     phase: 'resolve',
     log: [...state.log, ...resolution.log],

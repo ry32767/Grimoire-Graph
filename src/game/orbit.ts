@@ -41,7 +41,7 @@ export function ringEncloses(ring: RingPoint[], p: Vec2): boolean {
   return inside
 }
 
-/** リングの代表属性と強度（|z| が最大の点で代表する）。回復・ステルスの判定に使う（#35）。 */
+/** リングの代表属性と強度（|z| が最大の点で代表する）。掃射の代表属性などに使う（#35）。 */
 export function ringDominant(ring: RingPoint[]): { attr: Attribute; strength: number } {
   let best: { attr: Attribute; strength: number } = { attr: 'neutral', strength: 0 }
   for (const rp of ring) {
@@ -49,6 +49,41 @@ export function ringDominant(ring: RingPoint[]): { attr: Attribute; strength: nu
     if (s > best.strength) best = { attr: attributeOf(rp.z), strength: s }
   }
   return best
+}
+
+/**
+ * リングの平均属性（#39）：軌道上の符号付き強度（光=+, 闇=−）の平均で属性を決める。
+ * 効果（回復・隠蔽）は強度の大小を見ない＝属性（符号）だけが意味を持つ。
+ */
+export function ringAverageAttr(ring: RingPoint[]): Attribute {
+  if (ring.length === 0) return 'neutral'
+  let sum = 0
+  for (const rp of ring) {
+    const sign = rp.z > 0 ? 1 : rp.z < 0 ? -1 : 0
+    sum += sign * strengthOf(rp.z)
+  }
+  return attributeOf(sum / ring.length)
+}
+
+/** リングの重心（内外判定・入れ子の半径比較に使う・#39）。 */
+export function ringCentroid(ring: RingPoint[]): Vec2 {
+  let cx = 0
+  let cy = 0
+  for (const rp of ring) {
+    cx += rp.pos.x
+    cy += rp.pos.y
+  }
+  const n = ring.length || 1
+  return { x: cx / n, y: cy / n }
+}
+
+/** リングの代表半径（重心からの平均距離）。隠蔽 RMSE と入れ子の内外（小さいほど内側）に使う（#39）。 */
+export function ringRadius(ring: RingPoint[]): number {
+  if (ring.length === 0) return 0
+  const c = ringCentroid(ring)
+  let sum = 0
+  for (const rp of ring) sum += dist(rp.pos, c)
+  return sum / ring.length
 }
 
 /** リング上で対象に最も近い点の index と距離。 */
