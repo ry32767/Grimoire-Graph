@@ -1,9 +1,9 @@
 // Canvas 描画関数（機能3・5・#15）。座標変換は coords に集約したものを使う。
-import type { Ally, Attribute, Enemy, Obstacle, Vec2, ZPoint } from '../game/types'
+import type { Ally, Attribute, Enemy, Obstacle, ObstacleKind, Vec2, ZPoint } from '../game/types'
 import { FIELD } from '../data/constants'
 import { toScreen, scaleOf, type Viewport } from '../game/coords'
 import { attributeOf, strengthOf } from '../game/attribute'
-import { COLORS, attrColor } from './theme'
+import { COLORS } from './theme'
 
 export type { ZPoint }
 
@@ -19,16 +19,16 @@ export interface SceneParams {
   playerPaths?: (ZPoint[] | null)[]
   /** 敵ゴースト軌道（数学座標の点列の配列） */
   ghostPaths?: Vec2[][]
-  /** 予測着弾点とその属性（機能17） */
-  landings?: ({ pos: Vec2; attr: Attribute } | null)[]
   /** 被弾中の対象ID→フラッシュ強度（1→0）。赤く光って揺れる（#20） */
   flash?: Record<string, number>
   /** 揺れの位相（時間とともに増加） */
   shakePhase?: number
-  /** 前ターンに撃たれた魔法の軌跡（#11：属性色で薄く残す）。発射型/軌道型/敵弾すべて */
-  pastTrails?: ZPoint[][]
-  /** 軌跡アニメの位相（#11：パーティクルが揺れ・波が流れる。作成フェーズで進める） */
+  /** 軌跡アニメの位相（パーティクルが揺れ・波が流れる。作成フェーズで進める） */
   trailPhase?: number
+  /** 編集中の z 場 z=f(x,y)（#37）。showZField の間だけ薄い場として表示する */
+  zField?: (x: number, y: number) => number
+  /** z 場をいじっている間だけ true：場のプレビューを表示する（#37） */
+  showZField?: boolean
 }
 
 /** 被弾の揺れ量（px）。強度と位相・IDシードで上下左右に細かく震える（#20）。 */
@@ -398,6 +398,103 @@ const OBSTACLE_FILL: Record<Attribute, string> = {
   neutral: 'rgba(64,64,80,0.92)',
 }
 
+// 無属性の壁は種別ごとに石の色を変えて、削れやすさが一目で分かるようにする（#40）。
+const KIND_FILL: Partial<Record<ObstacleKind, string>> = {
+  fragile: 'rgba(110,106,122,0.9)', // もろい灰色の石（明るめ）
+  tough: 'rgba(56,56,70,0.96)', // 鋲打ちの濃い石
+  unbreakable: 'rgba(24,24,32,0.98)', // 黒く鈍い鋼
+}
+
+/** 壁の塗り色：種別（無属性の頑丈/もろい/砕けぬ）優先、なければ属性色（#40）。 */
+function obstacleFill(o: Obstacle): string {
+  const k = o.kind
+  if (k && k !== 'normal' && KIND_FILL[k]) return KIND_FILL[k] as string
+  return OBSTACLE_FILL[o.element]
+}
+
+/**
+ * 壁の素材に種別ごとのテクスチャを重ねる（#40）。source-atop で素材内だけに描く前提。
+ * 属性/normal=石積みの目地、fragile=ひび割れ、tough=鋲打ち格子、unbreakable=鋼の斜めシェブロン。
+ */
+function drawObstacleTexture(
+  lx: CanvasRenderingContext2D,
+  o: Obstacle,
+  vp: Viewport,
+  s: number,
+): void {
+  if (o.solids.length === 0) return
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+  for (const d of o.solids) {
+    minX = Math.min(minX, d.x - d.r)
+    maxX = Math.max(maxX, d.x + d.r)
+    minY = Math.min(minY, d.y - d.r)
+    maxY = Math.max(maxY, d.y + d.r)
+  }
+  const tl = toScreen({ x: minX, y: maxY }, vp) // y 反転：maxY が画面上
+  const br = toScreen({ x: maxX, y: minY }, vp)
+  const x0 = tl.x
+  const y0 = tl.y
+  const x1 = br.x
+  const y1 = br.y
+  const kind = o.kind ?? 'normal'
+  lx.save()
+  if (kind === 'unbreakable') {
+    lx.strokeStyle = 'rgba(150,162,190,0.5)'
+    lx.lineWidth = Math.max(1.5, s * 0.06)
+    const gap = Math.max(6, s * 0.5)
+    for (let x = x0 - (y1 - y0); x < x1; x += gap) {
+      lx.beginPath()
+      lx.moveTo(x, y1)
+      lx.lineTo(x + (y1 - y0), y0)
+      lx.stroke()
+    }
+  } else if (kind === 'tough') {
+    lx.fillStyle = 'rgba(158,158,180,0.5)'
+    const gap = Math.max(8, s * 0.7)
+    const rv = Math.max(1.2, s * 0.07)
+    for (let y = y0 + gap * 0.5; y < y1; y += gap)
+      for (let x = x0 + gap * 0.5; x < x1; x += gap) {
+        lx.beginPath()
+        lx.arc(x, y, rv, 0, Math.PI * 2)
+        lx.fill()
+      }
+  } else if (kind === 'fragile') {
+    lx.strokeStyle = 'rgba(228,228,238,0.45)'
+    lx.lineWidth = Math.max(1, s * 0.04)
+    const gap = Math.max(12, s * 1.0)
+    for (let x = x0 + gap * 0.4; x < x1; x += gap) {
+      let cx = x
+      let cy = y0
+      lx.beginPath()
+      lx.moveTo(cx, cy)
+      while (cy < y1) {
+        cy += gap * 0.6
+        cx += ((Math.floor(cx) % 7) - 3) * (s * 0.02) // ジグザグの亀裂
+        lx.lineTo(cx, cy)
+      }
+      lx.stroke()
+    }
+  } else {
+    // 属性付き/normal：石積みの横目地
+    lx.strokeStyle = 'rgba(0,0,0,0.22)'
+    lx.lineWidth = Math.max(1, s * 0.03)
+    const gap = Math.max(6, R_OBSTACLE * s * 0.9)
+    for (let y = y0; y < y1; y += gap) {
+      lx.beginPath()
+      lx.moveTo(x0, y)
+      lx.lineTo(x1, y)
+      lx.stroke()
+    }
+  }
+  lx.restore()
+}
+
+/** 石積み目地の間隔基準（壁の円半径の目安・stages の R と揃える）。 */
+const R_OBSTACLE = 2.4
+
 // 障害物レイヤー用のオフスクリーン（穴抜きを障害物だけに閉じ込めるため・フレーム間で再利用）
 let obstacleLayer: HTMLCanvasElement | null = null
 
@@ -425,13 +522,16 @@ export function drawObstacles(ctx: CanvasRenderingContext2D, obstacles: Obstacle
     lx.clearRect(0, 0, W, H)
     // ブロブ本体（円の和を塗る）
     lx.globalCompositeOperation = 'source-over'
-    lx.fillStyle = OBSTACLE_FILL[o.element]
+    lx.fillStyle = obstacleFill(o)
     for (const d of o.solids) {
       const c = toScreen({ x: d.x, y: d.y }, vp)
       lx.beginPath()
       lx.arc(c.x, c.y, d.r * s, 0, Math.PI * 2)
       lx.fill()
     }
+    // 種別テクスチャを素材内だけに重ねる（source-atop で solids の上にのみ描く・#40）
+    lx.globalCompositeOperation = 'source-atop'
+    drawObstacleTexture(lx, o, vp, s)
     // えぐり取った穴を抜く（滑らかな円形の削れ）
     lx.globalCompositeOperation = 'destination-out'
     for (const c0 of o.carves) {
@@ -443,6 +543,37 @@ export function drawObstacles(ctx: CanvasRenderingContext2D, obstacles: Obstacle
     lx.globalCompositeOperation = 'source-over'
     ctx.drawImage(layer, 0, 0)
   }
+}
+
+/** リング点列を画面座標の閉パスにする（クリップ用）。 */
+function ringScreenPath(ctx: CanvasRenderingContext2D, ring: ZPoint[], vp: Viewport): void {
+  ctx.beginPath()
+  for (let i = 0; i < ring.length; i++) {
+    const s = toScreen(ring[i].pos, vp)
+    if (i === 0) ctx.moveTo(s.x, s.y)
+    else ctx.lineTo(s.x, s.y)
+  }
+  ctx.closePath()
+}
+
+/**
+ * 闇の周回の内側を暗くしてぼかす（#39：プレイヤー視点の視認性低下）。
+ * リング内側のキャンバスを自分自身へぼかして描き直し、暗い幕を重ねる。
+ * 1重で半分ほど見えにくく、2つの円が重なる領域はぼかし・暗化が重なってほぼ見えなくなる。
+ */
+export function drawConcealVeil(ctx: CanvasRenderingContext2D, ring: ZPoint[], vp: Viewport): void {
+  if (ring.length < 3) return
+  ctx.save()
+  ringScreenPath(ctx, ring, vp)
+  ctx.clip()
+  // ぼかし：クリップ内（リング内側）だけをぼかして描き直す
+  ctx.filter = 'blur(3px)'
+  ctx.drawImage(ctx.canvas, 0, 0)
+  ctx.filter = 'none'
+  // 暗化の幕（重なるほど濃く＝2重でほぼ真っ暗）
+  ctx.fillStyle = 'rgba(6,5,14,0.5)'
+  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height)
+  ctx.restore()
 }
 
 /** z（属性）で色分けして軌道を描く。中立は淡く、光=金・闇=紫。 */
@@ -555,29 +686,42 @@ export function drawWaveTrail(
   ctx.restore()
 }
 
-/** 予測着弾点マーカー。 */
-function drawLanding(
+/**
+ * z 場（属性の高さ）を薄い場として描く（#37）。z をいじっている間だけ表示し、敵・壁より下のレイヤに置く。
+ * 格子状にサンプルし、光（z>0）=金・闇（z<0）=紫で、強度（|z|→zPeak付近で最大）ほど濃く塗る。
+ */
+export function drawZFieldOverlay(
   ctx: CanvasRenderingContext2D,
-  landing: { pos: Vec2; attr: Attribute },
+  zField: (x: number, y: number) => number,
   vp: Viewport,
 ): void {
-  const c = toScreen(landing.pos, vp)
-  ctx.strokeStyle = attrColor(landing.attr)
-  ctx.fillStyle = attrColor(landing.attr)
-  ctx.lineWidth = 2
-  ctx.beginPath()
-  ctx.arc(c.x, c.y, 8, 0, Math.PI * 2)
-  ctx.stroke()
-  ctx.globalAlpha = 0.4
-  ctx.beginPath()
-  ctx.arc(c.x, c.y, 4, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.globalAlpha = 1
+  const step = 2 // ユニット（方眼1.0刻みに合わせた粗さ）
+  const s = scaleOf(vp)
+  const cell = step * s
+  ctx.save()
+  for (let x = -FIELD.rField; x <= FIELD.rField; x += step) {
+    for (let y = -FIELD.rField; y <= FIELD.rField; y += step) {
+      if (Math.hypot(x, y) > FIELD.rField) continue
+      const z = zField(x, y)
+      if (!Number.isFinite(z)) continue
+      const attr = attributeOf(z)
+      if (attr === 'neutral') continue
+      const t = Math.min(strengthOf(z) / FIELD.sMax, 1)
+      const c = toScreen({ x, y }, vp)
+      ctx.fillStyle =
+        attr === 'light' ? `rgba(244,196,48,${0.04 + t * 0.16})` : `rgba(123,92,196,${0.05 + t * 0.18})`
+      ctx.fillRect(c.x - cell / 2, c.y - cell / 2, cell + 1, cell + 1)
+    }
+  }
+  ctx.restore()
 }
 
 /** 静的シーン一式を描画する。 */
 export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
   drawBackground(ctx, p.vp)
+
+  // 編集中の z 場を薄い場として表示（#37）。敵・壁より下のレイヤ＝背景直後に描く
+  if (p.showZField && p.zField) drawZFieldOverlay(ctx, p.zField, p.vp)
 
   // 敵ゴースト軌道
   if (p.ghostPaths) {
@@ -590,21 +734,12 @@ export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
 
   drawObstacles(ctx, p.obstacles, p.vp)
 
-  // 前ターンの魔法軌跡（#11：逆位相の波＋揺れる粒で残す）。プレビューより下に描く
-  if (p.pastTrails) {
-    for (const tr of p.pastTrails) drawWaveTrail(ctx, tr, p.vp, p.trailPhase ?? 0, 0.5)
-  }
-
   // 各味方のプレビュー軌道（z で色分け）。敵より先に描き、敵に被らせない（#27）。
+  // #37：軌跡のみを表示し、着弾点（どこで途切れるか）のマーカーは出さない。
   if (p.playerPaths) {
     for (const path of p.playerPaths) {
       if (path && path.length > 1) strokeZPath(ctx, path, p.vp)
     }
-  }
-
-  // 予測着弾点
-  if (p.landings) {
-    for (const l of p.landings) if (l) drawLanding(ctx, l, p.vp)
   }
 
   // 敵・術者は軌跡の上に描く（軌跡で隠れない・#27）
@@ -713,6 +848,57 @@ export function drawParticle(
 }
 
 /**
+ * 発射魔法が速度0で霧散するときの演出（#38）：核が小さくなりながら、粒が外へ散って消える。
+ * 周回の霧散（drawOrbitDissipation）と同じ「散って消える」質感を点で表す。sizeFrac は威力（大きさ）。
+ */
+export function drawBulletDissipation(
+  ctx: CanvasRenderingContext2D,
+  pos: Vec2,
+  z: number,
+  progress: number,
+  vp: Viewport,
+  sizeFrac = 0.5,
+): void {
+  if (progress < 0 || progress >= 1) return
+  const c = toScreen(pos, vp)
+  const col = bulletColorOf(z)
+  const s = scaleOf(vp)
+  // 縮む核（progress とともに小さくなる）
+  const coreR = (2 + sizeFrac * 4) * (1 - progress)
+  if (coreR > 0.3) {
+    ctx.save()
+    ctx.globalAlpha = (1 - progress) * 0.9
+    ctx.shadowColor = col
+    ctx.shadowBlur = 10
+    ctx.fillStyle = col
+    ctx.beginPath()
+    ctx.arc(c.x, c.y, coreR, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = '#fff8e1'
+    ctx.beginPath()
+    ctx.arc(c.x, c.y, coreR * 0.4, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+  }
+  // 外へ散る粒（周回の霧散と同じ質感）
+  ctx.save()
+  const N = 12
+  const out = progress * (3 + sizeFrac * 3) * s
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * Math.PI * 2 + i * 0.7
+    ctx.globalAlpha = Math.max(0, 1 - progress) * 0.8
+    ctx.fillStyle = col
+    ctx.shadowColor = col
+    ctx.shadowBlur = 8
+    const rr = (1.5 + sizeFrac * 1.5) * (1 - progress)
+    ctx.beginPath()
+    ctx.arc(c.x + Math.cos(a) * out, c.y + Math.sin(a) * out, Math.max(0.4, rr), 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.restore()
+}
+
+/**
  * 周回軌道が壁に当たって霧散する演出（#34）。周回はせず、リングが一瞬現れて
  * 重心から外側へ粒が散り、薄れて消える（progress 0→1 で一度きり）。
  */
@@ -767,14 +953,15 @@ export function drawOrbitDissipation(
 }
 
 /**
- * 障害物を削る瞬間のパーティクル（#11）。当たった点から石片＝四角ドットが飛び散り、
- * 中心が閃く。progress 0→1 で広がりながら消える。attr で色（光=金・闇=紫）。
+ * 障害物を削る瞬間のパーティクル（#11/#38）。当たった点から石片＝四角ドットが飛び散り、
+ * 中心が閃く。progress 0→1 で広がりながら消える。壁ヒットは赤いパーティクル（発射型/周回ともに・#38）。
+ * attr は引数に残すが色は赤系で統一する。大きさ（半径 r）は威力に依存する（呼び出し側で計算）。
  */
 export function drawCarveBurst(
   ctx: CanvasRenderingContext2D,
   pos: Vec2,
   r: number,
-  attr: Attribute,
+  _attr: Attribute,
   progress: number,
   vp: Viewport,
 ): void {
@@ -782,7 +969,8 @@ export function drawCarveBurst(
   const c = toScreen(pos, vp)
   const s = scaleOf(vp)
   const px = Math.max(3, Math.round(s * 0.34))
-  const col = attr === 'light' ? COLORS.light1 : attr === 'dark' ? COLORS.dark1 : COLORS.light2
+  const col = '#ff5a44' // 壁ヒットは赤（#38）
+  const colAlt = '#ff9166' // 明るい赤橙（火花の混色）
   const spread = (r + 2) * s
   ctx.save()
   // 中心の閃光（序盤に白く弾ける）
@@ -805,7 +993,7 @@ export function drawCarveBurst(
     const gx = c.x + Math.cos(ang) * dist
     const gy = c.y + Math.sin(ang) * dist + progress * progress * px * 2.5 // 重力で落下
     ctx.globalAlpha = Math.max(0, 1 - progress) * 0.95
-    ctx.fillStyle = i % 3 === 0 ? COLORS.light2 : col
+    ctx.fillStyle = i % 3 === 0 ? colAlt : col
     const sz = Math.max(1, px * (1 - progress * 0.55))
     ctx.fillRect(Math.round(gx - sz / 2), Math.round(gy - sz / 2), sz, sz)
   }
@@ -813,44 +1001,61 @@ export function drawCarveBurst(
 }
 
 /**
- * パリィ／結界の衝突火花（#20）。中心が白く弾け、金と紫の火花が放射状に飛び散る。
- * progress 0→1 で広がりながら消える。光闇がぶつかる「相殺」を表す。
+ * パリィ／結界の衝突火花（#20/#38）。中心が白く弾け、青を基調に光闇を少し混ぜた火花が放射状に飛び散り、
+ * 青いパーティクルが散る。大きさは威力（sizeFrac 0..1）に依存し、パリィは2魔法の威力合計で大きくなる。
  */
 export function drawClashSpark(
   ctx: CanvasRenderingContext2D,
   pos: Vec2,
   progress: number,
   vp: Viewport,
+  sizeFrac = 0.5,
 ): void {
   if (progress < 0 || progress >= 1) return
   const c = toScreen(pos, vp)
   const s = scaleOf(vp)
-  const reach = (2 + progress * 4) * s
+  const scale = 0.6 + Math.min(1, Math.max(0, sizeFrac)) * 1.4 // 威力で大きさが変わる（#38）
+  const reach = (2 + progress * 4) * s * scale
   ctx.save()
-  // 中心の白い閃光
+  // 中心の白い閃光（青みがかった発光）
   const flash = Math.max(0, 1 - progress * 2)
   if (flash > 0) {
     ctx.globalAlpha = flash
-    ctx.shadowColor = '#fff8e1'
+    ctx.shadowColor = '#bfe3ff'
     ctx.shadowBlur = 14
     ctx.fillStyle = '#fff8e1'
     ctx.beginPath()
-    ctx.arc(c.x, c.y, 3 + flash * 3, 0, Math.PI * 2)
+    ctx.arc(c.x, c.y, (3 + flash * 3) * scale, 0, Math.PI * 2)
     ctx.fill()
     ctx.shadowBlur = 0
   }
-  // 放射状の火花（金と紫が交互＝光闇の相殺）
-  const n = 10
-  ctx.lineWidth = 2
+  // 放射状の火花：青を基調に光（金）闇（紫）を少し混ぜる（#38）
+  const n = 12
+  ctx.lineWidth = 1.5 + Math.min(1, sizeFrac) * 2.5
   ctx.lineCap = 'round'
   for (let i = 0; i < n; i++) {
     const a = (i / n) * Math.PI * 2 + progress * 1.5
     ctx.globalAlpha = Math.max(0, 1 - progress) * 0.9
-    ctx.strokeStyle = i % 2 === 0 ? COLORS.light1 : COLORS.dark1
+    ctx.strokeStyle =
+      i % 5 === 0 ? COLORS.light1 : i % 5 === 2 ? COLORS.dark1 : i % 2 === 0 ? '#5aa8ff' : '#9ad0ff'
     ctx.beginPath()
     ctx.moveTo(c.x + Math.cos(a) * reach * 0.4, c.y + Math.sin(a) * reach * 0.4)
     ctx.lineTo(c.x + Math.cos(a) * reach, c.y + Math.sin(a) * reach)
     ctx.stroke()
+  }
+  // 散る青いパーティクル（#38）
+  const m = 8
+  for (let i = 0; i < m; i++) {
+    const a = (i / m) * Math.PI * 2 + progress * 2 + 0.5
+    const d = reach * (0.3 + progress * 0.8)
+    ctx.globalAlpha = Math.max(0, 1 - progress) * 0.85
+    ctx.fillStyle = i % 2 === 0 ? '#7ec0ff' : '#bfe3ff'
+    ctx.shadowColor = '#5aa8ff'
+    ctx.shadowBlur = 8
+    const rr = (1.5 + Math.min(1, sizeFrac) * 2) * (1 - progress * 0.5)
+    ctx.beginPath()
+    ctx.arc(c.x + Math.cos(a) * d, c.y + Math.sin(a) * d, Math.max(0.5, rr), 0, Math.PI * 2)
+    ctx.fill()
   }
   ctx.restore()
 }

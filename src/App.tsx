@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Ally, AllyCast, BattleState, Vec2, ZPoint } from './game/types'
+import type { Ally, AllyCast, BattleState, Vec2 } from './game/types'
 import { createBattleState, prepareTurn, resolveAllyCasts } from './game/battle'
 import { planEnemyShot, enemyFlight } from './game/enemyAI'
 import { zfieldAt } from './game/attribute'
@@ -10,7 +10,7 @@ import { STAGES } from './data/stages'
 import { makeParty } from './data/party'
 import { FIELD } from './data/constants'
 import { PROLOGUE, EPILOGUE, GAMEOVER_TEXT } from './data/story'
-import { type ComposerState, buildComposerTrajectory, computePreview } from './components/composer'
+import { type ComposerState, buildComposerTrajectory, buildZField, computePreview } from './components/composer'
 import BattleCanvas, { type ResolveAnimation, type AnimBullet, type AnimOrbit } from './components/BattleCanvas'
 import Hud from './components/Hud'
 import BattleLog from './components/BattleLog'
@@ -84,8 +84,8 @@ export default function App() {
   const [activeAllyId, setActiveAllyId] = useState<string>('')
   const [animation, setAnimation] = useState<ResolveAnimation | null>(null)
   const [pendingState, setPendingState] = useState<BattleState | null>(null)
-  // #11：前ターンに撃たれた魔法の軌跡（属性色で薄く残す）
-  const [pastTrails, setPastTrails] = useState<ZPoint[][]>([])
+  // #37：z 場をいじっている間だけ、場をプレビュー表示する
+  const [zEditing, setZEditing] = useState(false)
   const [codexOpen, setCodexOpen] = useState(false)
   // #23：図鑑用に「遭遇した敵」を記録（セッション内・永続化しない）
   const [seenEnemies, setSeenEnemies] = useState<Set<string>>(new Set())
@@ -118,15 +118,17 @@ export default function App() {
     () => aliveAllies.map((a) => previews[a.id]?.path ?? null),
     [aliveAllies, previews],
   )
-  // 着弾点マーカー。#21：プレビューでは属性(z)を見せないので中立色で描く
-  const landings = useMemo(
-    () =>
-      aliveAllies.map((a) => {
-        const l = previews[a.id]?.landing
-        return l ? { pos: l.pos, attr: 'neutral' as const } : null
-      }),
-    [aliveAllies, previews],
+  // 編集中の z 場（#37）。アクティブな術者の z 場を場として薄く表示する
+  const activeZField = useMemo(() => {
+    const c = composers[activeAllyId]
+    return c ? buildZField(c) : null
+  }, [composers, activeAllyId])
+  // 持続中の周回結界（#39：作成フェーズでも常時表示し、闇は内側を暗くぼかす）
+  const standingOrbits = useMemo(
+    () => (battle?.orbits ?? []).map((o) => ({ ring: o.ring, speed: o.ringSpeed })),
+    [battle],
   )
+
   // 敵の先出し術式を公開（#17：得意関数の形を見せる）
   const ghostPaths = useMemo<Vec2[][]>(() => {
     if (!battle) return []
@@ -174,7 +176,6 @@ export default function App() {
     setActiveAllyId(party[0].id)
     setAnimation(null)
     setPendingState(null)
-    setPastTrails([]) // 新ステージは軌跡をリセット（#11）
     setScreen('battle')
     if (stageIndex === 0 && !guideShown) {
       setGuideOpen(true)
@@ -228,12 +229,19 @@ export default function App() {
           misfirePos: s.misfirePos,
           carves: s.carves,
           impact: s.hitEnemyId ? { id: s.hitEnemyId, side: 'enemy', arcLen: s.hitArcLen } : null,
+          vanished: s.flight?.end === 'vanished', // 速度0で霧散（#38）
         })
       }
     }
     // guardian 敵の防御結界も周回として描く（#28）。壁/弾に負けたら霧散（#34）
     for (const er of resolution.enemyRings) {
       orbits.push({ ring: er.ring, hitEnemyIds: [], carves: [], broken: er.broken, speed: er.ringSpeed })
+    }
+    // 持続周回（#39）：前ターンから残っている結界も回転表示。今ターン相殺で消えたら霧散させる
+    const prevOrbits = battle.orbits ?? []
+    for (const po of prevOrbits) {
+      const survived = resolution.orbits.some((o) => o.id === po.id)
+      orbits.push({ ring: po.ring, hitEnemyIds: [], carves: [], broken: !survived, speed: po.ringSpeed })
     }
     for (const es of resolution.enemyShots) {
       bullets.push({
@@ -247,21 +255,9 @@ export default function App() {
         misfirePos: null,
         carves: es.carves,
         impact: es.hitAllyId ? { id: es.hitAllyId, side: 'ally', arcLen: es.hitArcLen } : null,
+        vanished: es.flight.end === 'vanished', // 結界/壁で止められて霧散（#38）
       })
     }
-    // 前ターンの軌跡として保存（#11）：味方の発射型/軌道型・敵弾・敵結界すべて
-    const trails: ZPoint[][] = []
-    for (const s of resolution.allyShots) {
-      // 霧散した周回（壁に当たって消えた）は軌跡を残さない（#34）
-      if (s.path && s.path.length > 1 && !s.broken) trails.push(s.path)
-    }
-    for (const es of resolution.enemyShots) {
-      trails.push(es.flight.samples.map((x) => ({ pos: x.pos, z: zfieldAt(es.traj, x.pos) })))
-    }
-    // 霧散した敵結界は軌跡を残さない（#34）
-    for (const er of resolution.enemyRings) if (!er.broken) trails.push(er.ring)
-    setPastTrails(trails)
-
     // 着弾時に鳴らす効果音を予約（#10）
     const kinds = new Set(resolution.log.map((l) => l.kind))
     const sfx: SfxKind[] = []
@@ -269,6 +265,7 @@ export default function App() {
     if (kinds.has('playerHit')) sfx.push('hit')
     if (kinds.has('orbit')) sfx.push('orbit')
     if (kinds.has('enemyHit')) sfx.push('enemyHit')
+    if (resolution.clashes.length > 0) sfx.push('clash') // パリィ/結界の「バチッ」（#38）
     sfxRef.current = sfx
     setBattle({ ...battle, phase: 'resolve' })
     setAnimation({ bullets, orbits, clashes: resolution.clashes })
@@ -447,8 +444,9 @@ export default function App() {
               obstacles={battle.obstacles}
               activeAllyId={composing ? activeAllyId : null}
               playerPaths={composing ? playerPaths : undefined}
-              landings={composing ? landings : undefined}
-              pastTrails={composing ? pastTrails : undefined}
+              zField={composing ? activeZField ?? undefined : undefined}
+              showZField={composing && zEditing}
+              standingOrbits={composing ? standingOrbits : undefined}
               ghostPaths={ghostPaths}
               animation={animation}
               onAnimationDone={onAnimationDone}
@@ -487,6 +485,7 @@ export default function App() {
                 preview={activePreview}
                 onRecommend={recommend}
                 onOpenCodex={() => setCodexOpen(true)}
+                onZEditing={setZEditing}
               />
               <div className="action-row">
                 <button className="btn primary fire-all" onClick={fireAll}>

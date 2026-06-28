@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import type { Ally, Attribute, CarveBurst, Disc, Enemy, Obstacle, Vec2, ZPoint } from '../game/types'
+import type { Ally, CarveBurst, Disc, Enemy, Obstacle, Vec2, ZPoint } from '../game/types'
 import { FIELD } from '../data/constants'
 import type { Viewport } from '../game/coords'
 import {
@@ -12,10 +12,13 @@ import {
   drawCarveBurst,
   drawClashSpark,
   drawOrbitDissipation,
+  drawBulletDissipation,
+  drawConcealVeil,
   strokeZPath,
   powerSizeFrac,
   type SceneParams,
 } from '../render/draw'
+import { ringAverageAttr } from '../game/orbit'
 import { COLORS } from '../render/theme'
 
 /** リング点の z（属性）から色を選ぶ。 */
@@ -53,6 +56,8 @@ export interface AnimBullet {
   carves: CarveBurst[]
   /** 命中して対象を反応させる情報（#20。外れ/暴発は null） */
   impact: AnimImpact | null
+  /** 速度0で霧散したか（#38：終端で小さくなって散る演出。命中/暴発時は出さない） */
+  vanished?: boolean
 }
 
 /** 削る瞬間のパーティクルが残る弧長の窓（この距離だけ弾が進む間 破片が舞う） */
@@ -90,8 +95,14 @@ const DISSIPATE_MS = 520
 export interface ResolveAnimation {
   bullets: AnimBullet[]
   orbits: AnimOrbit[]
-  /** 弾・結界の衝突点（#20：パリィ/迎撃の火花） */
-  clashes?: Vec2[]
+  /** 弾・結界の衝突点と威力（#20/#38：パリィ/迎撃の火花。power で大きさが変わる） */
+  clashes?: { pos: Vec2; power: number }[]
+}
+
+/** 持続中の周回結界（#39：作成フェーズでも常時表示し、闇は内側を暗くぼかす）。 */
+export interface StandingOrbit {
+  ring: ZPoint[]
+  speed: number
 }
 
 interface Props {
@@ -101,9 +112,12 @@ interface Props {
   activeAllyId?: string | null
   playerPaths?: (ZPoint[] | null)[]
   ghostPaths?: Vec2[][]
-  landings?: ({ pos: Vec2; attr: Attribute } | null)[]
-  /** 前ターンの魔法軌跡（#11） */
-  pastTrails?: ZPoint[][]
+  /** 編集中の z 場（#37）。showZField の間だけ薄い場として表示する */
+  zField?: (x: number, y: number) => number
+  /** z 場をいじっている間だけ true（#37） */
+  showZField?: boolean
+  /** 持続中の周回結界（#39）。作成フェーズで常時描画＋闇は視認性低下の幕をかける */
+  standingOrbits?: StandingOrbit[]
   animation?: ResolveAnimation | null
   onAnimationDone?: () => void
 }
@@ -149,6 +163,27 @@ function posAtTime(
   }
 }
 
+/** 持続中の周回（#39）：薄いリング＋ゆっくり周回する粒で常時表示する。 */
+function drawStandingOrbit(ctx: CanvasRenderingContext2D, o: StandingOrbit, trailPhase: number): void {
+  const ring = o.ring
+  const len = ring.length
+  if (len < 2) return
+  ctx.save()
+  ctx.globalAlpha = 0.26
+  strokeZPath(ctx, ring, VP)
+  ctx.restore()
+  const N = 16
+  for (let n = 0; n < N; n++) {
+    const frac = (n / N + trailPhase * 0.03) % 1
+    let idx = Math.floor(frac * (len - 1))
+    if (!Number.isFinite(idx)) idx = 0
+    idx = Math.max(0, Math.min(len - 1, idx))
+    const pt = ring[idx]
+    if (!pt) continue
+    drawParticle(ctx, pt.pos, zColor(pt.z), VP, trailPhase * 2 + n, powerSizeFrac(o.speed, pt.z))
+  }
+}
+
 export default function BattleCanvas(props: Props) {
   const ref = useRef<HTMLCanvasElement>(null)
   const doneRef = useRef(props.onAnimationDone)
@@ -162,8 +197,8 @@ export default function BattleCanvas(props: Props) {
     activeAllyId: props.activeAllyId,
     playerPaths: props.playerPaths,
     ghostPaths: props.ghostPaths,
-    landings: props.landings,
-    pastTrails: props.pastTrails,
+    zField: props.zField,
+    showZField: props.showZField,
   }
 
   useEffect(() => {
@@ -173,15 +208,22 @@ export default function BattleCanvas(props: Props) {
     if (!ctx) return
 
     if (!props.animation) {
-      // 作成フェーズ：前ターンの軌跡があれば波＋粒を揺らし続ける（#11）。無ければ1回だけ描画。
-      if (!props.pastTrails || props.pastTrails.length === 0) {
-        drawScene(ctx, staticParams)
+      // 作成フェーズ：持続周回があれば粒を回し続ける（#39）。無ければ1回だけ描画（z場プレビュー含む・#37）。
+      const standing = props.standingOrbits ?? []
+      const drawComposeFrame = (trailPhase: number) => {
+        drawScene(ctx, { ...staticParams, trailPhase })
+        for (const o of standing) drawStandingOrbit(ctx, o, trailPhase)
+        // 闇の周回は内側を暗くぼかす（プレイヤー視点の視認性低下・#39）
+        for (const o of standing) if (ringAverageAttr(o.ring) === 'dark') drawConcealVeil(ctx, o.ring, VP)
+      }
+      if (standing.length === 0) {
+        drawComposeFrame(0)
         return
       }
       let raf = 0
       const start = performance.now()
       const loop = (now: number) => {
-        drawScene(ctx, { ...staticParams, trailPhase: (now - start) * 0.004 })
+        drawComposeFrame((now - start) * 0.004)
         raf = requestAnimationFrame(loop)
       }
       raf = requestAnimationFrame(loop)
@@ -202,9 +244,11 @@ export default function BattleCanvas(props: Props) {
       anim.bullets.some((b) => b.impact) || anim.orbits.some((o) => o.hitEnemyIds.length > 0)
     const hasClash = !!anim.clashes && anim.clashes.length > 0
     const hasBrokenOrbit = anim.orbits.some((o) => o.broken)
+    // 発射魔法の霧散（速度0・命中も暴発もしていない弾）にも余韻を確保する（#38）
+    const hasVanish = anim.bullets.some((b) => b.vanished && !b.impact && !b.misfirePos)
     const tailMs = hasMisfire
       ? MISFIRE_TAIL_MS
-      : hasBrokenOrbit
+      : hasBrokenOrbit || hasVanish
         ? Math.max(IMPACT_TAIL_MS, DISSIPATE_MS + 150)
         : hasImpact || hasClash
           ? IMPACT_TAIL_MS
@@ -284,10 +328,15 @@ export default function BattleCanvas(props: Props) {
         ...staticParams,
         obstacles,
         playerPaths: undefined,
-        landings: undefined,
+        showZField: false,
         flash,
         shakePhase: elapsed * 0.05,
       })
+
+      // 闇の周回は内側を暗くぼかす（#39：プレイヤー視点の視認性低下）。霧散した周回は幕を外す
+      for (const o of anim.orbits) {
+        if (!o.broken && ringAverageAttr(o.ring) === 'dark') drawConcealVeil(ctx, o.ring, VP)
+      }
 
       // 軌道型リング：ゆっくり周回（#24）。壁/魔法に負けた周回は接触の瞬間から霧散（#34）
       for (let oi = 0; oi < anim.orbits.length; oi++) {
@@ -369,13 +418,23 @@ export default function BattleCanvas(props: Props) {
         // 暴発：弾が終端へ到達してから余韻いっぱいまで爆発を進める（実時間ベース）
         const arrivalMs = maxTotal > 0 ? (tl.total / maxTotal) * flightMs : 0
         const exploding = b.misfirePos && elapsed >= arrivalMs
-        if (!exploding) {
+        // 霧散：命中も暴発もしていない弾が終端（速度0）に達したら、小さくなって散る（#38）
+        const vanishing = b.vanished && !b.impact && !b.misfirePos && elapsed >= arrivalMs
+        if (!exploding && !vanishing) {
           // 飛んだぶんの軌跡を逆位相の波＋揺れる粒で描く（発射アニメ中も表示・#11）
           const traveled: ZPoint[] = b.samples
             .slice(0, idx + 1)
             .map((s) => ({ pos: s.pos, z: s.z }))
           drawWaveTrail(ctx, traveled, VP, trailPhase, 0.95)
           drawBullet(ctx, pos, z, VP, phase, b.samples[idx]?.speed ?? 0)
+        }
+        if (vanishing) {
+          const last = b.samples[b.samples.length - 1]
+          const traveled: ZPoint[] = b.samples.map((s) => ({ pos: s.pos, z: s.z }))
+          drawWaveTrail(ctx, traveled, VP, trailPhase, 0.6)
+          const dp = Math.min(0.999, (elapsed - arrivalMs) / DISSIPATE_MS)
+          const sizeFrac = Math.max(0.35, powerSizeFrac(0, last?.z ?? 0) || Math.min(1, Math.abs(last?.z ?? 0) / FIELD.sMax))
+          drawBulletDissipation(ctx, last?.pos ?? pos, last?.z ?? 0, dp, VP, sizeFrac)
         }
         if (b.misfirePos && exploding) {
           const mp = Math.min(1, (elapsed - arrivalMs) / Math.max(1, realMs - arrivalMs))
@@ -393,9 +452,11 @@ export default function BattleCanvas(props: Props) {
         }
       })
 
-      // パリィ／結界の衝突火花（#20）：弾がその交差点へ到達した瞬間に弾ける（位置・時刻を弾に合わせる）
+      // パリィ／結界の衝突火花（#20/#38）：弾がその交差点へ到達した瞬間に青い火花が弾ける。
+      // 大きさは威力（パリィは2魔法の威力合計）に依存する。
       if (anim.clashes && anim.clashes.length > 0) {
-        anim.clashes.forEach((pos, ci) => {
+        anim.clashes.forEach((clash, ci) => {
+          const pos = clash.pos
           if (clashStartByIdx[ci] === undefined) {
             for (const st of states) {
               if (st && Math.hypot(st.pos.x - pos.x, st.pos.y - pos.y) <= CLASH_DIST) {
@@ -407,7 +468,8 @@ export default function BattleCanvas(props: Props) {
           const start0 = clashStartByIdx[ci]
           if (start0 === undefined) return
           const cp = (elapsed - start0) / CLASH_MS
-          if (cp >= 0 && cp < 1) drawClashSpark(ctx, pos, cp, VP)
+          const sizeFrac = Math.min(1, clash.power / (FIELD.sMax * FIELD.maxFlightSpeed))
+          if (cp >= 0 && cp < 1) drawClashSpark(ctx, pos, cp, VP, sizeFrac)
         })
       }
 
@@ -430,8 +492,9 @@ export default function BattleCanvas(props: Props) {
     props.activeAllyId,
     props.playerPaths,
     props.ghostPaths,
-    props.landings,
-    props.pastTrails,
+    props.zField,
+    props.showZField,
+    props.standingOrbits,
   ])
 
   return <canvas ref={ref} width={INTERNAL} height={INTERNAL} aria-label="バトルフィールド" />

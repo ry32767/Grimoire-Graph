@@ -1,7 +1,7 @@
 // Web Audio で合成する効果音＋簡易BGM（#10）。依存なし・完全ローカル・音源ファイル不要。
 // AudioContext はユーザー操作（ボタン）で resume する。SSR/テスト環境では何もしない。
 
-export type SfxKind = 'fire' | 'select' | 'hit' | 'enemyHit' | 'orbit' | 'misfire' | 'clear' | 'gameover'
+export type SfxKind = 'fire' | 'select' | 'hit' | 'enemyHit' | 'orbit' | 'misfire' | 'clear' | 'gameover' | 'clash'
 
 let ctx: AudioContext | null = null
 let master: GainNode | null = null
@@ -107,6 +107,11 @@ export function playSfx(kind: SfxKind): void {
       break
     case 'orbit':
       tone(440, t, 0.34, 'sine', 0.13, 700)
+      break
+    case 'clash':
+      // パリィ／結界の相殺「バチッ！」：短いノイズ破裂＋高い火花（#38）
+      noise(t, 0.06, 0.2)
+      tone(1800, t, 0.05, 'square', 0.13, 480)
       break
     case 'misfire':
       noise(t, 0.32, 0.22)

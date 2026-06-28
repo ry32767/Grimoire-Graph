@@ -18,6 +18,8 @@ interface Props {
   preview: Preview
   onRecommend: () => void
   onOpenCodex: () => void
+  /** z 場の編集中フラグを通知（#37：いじっている間だけ場をプレビュー表示する） */
+  onZEditing?: (editing: boolean) => void
 }
 
 const attrLabel = (a: string) => (a === 'light' ? '光' : a === 'dark' ? '闇' : '中立')
@@ -186,8 +188,14 @@ export default function FunctionPanel(props: Props) {
         </div>
       )}
 
-      {/* 属性の z 場 z=f(x,y)（軌道と別入力・#30/#21） */}
-      <div className="zfield-section">
+      {/* 属性の z 場 z=f(x,y)（軌道と別入力・#30/#21）。いじっている間だけ場をプレビュー（#37） */}
+      <div
+        className="zfield-section"
+        onMouseEnter={() => props.onZEditing?.(true)}
+        onMouseLeave={() => props.onZEditing?.(false)}
+        onFocusCapture={() => props.onZEditing?.(true)}
+        onBlurCapture={() => props.onZEditing?.(false)}
+      >
         <div className="section-title">属性の高さ z = f(x,y)（光⇔闇）</div>
         <div className="preset-grid">
           {ZFIELD_PRESETS.map((p) => (

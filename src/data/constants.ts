@@ -78,8 +78,10 @@ export const COMBAT = {
    * 「少しだけ削るが、ほとんど削れず散って消える」＝発射型の carve よりずっと小さい。
    */
   orbitWallCarveRadius: 0.5,
-  /** 光の周回で囲んだ味方を回復する量 = リング強度 × この係数（#35） */
+  /** 光の周回で囲んだ味方を回復する量 = リング強度 × この係数（#35・旧モデル。#39 で固定量へ） */
   orbitHealScale: 5,
+  /** 光の周回1重が囲んだ味方を毎ターン回復する固定量（#39：強度に依らず一定・重複可）。 */
+  orbitHealAmount: 30,
   /** 闇の周回1重で味方を隠す（敵の狙いがずれる）。この数だけ重ねると完全に視認不可（#35） */
   orbitConcealFull: 2,
   /** ひるみ（光）の基本ターン数。|z| でスケール */
@@ -88,6 +90,19 @@ export const COMBAT = {
   burnTurns: 3,
   /** 継続ダメージ総量 = |z| × burnScale を burnTurns に分割 */
   burnScale: 2,
+} as const
+
+/**
+ * 壁の耐久種別ごとの削り係数（#40）。carveScale はえぐり半径、lossScale は1回の速度損を倍率で調整。
+ * - fragile：半径を大きく・損を小さく＝一撃で大きく崩れる。
+ * - tough：半径をごく小さく・損を大きく＝最大火力でも一撃では抜けず、何発もかかる目安。
+ * - unbreakable：carveScale=0（素材は削れない）。当たった魔法は止まる（turn 側で全速度を失わせる）。
+ */
+export const OBSTACLE_KIND = {
+  normal: { carveScale: 1, lossScale: 1 },
+  fragile: { carveScale: 1.7, lossScale: 0.55 },
+  tough: { carveScale: 0.32, lossScale: 1.7 },
+  unbreakable: { carveScale: 0, lossScale: 1 },
 } as const
 
 /** ゲーム進行の基礎値 */
