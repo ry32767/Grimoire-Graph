@@ -133,6 +133,10 @@ export function simulateProfile(profile: SpeedProfile, losses: LossEvent[]): Fli
     }
     const v = speedFromEnergy(vBaseSq, accel[i] - aBase)
     samples.push({ pos: poly[i].pos, speed: v, arcLen: s, param: poly[i].param })
+    // 減衰イベントだけでなく、|z|>zRef の強属性で減速し自然に速度0へ達した点でも霧散する（#31）。
+    if (v <= 0 && i > 0) {
+      return { samples, end: 'vanished', endPos: poly[i].pos, endSpeed: 0 }
+    }
   }
   return { samples, end, endPos, endSpeed: samples[samples.length - 1].speed }
 }

@@ -1,5 +1,5 @@
 // 関数パネルの状態 → 軌道・プレビューへの橋渡し（純粋ヘルパー、React 非依存）。
-import type { Attribute, Trajectory, Vec2, ZField } from '../game/types'
+import type { Attribute, Obstacle, Trajectory, Vec2, ZField } from '../game/types'
 import {
   ALL_PRESETS,
   ROTATE_PRESETS,
@@ -15,6 +15,7 @@ import { detectMisfire } from '../game/misfire'
 import { zfieldAt, attributeOf, strengthOf } from '../game/attribute'
 import { classifyTrajectory, type MagicKind } from '../game/loop'
 import { buildRing } from '../game/orbit'
+import { traverseObstacles } from '../game/turn'
 import { dist } from '../game/coords'
 import { FIELD } from '../data/constants'
 
@@ -108,11 +109,23 @@ const EMPTY_PREVIEW: Preview = {
   selfMisfireWarning: false,
 }
 
-/** 軌道からプレビュー（種別・予測軌道・着弾点・属性・威力目安・暴発警告）を計算する。 */
-export function computePreview(traj: Trajectory | null, speed: number): Preview {
+/**
+ * 軌道からプレビュー（種別・予測軌道・着弾点・属性・威力目安・暴発警告）を計算する。
+ * obstacles を渡すと、発射型は障害物で削れて止まる経路を反映する（予測線が壁を素通りしない）。
+ */
+export function computePreview(
+  traj: Trajectory | null,
+  speed: number,
+  obstacles: Obstacle[] = [],
+): Preview {
   if (!traj) return EMPTY_PREVIEW
   const kind = classifyTrajectory(traj)
-  const flight = simulateFlight(traj, speed)
+  let flight = simulateFlight(traj, speed)
+  // 発射型は障害物の削り・停止を予測に反映（壁すり抜け表示を防ぐ）。obstacles は複製して非破壊
+  if (kind === 'projectile' && obstacles.length > 0) {
+    const cloned = obstacles.map((o) => ({ ...o, carves: [...o.carves] }))
+    flight = traverseObstacles(traj, speed, flight, cloned).flight
+  }
   // 軌道型は結界リング（場外でも一周する全周）をプレビューに使う（#22）。発射型は飛行軌道。
   const geomPts: Vec2[] =
     kind === 'orbit' ? buildRing(traj).map((r) => r.pos) : flight.samples.map((s) => s.pos)

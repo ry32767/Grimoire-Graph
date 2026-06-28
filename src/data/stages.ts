@@ -1,8 +1,18 @@
 // ステージ定義（機能14・#6・#15）。スケール1.5倍（場 r=30）。敵は上方、味方は下方。
 // 障害物は solids（重なった円の和＝連続したブロブ）で、ステージのテーマに合わせて配置（列柱・
 // 祭壇・螺旋・鏡・封印壁・巨壁）。当たった点を円でえぐり取り滑らかな穴が開く（Graph War 風）。
-import type { Disc, Enemy, EnemyFamily, Obstacle, Stage } from '../game/types'
+import type { Disc, Enemy, EnemyFamily, EnemyRole, Obstacle, Stage } from '../game/types'
 import { GAME } from './constants'
+
+/** 敵の追加設定（#28：複数得意関数・戦い方ロール） */
+interface EnemyOpts {
+  /** 得意関数を複数持つ（family と合わせて1～2個・中盤以降） */
+  families?: EnemyFamily[]
+  /** 戦い方（attacker/breaker/guardian）。未指定は attacker */
+  role?: EnemyRole
+  castMag?: number
+  hitboxRadius?: number
+}
 
 let seq = 0
 function enemy(
@@ -12,9 +22,9 @@ function enemy(
   hp: number,
   castInitialSpeed: number,
   family: EnemyFamily = 'line',
-  castMag = 3,
-  hitboxRadius: number = GAME.enemyHitbox,
+  opts: EnemyOpts = {},
 ): Enemy {
+  const castMag = opts.castMag ?? 3
   const castZ = element === 'light' ? castMag : element === 'dark' ? -castMag : 0
   return {
     id: `e${seq++}`,
@@ -23,9 +33,11 @@ function enemy(
     hp,
     maxHp: hp,
     element,
-    hitboxRadius,
+    hitboxRadius: opts.hitboxRadius ?? GAME.enemyHitbox,
     statuses: [],
     family,
+    families: opts.families,
+    role: opts.role,
     castTrajectory: { mode: 'rotate', g: () => 0, angle: 0 },
     castInitialSpeed,
     castZ,
@@ -150,9 +162,9 @@ const stage3: Stage = {
   id: 'stage-3',
   name: '第三の間 ― 双子の祭壇',
   enemies: [
-    enemy('白の祭司', { x: -13, y: 19 }, 'light', 130, 8, 'arc'),
-    enemy('黒の祭司', { x: 13, y: 19 }, 'dark', 130, 8, 'arc'),
-    enemy('祭壇の影', { x: 0, y: 23 }, 'dark', 110, 8, 'wave'),
+    enemy('白の祭司', { x: -13, y: 19 }, 'light', 130, 8, 'arc', { families: ['wave'] }),
+    enemy('黒の祭司', { x: 13, y: 19 }, 'dark', 130, 8, 'arc', { families: ['wave'] }),
+    enemy('祭壇の影', { x: 0, y: 23 }, 'dark', 110, 8, 'wave', { role: 'guardian' }),
   ],
   // 双子の祭壇：左右対称の祭壇の間。光の仕切り壁が全幅を塞ぎ、双子の塔と中央祭壇が立つ。
   obstacles: [
@@ -175,9 +187,9 @@ const stage4: Stage = {
   id: 'stage-4',
   name: '第四の間 ― 螺旋の坑道',
   enemies: [
-    enemy('渦の番兵', { x: -14, y: 18 }, 'dark', 140, 8, 'spiral'),
-    enemy('渦の番兵', { x: 14, y: 18 }, 'dark', 140, 8, 'spiral'),
-    enemy('坑道の弓手', { x: 0, y: 23 }, 'light', 125, 9, 'wave'),
+    enemy('渦の番兵', { x: -14, y: 18 }, 'dark', 140, 8, 'spiral', { role: 'guardian' }),
+    enemy('渦の番兵', { x: 14, y: 18 }, 'dark', 140, 8, 'spiral', { families: ['wave'] }),
+    enemy('坑道の弓手', { x: 0, y: 23 }, 'light', 125, 9, 'wave', { families: ['arc'] }),
   ],
   // 螺旋の坑道：崩れた坑道。瓦礫の壁が全幅を塞ぎ、その上に光と闇の渦が巻く。
   obstacles: [
@@ -199,10 +211,10 @@ const stage5: Stage = {
   id: 'stage-5',
   name: '第五の間 ― 鏡の広間',
   enemies: [
-    enemy('鏡像の衛士', { x: -15, y: 18 }, 'light', 125, 8, 'line'),
-    enemy('鏡像の衛士', { x: 15, y: 18 }, 'dark', 125, 8, 'line'),
-    enemy('鏡像の射手', { x: -7, y: 23 }, 'dark', 120, 9, 'wave'),
-    enemy('鏡像の射手', { x: 7, y: 23 }, 'light', 120, 9, 'wave'),
+    enemy('鏡像の衛士', { x: -15, y: 18 }, 'light', 125, 8, 'line', { role: 'breaker' }),
+    enemy('鏡像の衛士', { x: 15, y: 18 }, 'dark', 125, 8, 'line', { role: 'breaker' }),
+    enemy('鏡像の射手', { x: -7, y: 23 }, 'dark', 120, 9, 'wave', { families: ['arc'] }),
+    enemy('鏡像の射手', { x: 7, y: 23 }, 'light', 120, 9, 'wave', { families: ['arc'] }),
   ],
   // 鏡の広間：左右対称の列柱。左が光・右が闇の鏡像の柱が広間いっぱいに並ぶ。
   obstacles: [
@@ -223,9 +235,9 @@ const stage6: Stage = {
   id: 'stage-6',
   name: '第六の間 ― 封印の回廊',
   enemies: [
-    enemy('封印の番人', { x: 0, y: 23 }, 'light', 180, 9, 'wave', 4),
-    enemy('回廊の番兵', { x: -14, y: 18 }, 'dark', 140, 8, 'spiral'),
-    enemy('回廊の番兵', { x: 14, y: 18 }, 'dark', 140, 8, 'arc'),
+    enemy('封印の番人', { x: 0, y: 23 }, 'light', 180, 9, 'wave', { castMag: 4, families: ['spiral'] }),
+    enemy('回廊の番兵', { x: -14, y: 18 }, 'dark', 140, 8, 'spiral', { role: 'guardian' }),
+    enemy('回廊の番兵', { x: 14, y: 18 }, 'dark', 140, 8, 'arc', { role: 'breaker' }),
   ],
   // 封印の回廊：回廊を完全に塞ぐ分厚い闇の封印壁（3段重ね・全幅）。光なら安く削り抜ける。
   obstacles: [
@@ -248,9 +260,13 @@ const stage7: Stage = {
   name: '第七の間 ― 守護者ボス戦',
   boss: true,
   enemies: [
-    enemy('魔導書の守護者', { x: 0, y: 23 }, 'light', 380, 9, 'wave', 5, 3.6),
-    enemy('守護者の眷属', { x: -15, y: 17 }, 'dark', 130, 8, 'spiral'),
-    enemy('守護者の眷属', { x: 15, y: 17 }, 'dark', 130, 8, 'arc'),
+    enemy('魔導書の守護者', { x: 0, y: 23 }, 'light', 380, 9, 'wave', {
+      castMag: 5,
+      hitboxRadius: 3.6,
+      families: ['spiral'],
+    }),
+    enemy('守護者の眷属', { x: -15, y: 17 }, 'dark', 130, 8, 'spiral', { role: 'guardian' }),
+    enemy('守護者の眷属', { x: 15, y: 17 }, 'dark', 130, 8, 'arc', { role: 'breaker' }),
   ],
   // 守護者の間：荘厳な大広間。列柱が全幅に並び、中央に守護者の巨大な盾（祭壇）がそびえる。
   obstacles: [

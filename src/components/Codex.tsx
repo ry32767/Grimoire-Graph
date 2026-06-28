@@ -19,6 +19,7 @@ interface EnemyEntry {
   element: Enemy['element']
   family: Enemy['family']
   maxHp: number
+  role?: Enemy['role']
 }
 const ENEMY_CATALOG: EnemyEntry[] = (() => {
   const seen = new Set<string>()
@@ -27,7 +28,7 @@ const ENEMY_CATALOG: EnemyEntry[] = (() => {
     for (const e of s.enemies) {
       if (seen.has(e.name)) continue
       seen.add(e.name)
-      out.push({ name: e.name, element: e.element, family: e.family, maxHp: e.maxHp })
+      out.push({ name: e.name, element: e.element, family: e.family, maxHp: e.maxHp, role: e.role })
     }
   }
   return out
@@ -35,6 +36,11 @@ const ENEMY_CATALOG: EnemyEntry[] = (() => {
 
 function elementLabel(el: Enemy['element']): string {
   return el === 'light' ? '光' : el === 'dark' ? '闇' : '無'
+}
+
+/** 戦い方ロールのラベル（#28） */
+function roleLabel(role: Enemy['role']): string {
+  return role === 'guardian' ? '守護' : role === 'breaker' ? '破壊' : '攻撃'
 }
 
 /** 敵カード：遭遇済みは詳細、未遭遇は「？」で伏せる（#23）。 */
@@ -53,7 +59,8 @@ function EnemyCard({ entry, seen }: { entry: EnemyEntry; seen: boolean }) {
         <strong>{entry.name}</strong>
       </div>
       <div className="desc">
-        属性：{elementLabel(entry.element)}／得意：{FAMILY_LABEL[entry.family]}／HP {entry.maxHp}
+        属性：{elementLabel(entry.element)}／得意：{FAMILY_LABEL[entry.family]}／戦：
+        {roleLabel(entry.role)}／HP {entry.maxHp}
       </div>
     </div>
   )

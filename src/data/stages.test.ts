@@ -72,8 +72,8 @@ describe('エンジンとの結線（スモーク）', () => {
     const a = target.element === 'light' ? -1 : 1
     const line = ROTATE_PRESETS[0]
     const angle = Math.atan2(target.pos.y - caster.pos.y, target.pos.x - caster.pos.x) - Math.atan(a)
-    // 属性は z 場で別指定（#30）：敵の反対極を最強で当てる
-    const zConst = target.element === 'light' ? -FIELD.zPeak : FIELD.zPeak
+    // 属性は z 場で別指定（#30）：敵の反対極を、減速しない zRef で当てる（#31：zPeak は失速して届かない）
+    const zConst = target.element === 'light' ? -FIELD.zRef : FIELD.zRef
     const trajectory: Trajectory = { ...buildTrajectory(line, { a, b: 0 }, angle, caster.pos), z: () => zConst }
 
     let s = createBattleState(stage, 0, party)
