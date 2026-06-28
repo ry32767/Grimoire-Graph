@@ -6,6 +6,7 @@ import {
   defaultCoeffs,
   buildTrajectory,
   parseExpression,
+  parseZExpression,
   sampleOutputs,
 } from './functions'
 
@@ -114,6 +115,46 @@ describe('自由入力式（mathjs）', () => {
     expect(g!(4)).toBeCloseTo(2, 6)
     expect(Number.isNaN(g!(-4))).toBe(true) // 複素数 → NaN
   })
+
+  it('非有限（Infinity）も NaN に正規化する（#3）', () => {
+    const g = parseExpression('log(x)')
+    expect(g).not.toBeNull()
+    expect(Number.isNaN(g!(0))).toBe(true) // log(0) = -Infinity → NaN
+  })
+
+  it('未知変数は入力値に関わらず null（暴発と区別・#4）', () => {
+    // 旧実装は x=1,2 の評価結果が NaN かで判定していた。静的検査なので確実に弾く。
+    expect(parseExpression('a*x + b')).toBeNull()
+  })
+
+  it('代入・複文は拒否する（#4 安全性）', () => {
+    expect(parseExpression('x = 5')).toBeNull()
+    expect(parseExpression('x; 5')).toBeNull()
+  })
+
+  it('定数 pi / e は許可する', () => {
+    const g = parseExpression('pi + x')
+    expect(g).not.toBeNull()
+    expect(g!(0)).toBeCloseTo(Math.PI, 6)
+  })
+})
+
+describe('z 場の自由入力（f(x,y)・#30）', () => {
+  it('x,y 二変数の式を評価できる', () => {
+    const f = parseZExpression('0.3*y + 2')
+    expect(f).not.toBeNull()
+    expect(f!(0, 10)).toBeCloseTo(5, 6)
+  })
+
+  it('x,y 以外の変数は null', () => {
+    expect(parseZExpression('a + x')).toBeNull()
+  })
+
+  it('非有限/非実数は 0（中立）に正規化する', () => {
+    const f = parseZExpression('log(x)')
+    expect(f).not.toBeNull()
+    expect(f!(0, 0)).toBe(0) // log(0) = -Infinity → 0
+  })
 })
 
 describe('極座標の自由入力（θ は t・#19）', () => {
@@ -132,6 +173,22 @@ describe('極座標の自由入力（θ は t・#19）', () => {
 
   it('x のパーサに t の式を渡すと未知変数で null', () => {
     expect(parseExpression('cos(t)', 'x')).toBeNull()
+  })
+
+  it('各回転プリセットの toExpr が buildG と一致する（係数を式へコピーしても変わらない・#5）', () => {
+    for (const p of ROTATE_PRESETS) {
+      // 既定値から各係数を1ステップずらした、スライダーで到達可能な値で検証
+      const coeffs = defaultCoeffs(p)
+      for (const cf of p.coeffs) coeffs[cf.key] = cf.default + cf.step
+      const fromExpr = parseExpression(p.toExpr(coeffs), 'x')
+      const fromBuild = p.buildG(coeffs)
+      expect(fromExpr).not.toBeNull()
+      for (const x of [0, 1.5, 4]) {
+        const a = fromExpr!(x)
+        const b = fromBuild(x)
+        if (Number.isFinite(b)) expect(a).toBeCloseTo(b, 6)
+      }
+    }
   })
 
   it('各極座標プリセットの toExpr が自身の buildF と一致する', () => {

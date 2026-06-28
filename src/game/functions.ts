@@ -1,5 +1,5 @@
 // 関数カタログ（§3.10 A/B）・自由入力式の安全評価（mathjs）・サンプル出力（機能1・2）。
-import { compile } from 'mathjs'
+import { compileExpr, varsAllowed } from './mathEngine'
 import type { Trajectory, Vec2, ZField } from './types'
 
 /** 係数スライダーの定義 */
@@ -52,8 +52,8 @@ const coeff = (
   def: number,
 ): Coefficient => ({ key, label, min, max, step, default: def })
 
-/** 数値を mathjs 式向けに短く整形（負号もそのまま使える） */
-const num = (v: number): string => Number(v.toFixed(2)).toString()
+/** 数値を mathjs 式向けに短く整形（負号もそのまま使える。係数の刻みを失わない精度） */
+const num = (v: number): string => Number(v.toFixed(4)).toString()
 
 // ===== A. 軌道（直交 y=g(x)・狙う角度θで回転） =====
 
@@ -206,64 +206,47 @@ export function buildTrajectory(
 
 /**
  * 自由入力式をパースして f(v) を返す。変数名は varName（回転=x／極座標=t＝θ・#19）。
- * 不正式なら null（UI は直前の有効関数を維持）。評価が実数でない（複素数など）／例外時は
- * NaN を返す（→ サンプリングで暴発扱い）。
+ * 構文エラー・許可外ノード・未知変数なら null（UI は直前の有効関数を維持）。
+ * 評価が実数でない（複素数など）／非有限／例外時は NaN を返す（→ サンプリングで暴発扱い）。
  */
 export function parseExpression(
   expr: string,
   varName: 'x' | 't' = 'x',
 ): ((v: number) => number) | null {
-  const trimmed = expr.trim()
-  if (trimmed === '') return null
-  let code
-  try {
-    code = compile(trimmed)
-  } catch {
-    return null
-  }
-  const fn = (v: number): number => {
+  const compiled = compileExpr(expr)
+  if (!compiled || !varsAllowed(compiled.vars, [varName])) return null
+  // スコープは使い回す（1サンプルごとのオブジェクト生成を避ける）
+  const scope: Record<string, number> = {}
+  return (v: number): number => {
+    scope[varName] = v
     try {
-      const r: unknown = code.evaluate({ [varName]: v })
-      return typeof r === 'number' ? r : NaN
+      const r = compiled.evalWith(scope)
+      return typeof r === 'number' && Number.isFinite(r) ? r : NaN
     } catch {
       return NaN
     }
   }
-  // 妥当性チェック：未知の記号などはテスト評価で弾く
-  const probe = fn(1)
-  const probe2 = fn(2)
-  if (Number.isNaN(probe) && Number.isNaN(probe2)) return null
-  return fn
 }
 
 /**
  * z 場の自由入力式 f(x,y) をパースして ZField を返す（#30：2変数）。
- * 不正式なら null（UI は直前の有効関数を維持）。非実数/例外時は 0 を返す（中立扱い）。
+ * 構文エラー・許可外ノード・未知変数なら null（UI は直前の有効関数を維持）。
+ * 非実数/非有限/例外時は 0 を返す（中立扱い）。x,y に依存しない定数式も許可する。
  */
 export function parseZExpression(expr: string): ZField | null {
-  const trimmed = expr.trim()
-  if (trimmed === '') return null
-  let code
-  try {
-    code = compile(trimmed)
-  } catch {
-    return null
-  }
-  const fn = (x: number, y: number): number => {
+  const compiled = compileExpr(expr)
+  if (!compiled || !varsAllowed(compiled.vars, ['x', 'y'])) return null
+  const scope: Record<string, number> = {}
+  return (x: number, y: number): number => {
+    scope.x = x
+    scope.y = y
     try {
-      const r: unknown = code.evaluate({ x, y })
+      const r = compiled.evalWith(scope)
       return typeof r === 'number' && Number.isFinite(r) ? r : 0
     } catch {
       return 0
     }
   }
-  // 妥当性チェック：未知の記号などはテスト評価で弾く（x,y に依存しない定数式も許可）
-  try {
-    code.evaluate({ x: 1, y: 1 })
-  } catch {
-    return null
-  }
-  return fn
 }
 
 // ===== サンプル出力（機能2） =====

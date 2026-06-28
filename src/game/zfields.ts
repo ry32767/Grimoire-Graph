@@ -28,7 +28,7 @@ const coeff = (
   def: number,
 ): Coefficient => ({ key, label, min, max, step, default: def })
 
-const num = (v: number): string => Number(v.toFixed(2)).toString()
+const num = (v: number): string => Number(v.toFixed(4)).toString()
 
 // V=zPeak=5 を基準に、最強(±5)へ合わせやすい範囲にする。
 export const ZFIELD_PRESETS: ZPreset[] = [
