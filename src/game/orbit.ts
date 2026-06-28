@@ -1,9 +1,10 @@
 // 軌道型（ループ）魔法：周回リングによる掃射（攻撃）と迎撃（防御・#4）。純粋関数。
 // リングは閉じた点列＋各点の z（属性）。攻撃＝リングに触れた敵へダメージ、防御＝敵弾がリング境界を横切れば迎撃。
-import type { Attribute, Trajectory, Vec2 } from './types'
-import { COMBAT, FIELD } from '../data/constants'
+import type { Attribute, Obstacle, Trajectory, Vec2 } from './types'
+import { COMBAT } from '../data/constants'
 import { sampleTrajectory, validFinitePrefix, dist } from './coords'
 import { zfieldAt, attributeOf, strengthOf, affinityMultiplier } from './attribute'
+import { isSolidAt } from './obstacle'
 import { firstCrossing } from './parry'
 
 /** リング上の1点（位置＋属性 z） */
@@ -20,6 +21,34 @@ export function buildRing(traj: Trajectory): RingPoint[] {
   return validFinitePrefix(sampleTrajectory(traj))
     .filter((s) => s.param <= 2 * Math.PI + 1e-6)
     .map((s) => ({ pos: s.pos, z: zfieldAt(traj, s.pos) }))
+}
+
+/**
+ * 点 p がリング（閉じた点列）の内側にあるか（#35：囲み判定）。
+ * レイキャスティング（右向き半直線との交差数が奇数なら内側）。
+ */
+export function ringEncloses(ring: RingPoint[], p: Vec2): boolean {
+  if (ring.length < 3) return false
+  let inside = false
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const a = ring[i].pos
+    const b = ring[j].pos
+    const intersect =
+      a.y > p.y !== b.y > p.y &&
+      p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x
+    if (intersect) inside = !inside
+  }
+  return inside
+}
+
+/** リングの代表属性と強度（|z| が最大の点で代表する）。回復・ステルスの判定に使う（#35）。 */
+export function ringDominant(ring: RingPoint[]): { attr: Attribute; strength: number } {
+  let best: { attr: Attribute; strength: number } = { attr: 'neutral', strength: 0 }
+  for (const rp of ring) {
+    const s = strengthOf(rp.z)
+    if (s > best.strength) best = { attr: attributeOf(rp.z), strength: s }
+  }
+  return best
 }
 
 /** リング上で対象に最も近い点の index と距離。 */
@@ -88,14 +117,50 @@ export interface RingInterception {
 }
 
 /**
- * リングが敵弾を迎撃（防御・#4）するときに削る速度。
- * 反対極のリングほど強く弾く（×1.5）、同極は吸収弱め（×0.5）。リング強度|z|でもスケール。
+ * リングが敵弾を迎撃（防御・#34）するときに削る速度。
+ * - 同極・中立 → 透過（0）。リングを素通りして継続する。
+ * - 反対極 → 相殺。削る速度 = リング威力(強度×リング速度) × orbitBlockScale。
+ * 発射型（敵弾）が削り切られず残れば、残速度のまま元の軌道で進み続ける（呼び出し側で再計算）。
  */
-export function orbitBlockLoss(ringZ: number, bulletAttr: Attribute): number {
+export function orbitBlockLoss(ringZ: number, bulletAttr: Attribute, ringSpeed: number): number {
   const ringAttr = attributeOf(ringZ)
-  const aff = affinityMultiplier(ringAttr, bulletAttr)
-  const strFrac = Math.min(1, strengthOf(ringZ) / FIELD.sMax)
-  return COMBAT.shieldSpeedLoss * aff * (0.6 + 0.8 * strFrac)
+  const opposite =
+    (ringAttr === 'light' && bulletAttr === 'dark') ||
+    (ringAttr === 'dark' && bulletAttr === 'light')
+  if (!opposite) return 0 // 同属性・中立は透過
+  const ringPower = strengthOf(ringZ) * Math.max(0, ringSpeed)
+  return ringPower * COMBAT.orbitBlockScale
+}
+
+/** 周回軌道が壁（障害物の素材）に触れて削れた1点（#34：少しだけ削って散る）。 */
+export interface OrbitWallHit {
+  /** えぐった点（数学座標） */
+  pos: Vec2
+  /** えぐり半径（発射型よりずっと小さい） */
+  r: number
+  /** リング属性（散る火花の色） */
+  attr: Attribute
+  /** 削られた障害物ID */
+  obstacleId: string
+}
+
+/**
+ * 周回軌道が壁（障害物の素材）に触れるか判定する（#34）。
+ * 触れていれば壁を「少しだけ」削り、散り際の点（OrbitWallHit）を返す。触れていなければ null。
+ * 触れた周回は**丸ごと霧散して消える**（呼び出し側が掃射/防御/オーラを無効化し、霧散演出に切り替える）。
+ * 障害物の carves は in place で更新（呼び出し側が複製済み）。
+ */
+export function orbitWallBreak(ring: RingPoint[], obstacles: Obstacle[]): OrbitWallHit | null {
+  if (ring.length === 0 || obstacles.length === 0) return null
+  for (let i = 0; i < ring.length; i++) {
+    for (const ob of obstacles) {
+      if (!isSolidAt(ob, ring[i].pos)) continue
+      const r = COMBAT.orbitWallCarveRadius
+      ob.carves.push({ x: ring[i].pos.x, y: ring[i].pos.y, r })
+      return { pos: ring[i].pos, r, attr: attributeOf(ring[i].z), obstacleId: ob.id }
+    }
+  }
+  return null
 }
 
 /** 敵弾パスがリング境界を最初に横切る点を返す（横切らなければ crossed=false）。 */

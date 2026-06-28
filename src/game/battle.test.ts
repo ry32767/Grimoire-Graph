@@ -42,8 +42,8 @@ const stage = (enemies: Enemy[]): Stage => ({
 })
 
 const cast = (allyId: string, trajectory: Trajectory, speed = 8): AllyCast => ({ allyId, trajectory, initialSpeed: speed })
-// 原点から +x の光線（経路は g=x、属性は z 場で光・最強）
-const ray = (origin: { x: number; y: number }): Trajectory => ({ mode: 'rotate', g: (x) => x, angle: -Math.PI / 4, origin, z: () => FIELD.zPeak })
+// 原点から +x の光線（経路は g=x、属性は z 場で光）。減速しない zRef で敵まで確実に届く（#31）
+const ray = (origin: { x: number; y: number }): Trajectory => ({ mode: 'rotate', g: (x) => x, angle: -Math.PI / 4, origin, z: () => FIELD.zRef })
 
 describe('戦闘状態の初期化', () => {
   it('味方HP満タン・敵クローン・ターン1で開始', () => {

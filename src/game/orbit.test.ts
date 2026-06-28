@@ -1,7 +1,16 @@
 import { describe, it, expect } from 'vitest'
-import { buildRing, orbitSweep, ringInterception, type OrbitTarget } from './orbit'
+import {
+  buildRing,
+  orbitSweep,
+  ringInterception,
+  orbitBlockLoss,
+  orbitWallBreak,
+  ringEncloses,
+  ringDominant,
+  type OrbitTarget,
+} from './orbit'
 import { dist } from './coords'
-import type { Trajectory } from './types'
+import type { Obstacle, Trajectory } from './types'
 import { FIELD } from '../data/constants'
 
 // 半径6の円・z 場は一定 zPeak(=5・光・最強)。経路と属性は別物（#30）。
@@ -50,5 +59,54 @@ describe('迎撃（防御・#4）', () => {
       { x: 0, y: 0 },
     ]
     expect(ringInterception(buildRing(circle), inside).crossed).toBe(false)
+  })
+})
+
+describe('相殺の透過/削り（#34）', () => {
+  it('同極リングは敵弾を透過する（削り 0）', () => {
+    // 光リング(z=+zPeak) × 光弾 → 同極 → 透過
+    expect(orbitBlockLoss(FIELD.zPeak, 'light', 8)).toBe(0)
+    // 中立弾も透過
+    expect(orbitBlockLoss(FIELD.zPeak, 'neutral', 8)).toBe(0)
+  })
+  it('反対極リングは威力(強度×速度)に応じて削る', () => {
+    // 光リング × 闇弾 → 相殺。速度が速いほど大きく削る
+    const slow = orbitBlockLoss(FIELD.zPeak, 'dark', 4)
+    const fast = orbitBlockLoss(FIELD.zPeak, 'dark', 10)
+    expect(slow).toBeGreaterThan(0)
+    expect(fast).toBeGreaterThan(slow)
+  })
+})
+
+describe('壁に当たって霧散する（#34）', () => {
+  it('リングが壁に当たると壁を少しだけ削り、霧散点を返す', () => {
+    const ob: Obstacle = { id: 'w0', element: 'dark', solids: [{ x: 0, y: 6, r: 1.5 }], carves: [] }
+    const hit = orbitWallBreak(buildRing(circle), [ob])
+    expect(hit).not.toBeNull()
+    expect(hit!.obstacleId).toBe('w0')
+    // 壁は少しだけ削れる（小半径）
+    expect(ob.carves.length).toBe(1)
+    expect(ob.carves[0].r).toBeLessThan(1)
+  })
+  it('壁に当たらないリングは null（霧散しない）', () => {
+    const far: Obstacle = { id: 'w1', element: 'dark', solids: [{ x: 20, y: 0, r: 1.5 }], carves: [] }
+    expect(orbitWallBreak(buildRing(circle), [far])).toBeNull()
+  })
+})
+
+describe('属性オーラの囲み判定（#35）', () => {
+  const ring = buildRing(circle) // 半径6・光
+  it('リングの内側の点は囲まれている（中心・近傍）', () => {
+    expect(ringEncloses(ring, { x: 0, y: 0 })).toBe(true)
+    expect(ringEncloses(ring, { x: 3, y: 2 })).toBe(true)
+  })
+  it('リングの外側の点は囲まれていない', () => {
+    expect(ringEncloses(ring, { x: 10, y: 0 })).toBe(false)
+    expect(ringEncloses(ring, { x: 0, y: 9 })).toBe(false)
+  })
+  it('光リングの代表属性は light・強度は最大', () => {
+    const dom = ringDominant(ring)
+    expect(dom.attr).toBe('light')
+    expect(dom.strength).toBeCloseTo(FIELD.sMax, 4)
   })
 })

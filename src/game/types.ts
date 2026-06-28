@@ -28,6 +28,14 @@ export type ZField = (x: number, y: number) => number
 /** 敵の得意関数の系統（#17：見た目で判別）。直線/弧/波/渦。 */
 export type EnemyFamily = 'line' | 'arc' | 'wave' | 'spiral'
 
+/**
+ * 敵の戦い方（#28）。
+ * - attacker：味方へ最大ダメージを狙う（既定）。
+ * - breaker：壁を貫いてでも味方へ届かせる（障害物ペナルティを受けない）。
+ * - guardian：自陣を守る防御用の周回結界を張り、味方弾を迎撃する。
+ */
+export type EnemyRole = 'attacker' | 'breaker' | 'guardian'
+
 /** 撃ち主 */
 export type Owner = 'player' | 'enemy'
 
@@ -113,6 +121,13 @@ export interface Enemy {
   statuses: StatusEffect[]
   /** 得意関数の系統（#17：見た目で判別・AIが最適化する関数族） */
   family: EnemyFamily
+  /**
+   * 得意関数を複数持つ場合の追加系統（#28：1～2個）。AI は family＋これらを全部試して最良を選ぶ。
+   * 中盤以降の敵は複数を組み合わせて戦う。未指定なら family の1つだけ。
+   */
+  families?: EnemyFamily[]
+  /** 戦い方（#28）。未指定は attacker。 */
+  role?: EnemyRole
   /** このターン敵が先出しする術式（軌道・初速）。AI が決める（互換のため保持） */
   castTrajectory: Trajectory
   castInitialSpeed: number
@@ -168,6 +183,11 @@ export interface Ally {
   /** 被ダメージ相性に使う防御属性 */
   element: Attribute
   statuses: StatusEffect[]
+  /**
+   * 闇の周回で囲まれている重数（#35）。1 で敵の狙いがずれ、orbitConcealFull で視認不可。
+   * 各ターンの周回で再計算される（持続は1ターン）。未指定は 0。
+   */
+  concealed?: number
 }
 
 /** どのメカニクスを解禁しているか（段階的導入・機能17）。防御/パリィは軌道型に統合され常時 */

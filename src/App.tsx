@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Ally, AllyCast, BattleState, Vec2 } from './game/types'
+import type { Ally, AllyCast, BattleState, Vec2, ZPoint } from './game/types'
 import { createBattleState, prepareTurn, resolveAllyCasts } from './game/battle'
 import { planEnemyShot, enemyFlight } from './game/enemyAI'
 import { zfieldAt } from './game/attribute'
@@ -84,6 +84,8 @@ export default function App() {
   const [activeAllyId, setActiveAllyId] = useState<string>('')
   const [animation, setAnimation] = useState<ResolveAnimation | null>(null)
   const [pendingState, setPendingState] = useState<BattleState | null>(null)
+  // #11：前ターンに撃たれた魔法の軌跡（属性色で薄く残す）
+  const [pastTrails, setPastTrails] = useState<ZPoint[][]>([])
   const [codexOpen, setCodexOpen] = useState(false)
   // #23：図鑑用に「遭遇した敵」を記録（セッション内・永続化しない）
   const [seenEnemies, setSeenEnemies] = useState<Set<string>>(new Set())
@@ -107,7 +109,7 @@ export default function App() {
       const c = composers[a.id]
       if (!c) continue
       const traj = buildComposerTrajectory(c, a.pos)
-      out[a.id] = computePreview(traj, c.speed)
+      out[a.id] = computePreview(traj, c.speed, battle.mechanics.obstacles ? battle.obstacles : [])
     }
     return out
   }, [battle, composers])
@@ -172,6 +174,7 @@ export default function App() {
     setActiveAllyId(party[0].id)
     setAnimation(null)
     setPendingState(null)
+    setPastTrails([]) // 新ステージは軌跡をリセット（#11）
     setScreen('battle')
     if (stageIndex === 0 && !guideShown) {
       setGuideOpen(true)
@@ -212,7 +215,7 @@ export default function App() {
     const orbits: AnimOrbit[] = []
     for (const s of resolution.allyShots) {
       if (s.kind === 'orbit') {
-        orbits.push({ ring: s.path, hitEnemyIds: s.sweptEnemyIds })
+        orbits.push({ ring: s.path, hitEnemyIds: s.sweptEnemyIds, carves: s.carves, broken: s.broken, speed: s.ringSpeed })
       } else if (s.flight) {
         bullets.push({
           samples: s.flight.samples.map((x, i) => ({
@@ -228,6 +231,10 @@ export default function App() {
         })
       }
     }
+    // guardian 敵の防御結界も周回として描く（#28）。壁/弾に負けたら霧散（#34）
+    for (const er of resolution.enemyRings) {
+      orbits.push({ ring: er.ring, hitEnemyIds: [], carves: [], broken: er.broken, speed: er.ringSpeed })
+    }
     for (const es of resolution.enemyShots) {
       bullets.push({
         samples: es.flight.samples.map((x) => ({
@@ -242,6 +249,19 @@ export default function App() {
         impact: es.hitAllyId ? { id: es.hitAllyId, side: 'ally', arcLen: es.hitArcLen } : null,
       })
     }
+    // 前ターンの軌跡として保存（#11）：味方の発射型/軌道型・敵弾・敵結界すべて
+    const trails: ZPoint[][] = []
+    for (const s of resolution.allyShots) {
+      // 霧散した周回（壁に当たって消えた）は軌跡を残さない（#34）
+      if (s.path && s.path.length > 1 && !s.broken) trails.push(s.path)
+    }
+    for (const es of resolution.enemyShots) {
+      trails.push(es.flight.samples.map((x) => ({ pos: x.pos, z: zfieldAt(es.traj, x.pos) })))
+    }
+    // 霧散した敵結界は軌跡を残さない（#34）
+    for (const er of resolution.enemyRings) if (!er.broken) trails.push(er.ring)
+    setPastTrails(trails)
+
     // 着弾時に鳴らす効果音を予約（#10）
     const kinds = new Set(resolution.log.map((l) => l.kind))
     const sfx: SfxKind[] = []
@@ -251,7 +271,7 @@ export default function App() {
     if (kinds.has('enemyHit')) sfx.push('enemyHit')
     sfxRef.current = sfx
     setBattle({ ...battle, phase: 'resolve' })
-    setAnimation({ bullets, orbits })
+    setAnimation({ bullets, orbits, clashes: resolution.clashes })
     setPendingState(after)
     playSfx('fire')
   }
@@ -428,6 +448,7 @@ export default function App() {
               activeAllyId={composing ? activeAllyId : null}
               playerPaths={composing ? playerPaths : undefined}
               landings={composing ? landings : undefined}
+              pastTrails={composing ? pastTrails : undefined}
               ghostPaths={ghostPaths}
               animation={animation}
               onAnimationDone={onAnimationDone}

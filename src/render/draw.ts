@@ -25,6 +25,10 @@ export interface SceneParams {
   flash?: Record<string, number>
   /** 揺れの位相（時間とともに増加） */
   shakePhase?: number
+  /** 前ターンに撃たれた魔法の軌跡（#11：属性色で薄く残す）。発射型/軌道型/敵弾すべて */
+  pastTrails?: ZPoint[][]
+  /** 軌跡アニメの位相（#11：パーティクルが揺れ・波が流れる。作成フェーズで進める） */
+  trailPhase?: number
 }
 
 /** 被弾の揺れ量（px）。強度と位相・IDシードで上下左右に細かく震える（#20）。 */
@@ -210,10 +214,23 @@ export function drawCasters(
       ctx.stroke()
       ctx.setLineDash([])
     }
+    // 闇の周回で隠れているほど薄れる（#35）。完全隠蔽はほぼ透明＝敵から見えない
+    const conceal = a.concealed ?? 0
+    const concealAlpha = conceal >= 2 ? 0.22 : conceal === 1 ? 0.55 : 1
     const px = Math.max(2, s * 0.16)
-    ctx.globalAlpha = dead ? 0.3 : 1
+    ctx.globalAlpha = dead ? 0.3 : concealAlpha
     drawPixelSprite(ctx, o.x, o.y, MAGE_ROWS, MAGE_PAL, px)
     ctx.globalAlpha = 1
+    // 隠蔽中は闇のもやを重ねる
+    if (!dead && conceal > 0) {
+      const veil = ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, 22)
+      veil.addColorStop(0, 'rgba(40,28,72,0)')
+      veil.addColorStop(1, `rgba(30,20,56,${conceal >= 2 ? 0.7 : 0.4})`)
+      ctx.fillStyle = veil
+      ctx.beginPath()
+      ctx.arc(o.x, o.y, 22, 0, Math.PI * 2)
+      ctx.fill()
+    }
     // 名前
     ctx.fillStyle = dead ? '#666' : COLORS.text
     ctx.font = '9px "DotGothic16", monospace'
@@ -269,6 +286,46 @@ function drawFamilyGlyph(
   ctx.restore()
 }
 
+/** 敵の戦い方ロールを縁取りで示す（#27/#28）。guardian=二重結界／breaker=砕き縁。 */
+function drawRoleMarker(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  role: Enemy['role'],
+  color: string,
+): void {
+  if (!role || role === 'attacker') return
+  ctx.save()
+  ctx.strokeStyle = color
+  if (role === 'guardian') {
+    // 二重の結界リング（守りを表す）
+    ctx.globalAlpha = 0.7
+    ctx.lineWidth = 1.5
+    ctx.setLineDash([3, 3])
+    ctx.beginPath()
+    ctx.arc(cx, cy, r + 5, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.setLineDash([])
+  } else if (role === 'breaker') {
+    // 尖った砕き縁（攻め崩しを表す）
+    ctx.globalAlpha = 0.85
+    ctx.lineWidth = 2
+    const spikes = 10
+    ctx.beginPath()
+    for (let i = 0; i <= spikes; i++) {
+      const a = (i / spikes) * Math.PI * 2
+      const rr = r + (i % 2 === 0 ? 6 : 1)
+      const x = cx + Math.cos(a) * rr
+      const y = cy + Math.sin(a) * rr
+      if (i === 0) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+    }
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
 /** 敵の描画（属性ごとのドット絵スプライト＋得意関数記号＋名前）。 */
 export function drawEnemies(
   ctx: CanvasRenderingContext2D,
@@ -304,18 +361,32 @@ export function drawEnemies(
     ctx.beginPath()
     ctx.arc(c.x, c.y, r * 1.18, 0, Math.PI * 2)
     ctx.stroke()
+    // 戦い方ロールの縁取り（#27/#28）：guardian=二重結界リング／breaker=尖った砕き縁
+    drawRoleMarker(ctx, c.x, c.y, r * 1.18, e.role, tint)
     // スプライト
     const rows = light ? LIGHT_ENEMY_ROWS : DARK_ENEMY_ROWS
     const pal = light ? LIGHT_ENEMY_PAL : DARK_ENEMY_PAL
     const px = (e.hitboxRadius * scaleOf(vp) * 2) / rows[0].length
     drawPixelSprite(ctx, c.x, c.y, rows, pal, px)
-    // 得意関数の記号
-    drawFamilyGlyph(ctx, c.x, c.y + r + 12, e.family, tint)
-    // 名前＋系統ラベル
+    // 得意関数の記号（特性の紋章＝暗い円板に乗せて目立たせる・#27）
+    const gx = c.x + r * 1.1
+    const gy = c.y - r * 1.1
+    ctx.fillStyle = 'rgba(12,10,24,0.9)'
+    ctx.beginPath()
+    ctx.arc(gx, gy, 10, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = tint
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.arc(gx, gy, 10, 0, Math.PI * 2)
+    ctx.stroke()
+    drawFamilyGlyph(ctx, gx, gy, e.family, tint)
+    // 名前＋系統＋ロールラベル
     ctx.fillStyle = COLORS.text
     ctx.font = '10px "DotGothic16", monospace'
     ctx.textAlign = 'center'
-    ctx.fillText(`${e.name}〔${FAMILY_LABEL[e.family]}〕`, c.x, c.y - r - 6)
+    const roleTag = e.role === 'guardian' ? '・守' : e.role === 'breaker' ? '・破' : ''
+    ctx.fillText(`${e.name}〔${FAMILY_LABEL[e.family]}${roleTag}〕`, c.x, c.y - r - 6)
     // 被弾の赤フラッシュ（#20）
     drawHitFlash(ctx, c.x, c.y, r * 1.5, intensity)
   }
@@ -402,6 +473,88 @@ export function strokeZPath(ctx: CanvasRenderingContext2D, pts: ZPoint[], vp: Vi
   ctx.lineCap = 'butt'
 }
 
+// 軌跡の波の最大振幅（px）と空間周波数（#11：強属性ほど大きく波打つ）
+const TRAIL_MAX_AMP = 6
+const TRAIL_FREQ = 0.13
+
+/** 軌跡の属性色（光＝金・闇＝紫・無＝灰白）。 */
+function trailColorOf(z: number): string {
+  const a = attributeOf(z)
+  return a === 'light' ? COLORS.light1 : a === 'dark' ? COLORS.dark1 : 'rgba(214,214,228,1)'
+}
+
+/**
+ * 魔法の軌跡（#11）。経路に沿って**逆位相の sin 波を2本**重ねて編み込み、振幅は属性強度、
+ * 色は光（金）/闇（紫）/無（灰白）。波の節からパーティクルが法線方向に揺れて出て、光闇の質感を出す。
+ * phase を進めると波が流れ・粒が揺れる（発射アニメ中・作成フェーズの残存トレイル両方で使う）。
+ */
+export function drawWaveTrail(
+  ctx: CanvasRenderingContext2D,
+  pts: ZPoint[],
+  vp: Viewport,
+  phase = 0,
+  alpha = 1,
+): void {
+  if (pts.length < 2) return
+  const sp = pts.map((p) => toScreen(p.pos, vp))
+  // 画面上の累積弧長（波の位相に使う）
+  const arc: number[] = [0]
+  for (let i = 1; i < sp.length; i++) {
+    arc[i] = arc[i - 1] + Math.hypot(sp[i].x - sp[i - 1].x, sp[i].y - sp[i - 1].y)
+  }
+  // 経路の法線（接線に直交）
+  const normalAt = (i: number): Vec2 => {
+    const a = sp[Math.max(0, i - 1)]
+    const b = sp[Math.min(sp.length - 1, i + 1)]
+    const tx = b.x - a.x
+    const ty = b.y - a.y
+    const len = Math.hypot(tx, ty) || 1
+    return { x: -ty / len, y: tx / len }
+  }
+  const ampAt = (i: number): number => (strengthOf(pts[i].z) / FIELD.sMax) * TRAIL_MAX_AMP
+
+  ctx.save()
+  ctx.globalAlpha = alpha
+  ctx.lineWidth = 1.7
+  ctx.lineCap = 'round'
+  // 逆位相の2本の sin 波（sign=±1 で位相を反転＝編み込み）
+  for (const sign of [1, -1]) {
+    const disp = sp.map((p, i) => {
+      const off = sign * ampAt(i) * Math.sin(TRAIL_FREQ * arc[i] - phase)
+      const n = normalAt(i)
+      return { x: p.x + n.x * off, y: p.y + n.y * off }
+    })
+    for (let i = 1; i < disp.length; i++) {
+      ctx.strokeStyle = trailColorOf((pts[i - 1].z + pts[i].z) / 2)
+      ctx.beginPath()
+      ctx.moveTo(disp[i - 1].x, disp[i - 1].y)
+      ctx.lineTo(disp[i].x, disp[i].y)
+      ctx.stroke()
+    }
+  }
+  // 軌跡から法線方向にゆっくり揺れて出るパーティクル（ぼやけた光闇のもや・#11）
+  // 中心から透明へ落ちる柔らかいグラデの粒にして、チカチカせず滲むように見せる。
+  for (let i = 0; i < sp.length; i += 6) {
+    const amp = ampAt(i)
+    const n = normalAt(i)
+    const sway = Math.sin(phase * 0.8 + i * 0.4) * (2 + amp)
+    const px = sp[i].x + n.x * sway
+    const py = sp[i].y + n.y * sway
+    const col = trailColorOf(pts[i].z)
+    const rr = 4 + (amp / TRAIL_MAX_AMP) * 3.5 // 大きめ＝ぼやけ
+    const g = ctx.createRadialGradient(px, py, 0, px, py, rr)
+    g.addColorStop(0, col)
+    g.addColorStop(0.5, col)
+    g.addColorStop(1, 'transparent')
+    ctx.globalAlpha = alpha * 0.4
+    ctx.fillStyle = g
+    ctx.beginPath()
+    ctx.arc(px, py, rr, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.restore()
+}
+
 /** 予測着弾点マーカー。 */
 function drawLanding(
   ctx: CanvasRenderingContext2D,
@@ -437,6 +590,11 @@ export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
 
   drawObstacles(ctx, p.obstacles, p.vp)
 
+  // 前ターンの魔法軌跡（#11：逆位相の波＋揺れる粒で残す）。プレビューより下に描く
+  if (p.pastTrails) {
+    for (const tr of p.pastTrails) drawWaveTrail(ctx, tr, p.vp, p.trailPhase ?? 0, 0.5)
+  }
+
   // 各味方のプレビュー軌道（z で色分け）。敵より先に描き、敵に被らせない（#27）。
   if (p.playerPaths) {
     for (const path of p.playerPaths) {
@@ -461,6 +619,15 @@ export function bulletColorOf(z: number): string {
 }
 
 /**
+ * 威力（=速度×強度）を 0..1 に正規化する。魔法の見た目サイズに使う（#21）。
+ * 最大威力（最強属性 sMax × 終端速度 maxFlightSpeed）で 1。発射型の弾・軌道型の粒で共通に使う。
+ */
+export function powerSizeFrac(speed: number, z: number): number {
+  const p = strengthOf(z) * Math.max(0, speed)
+  return Math.min(1, p / (FIELD.sMax * FIELD.maxFlightSpeed))
+}
+
+/**
  * 飛行中の弾（多層グロー＋脈動コア＋回転スパーク・#11/#21）。
  * 発射されると z 場の値で色と形が変わる：属性で色、強度(|z|→V付近で最大)でグロー半径・スパーク数が増える。
  */
@@ -470,16 +637,20 @@ export function drawBullet(
   z: number,
   vp: Viewport,
   phase = 0,
+  speed = 0,
 ): void {
   const c = toScreen(pos, vp)
   const color = bulletColorOf(z)
   const strength = strengthOf(z) // 0..sMax
   const sFrac = Math.min(1, strength / FIELD.sMax) // 0..1
+  // 威力 = 速度 × 強度。威力が大きいほど弾も大きくなる（#11/#21）
+  const powerFrac = powerSizeFrac(speed, z)
+  const sizeFrac = Math.max(sFrac * 0.4, powerFrac) // 強属性は最低限の存在感、威力が高いほど大きく
   const pulse = 1 + Math.sin(phase * 1.7) * 0.25
-  // 強いほど大きく・棘が多い（#21：形が z で変わる）
-  const glowR = (12 + sFrac * 10) * pulse
+  // 威力が大きいほど大きく・強いほど棘が多い（#21：形が z で変わる）
+  const glowR = (9 + sizeFrac * 18) * pulse
   const spikes = 4 + Math.round(sFrac * 4)
-  const coreR = (2.6 + sFrac * 1.6) * pulse
+  const coreR = (2.0 + sizeFrac * 3.4) * pulse
   ctx.save()
   const glow = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, glowR)
   glow.addColorStop(0, color)
@@ -511,19 +682,23 @@ export function drawBullet(
   ctx.restore()
 }
 
-/** 小さな周回パーティクル（軌道型魔法・#24）。グロー＋白コア。 */
+/**
+ * 小さな周回パーティクル（軌道型魔法・#24）。グロー＋白コア。
+ * sizeScale（0..1＝威力）で粒の大きさが変わる。威力が高い周回ほど太く見える（#21）。
+ */
 export function drawParticle(
   ctx: CanvasRenderingContext2D,
   pos: Vec2,
   color: string,
   vp: Viewport,
   phase = 0,
+  sizeScale = 0.5,
 ): void {
   const c = toScreen(pos, vp)
-  const r = 2.4 + Math.sin(phase) * 0.9
+  const r = 1.8 + sizeScale * 2.6 + Math.sin(phase) * 0.7
   ctx.save()
   ctx.shadowColor = color
-  ctx.shadowBlur = 10
+  ctx.shadowBlur = 8 + sizeScale * 8
   ctx.globalAlpha = 0.9
   ctx.fillStyle = color
   ctx.beginPath()
@@ -534,6 +709,60 @@ export function drawParticle(
   ctx.beginPath()
   ctx.arc(c.x, c.y, r * 0.45, 0, Math.PI * 2)
   ctx.fill()
+  ctx.restore()
+}
+
+/**
+ * 周回軌道が壁に当たって霧散する演出（#34）。周回はせず、リングが一瞬現れて
+ * 重心から外側へ粒が散り、薄れて消える（progress 0→1 で一度きり）。
+ */
+export function drawOrbitDissipation(
+  ctx: CanvasRenderingContext2D,
+  ring: ZPoint[],
+  progress: number,
+  vp: Viewport,
+): void {
+  const len = ring.length
+  if (len < 2 || progress < 0 || progress >= 1) return
+  // 重心（≒術者位置）
+  let cx = 0
+  let cy = 0
+  for (const p of ring) {
+    cx += p.pos.x
+    cy += p.pos.y
+  }
+  cx /= len
+  cy /= len
+  // 薄れていくリング本体
+  const fade = Math.max(0, 1 - progress * 1.8)
+  if (fade > 0) {
+    ctx.save()
+    ctx.globalAlpha = 0.22 * fade
+    strokeZPath(ctx, ring, vp)
+    ctx.restore()
+  }
+  // 外向きに散る粒（霧散）
+  ctx.save()
+  const N = 28
+  for (let n = 0; n < N; n++) {
+    const idx = Math.floor((n / N) * (len - 1))
+    const p = ring[idx]
+    if (!p) continue
+    const dx = p.pos.x - cx
+    const dy = p.pos.y - cy
+    const dl = Math.hypot(dx, dy) || 1
+    const out = progress * 5
+    const c = toScreen({ x: p.pos.x + (dx / dl) * out, y: p.pos.y + (dy / dl) * out }, vp)
+    const col = trailColorOf(p.z)
+    ctx.globalAlpha = Math.max(0, 1 - progress) * 0.85
+    ctx.fillStyle = col
+    ctx.shadowColor = col
+    ctx.shadowBlur = 9
+    const rr = 2.4 + (1 - progress) * 1.6
+    ctx.beginPath()
+    ctx.arc(c.x, c.y, rr, 0, Math.PI * 2)
+    ctx.fill()
+  }
   ctx.restore()
 }
 
@@ -579,6 +808,49 @@ export function drawCarveBurst(
     ctx.fillStyle = i % 3 === 0 ? COLORS.light2 : col
     const sz = Math.max(1, px * (1 - progress * 0.55))
     ctx.fillRect(Math.round(gx - sz / 2), Math.round(gy - sz / 2), sz, sz)
+  }
+  ctx.restore()
+}
+
+/**
+ * パリィ／結界の衝突火花（#20）。中心が白く弾け、金と紫の火花が放射状に飛び散る。
+ * progress 0→1 で広がりながら消える。光闇がぶつかる「相殺」を表す。
+ */
+export function drawClashSpark(
+  ctx: CanvasRenderingContext2D,
+  pos: Vec2,
+  progress: number,
+  vp: Viewport,
+): void {
+  if (progress < 0 || progress >= 1) return
+  const c = toScreen(pos, vp)
+  const s = scaleOf(vp)
+  const reach = (2 + progress * 4) * s
+  ctx.save()
+  // 中心の白い閃光
+  const flash = Math.max(0, 1 - progress * 2)
+  if (flash > 0) {
+    ctx.globalAlpha = flash
+    ctx.shadowColor = '#fff8e1'
+    ctx.shadowBlur = 14
+    ctx.fillStyle = '#fff8e1'
+    ctx.beginPath()
+    ctx.arc(c.x, c.y, 3 + flash * 3, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.shadowBlur = 0
+  }
+  // 放射状の火花（金と紫が交互＝光闇の相殺）
+  const n = 10
+  ctx.lineWidth = 2
+  ctx.lineCap = 'round'
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + progress * 1.5
+    ctx.globalAlpha = Math.max(0, 1 - progress) * 0.9
+    ctx.strokeStyle = i % 2 === 0 ? COLORS.light1 : COLORS.dark1
+    ctx.beginPath()
+    ctx.moveTo(c.x + Math.cos(a) * reach * 0.4, c.y + Math.sin(a) * reach * 0.4)
+    ctx.lineTo(c.x + Math.cos(a) * reach, c.y + Math.sin(a) * reach)
+    ctx.stroke()
   }
   ctx.restore()
 }

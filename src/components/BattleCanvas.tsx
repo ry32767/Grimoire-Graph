@@ -6,11 +6,14 @@ import {
   drawScene,
   drawBullet,
   drawTrail,
+  drawWaveTrail,
   drawParticle,
   drawMisfire,
   drawCarveBurst,
+  drawClashSpark,
+  drawOrbitDissipation,
   strokeZPath,
-  bulletColorOf,
+  powerSizeFrac,
   type SceneParams,
 } from '../render/draw'
 import { COLORS } from '../render/theme'
@@ -66,14 +69,29 @@ export interface AnimOrbit {
   ring: ZPoint[]
   /** 掃射で当てた敵ID群（赤フラッシュ＋揺れ・#20） */
   hitEnemyIds: string[]
+  /** 周回が壁に触れて散った点（#34） */
+  carves: CarveBurst[]
+  /** 壁に当たって霧散したか（#34）。true なら周回せず、一度きり外へ散って消える */
+  broken?: boolean
+  /** リングの代表速度（#21：威力＝速度×強度で粒の大きさを変える） */
+  speed?: number
 }
 
 /** 被弾フラッシュの減衰時間（ms）。一瞬赤く光って揺れて戻る（#20） */
 const FLASH_MS = 420
 
+/** パリィ／結界の衝突火花の持続（ms）と、弾がその点に到達したと見なす距離（数学ユニット・#20） */
+const CLASH_MS = 460
+const CLASH_DIST = 1.6
+
+/** 周回が壁/魔法に負けて霧散する演出の持続（ms・#34）。接触の瞬間から散り始める */
+const DISSIPATE_MS = 520
+
 export interface ResolveAnimation {
   bullets: AnimBullet[]
   orbits: AnimOrbit[]
+  /** 弾・結界の衝突点（#20：パリィ/迎撃の火花） */
+  clashes?: Vec2[]
 }
 
 interface Props {
@@ -84,6 +102,8 @@ interface Props {
   playerPaths?: (ZPoint[] | null)[]
   ghostPaths?: Vec2[][]
   landings?: ({ pos: Vec2; attr: Attribute } | null)[]
+  /** 前ターンの魔法軌跡（#11） */
+  pastTrails?: ZPoint[][]
   animation?: ResolveAnimation | null
   onAnimationDone?: () => void
 }
@@ -143,6 +163,7 @@ export default function BattleCanvas(props: Props) {
     playerPaths: props.playerPaths,
     ghostPaths: props.ghostPaths,
     landings: props.landings,
+    pastTrails: props.pastTrails,
   }
 
   useEffect(() => {
@@ -152,8 +173,19 @@ export default function BattleCanvas(props: Props) {
     if (!ctx) return
 
     if (!props.animation) {
-      drawScene(ctx, staticParams)
-      return
+      // 作成フェーズ：前ターンの軌跡があれば波＋粒を揺らし続ける（#11）。無ければ1回だけ描画。
+      if (!props.pastTrails || props.pastTrails.length === 0) {
+        drawScene(ctx, staticParams)
+        return
+      }
+      let raf = 0
+      const start = performance.now()
+      const loop = (now: number) => {
+        drawScene(ctx, { ...staticParams, trailPhase: (now - start) * 0.004 })
+        raf = requestAnimationFrame(loop)
+      }
+      raf = requestAnimationFrame(loop)
+      return () => cancelAnimationFrame(raf)
     }
 
     const anim = props.animation
@@ -168,11 +200,23 @@ export default function BattleCanvas(props: Props) {
     const hasMisfire = anim.bullets.some((b) => b.misfirePos)
     const hasImpact =
       anim.bullets.some((b) => b.impact) || anim.orbits.some((o) => o.hitEnemyIds.length > 0)
-    const tailMs = hasMisfire ? MISFIRE_TAIL_MS : hasImpact ? IMPACT_TAIL_MS : 0
+    const hasClash = !!anim.clashes && anim.clashes.length > 0
+    const hasBrokenOrbit = anim.orbits.some((o) => o.broken)
+    const tailMs = hasMisfire
+      ? MISFIRE_TAIL_MS
+      : hasBrokenOrbit
+        ? Math.max(IMPACT_TAIL_MS, DISSIPATE_MS + 150)
+        : hasImpact || hasClash
+          ? IMPACT_TAIL_MS
+          : 0
     const realMs = flightMs + tailMs
 
     // 被弾フラッシュ：対象IDごとに「反応を開始した実時刻」を記録し、以後減衰させる（#20）
     const flashStartByTarget: Record<string, number> = {}
+    // 衝突火花：clash ごとに「弾がその点へ到達した実時刻」を記録し、その瞬間から弾けさせる（#20）
+    const clashStartByIdx: Record<number, number> = {}
+    // 霧散：負けた周回ごとに「接触の実時刻」を記録し、その瞬間から散らせる（#34）
+    const dissipateStartByIdx: Record<number, number> = {}
 
     let raf = 0
     let finished = false
@@ -190,6 +234,8 @@ export default function BattleCanvas(props: Props) {
       const e = Math.min(1, elapsed / flightMs)
       const tau = e * maxTotal
       const phase = e * flightMs * 0.02
+      // 軌跡の波・粒は実時間でゆっくり流す（作成フェーズと同じ流速。速いとチカチカするため・#11）
+      const trailPhase = elapsed * 0.004
 
       // 各弾の現在位置・弧長を先に計算（穴の開示・削るパーティクルに使う）
       const states = anim.bullets.map((b, i) =>
@@ -243,19 +289,50 @@ export default function BattleCanvas(props: Props) {
         shakePhase: elapsed * 0.05,
       })
 
-      // 軌道型リング：パーティクルがぐるぐる周回する（#24）
-      for (const o of anim.orbits) {
+      // 軌道型リング：ゆっくり周回（#24）。壁/魔法に負けた周回は接触の瞬間から霧散（#34）
+      for (let oi = 0; oi < anim.orbits.length; oi++) {
+        const o = anim.orbits[oi]
         const ring = o.ring
         const len = ring.length
         if (len < 2) continue
-        // 薄いリング本体
+
+        // 霧散する周回：弾が接触点へ到達した瞬間（接触弾が無ければ既定時刻）から散り始める
+        if (o.broken) {
+          if (dissipateStartByIdx[oi] === undefined) {
+            const cp = o.carves[0]?.pos
+            let trig = false
+            if (cp) {
+              for (const st of states) {
+                if (st && Math.hypot(st.pos.x - cp.x, st.pos.y - cp.y) <= CLASH_DIST) {
+                  trig = true
+                  break
+                }
+              }
+            }
+            if (!trig && e >= 0.4) trig = true // 接触弾が無い（壁等）ときの保険
+            if (trig) dissipateStartByIdx[oi] = elapsed
+          }
+          const dStart = dissipateStartByIdx[oi]
+          if (dStart !== undefined) {
+            // 接触後：周回せず、一度きり外へ散って消える
+            const dp = Math.min(0.999, (elapsed - dStart) / DISSIPATE_MS)
+            drawOrbitDissipation(ctx, ring, dp, VP)
+            for (const cv of o.carves) {
+              if (dp < 0.6) drawCarveBurst(ctx, cv.pos, cv.r + 1.2, cv.attr, dp / 0.6, VP)
+            }
+            continue
+          }
+          // 接触前：通常どおり周回して見せる（弾の到達を待つ）→ 下の通常描画へ
+        }
+
+        // 通常の周回（存続中／霧散前）
         ctx.save()
         ctx.globalAlpha = 0.28
         strokeZPath(ctx, ring, VP)
         ctx.restore()
-        // 複数パーティクルを等間隔に並べ、複数周ぐるぐる回す
+        // 複数パーティクルを等間隔に並べ、ゆっくり周回する（速いとチカチカするため・#11）
         const N = 18
-        const revs = 2.6
+        const revs = 1.1
         const eClamped = Number.isFinite(e) ? Math.max(0, Math.min(1, e)) : 0
         for (let n = 0; n < N; n++) {
           const frac = (n / N + eClamped * revs) % 1
@@ -275,7 +352,9 @@ export default function BattleCanvas(props: Props) {
           ctx.globalAlpha = 0.5
           drawTrail(ctx, trail, col, VP)
           ctx.globalAlpha = 1
-          drawParticle(ctx, pt.pos, col, VP, phase + n)
+          // 威力（=リング速度×その点の強度）で粒の大きさを変える（#21）
+          const sizeScale = powerSizeFrac(o.speed ?? 0, pt.z)
+          drawParticle(ctx, pt.pos, col, VP, trailPhase * 2 + n, sizeScale)
         }
       }
 
@@ -287,14 +366,16 @@ export default function BattleCanvas(props: Props) {
         const { pos, idx } = st
         // 発射されたら z 場の値で色/形が決まる（#21）。属性で色、強度で大きさ・棘。
         const z = b.samples[idx]?.z ?? 0
-        const color = bulletColorOf(z)
         // 暴発：弾が終端へ到達してから余韻いっぱいまで爆発を進める（実時間ベース）
         const arrivalMs = maxTotal > 0 ? (tl.total / maxTotal) * flightMs : 0
         const exploding = b.misfirePos && elapsed >= arrivalMs
         if (!exploding) {
-          const trail = b.samples.slice(Math.max(0, idx - 9), idx + 1).map((s) => s.pos)
-          drawTrail(ctx, trail, color, VP)
-          drawBullet(ctx, pos, z, VP, phase)
+          // 飛んだぶんの軌跡を逆位相の波＋揺れる粒で描く（発射アニメ中も表示・#11）
+          const traveled: ZPoint[] = b.samples
+            .slice(0, idx + 1)
+            .map((s) => ({ pos: s.pos, z: s.z }))
+          drawWaveTrail(ctx, traveled, VP, trailPhase, 0.95)
+          drawBullet(ctx, pos, z, VP, phase, b.samples[idx]?.speed ?? 0)
         }
         if (b.misfirePos && exploding) {
           const mp = Math.min(1, (elapsed - arrivalMs) / Math.max(1, realMs - arrivalMs))
@@ -311,6 +392,24 @@ export default function BattleCanvas(props: Props) {
           if (d >= 0 && d < BURST_ARC) drawCarveBurst(ctx, cv.pos, cv.r, cv.attr, d / BURST_ARC, VP)
         }
       })
+
+      // パリィ／結界の衝突火花（#20）：弾がその交差点へ到達した瞬間に弾ける（位置・時刻を弾に合わせる）
+      if (anim.clashes && anim.clashes.length > 0) {
+        anim.clashes.forEach((pos, ci) => {
+          if (clashStartByIdx[ci] === undefined) {
+            for (const st of states) {
+              if (st && Math.hypot(st.pos.x - pos.x, st.pos.y - pos.y) <= CLASH_DIST) {
+                clashStartByIdx[ci] = elapsed
+                break
+              }
+            }
+          }
+          const start0 = clashStartByIdx[ci]
+          if (start0 === undefined) return
+          const cp = (elapsed - start0) / CLASH_MS
+          if (cp >= 0 && cp < 1) drawClashSpark(ctx, pos, cp, VP)
+        })
+      }
 
       if (elapsed < realMs) raf = requestAnimationFrame(frame)
       else finish()
@@ -332,6 +431,7 @@ export default function BattleCanvas(props: Props) {
     props.playerPaths,
     props.ghostPaths,
     props.landings,
+    props.pastTrails,
   ])
 
   return <canvas ref={ref} width={INTERNAL} height={INTERNAL} aria-label="バトルフィールド" />

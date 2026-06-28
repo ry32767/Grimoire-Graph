@@ -83,11 +83,17 @@ describe('明示パス（敵弾）の z は zAt で与える', () => {
     { x: 4, y: 0 },
     { x: 0, y: 0 },
   ]
-  it('中立(z=0)は加速、強属性(z=Smax)は加速しない', () => {
+  it('中立(z=0)は加速、加速0帯(z=zRef)は速度一定', () => {
     const neutral = simulatePath(path, 4, () => 0).endSpeed
-    const strong = simulatePath(path, 4, () => FIELD.sMax).endSpeed
-    expect(neutral).toBeGreaterThan(strong)
-    expect(strong).toBeCloseTo(4, 4)
+    const flat = simulatePath(path, 4, () => FIELD.zRef).endSpeed
+    expect(neutral).toBeGreaterThan(flat)
+    expect(flat).toBeCloseTo(4, 4)
+  })
+
+  it('強属性(|z|>zRef)は減速し、長い経路では速度0で霧散する（#31）', () => {
+    const f = simulatePath(path, 4, () => FIELD.sMax)
+    expect(f.end).toBe('vanished')
+    expect(f.endSpeed).toBe(0)
   })
 })
 

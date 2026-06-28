@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { planEnemyShot, enemyFlight, ARCHETYPES } from './enemyAI'
 import { firstHit } from './collision'
+import { classifyTrajectory } from './loop'
 import { GAME } from '../data/constants'
-import type { Ally, Enemy, EnemyFamily } from './types'
+import type { Ally, Enemy, EnemyFamily, Obstacle } from './types'
 
 const ally = (id: string, pos: { x: number; y: number }, element: Ally['element'] = 'neutral', hp = 100, maxHp = 100): Ally => ({
   id,
@@ -58,9 +59,55 @@ describe('敵AIの攻撃計画（#2/#17）', () => {
     expect(plan?.targetId).toBe('light')
   })
 
+  it('闇の周回で完全に隠れた味方は狙わない（#35）', () => {
+    // 闇の敵：低HPの光味方が居るが、完全隠蔽(concealed=full)なら視認不可で別の味方を狙う
+    const e = enemy({ x: 0, y: 8 }, 'line')
+    const hidden = { ...ally('hidden', { x: -4, y: -8 }, 'light', 20), concealed: 2 }
+    const visible = ally('visible', { x: 4, y: -8 }, 'light', 90)
+    const plan = planEnemyShot(e, [hidden, visible])
+    expect(plan?.targetId).toBe('visible')
+  })
+
+  it('1重の闇周回は狙いをずらす（#35）', () => {
+    // concealed=1 の味方を狙うと、見かけ位置（ずれた位置）へ撃つため真の位置から外れる
+    const e = enemy({ x: 0, y: 10 }, 'line')
+    const concealedTarget = { ...ally('t', { x: 0, y: -8 }, 'light', 100), concealed: 1 }
+    const plan = planEnemyShot(e, [concealedTarget])
+    expect(plan).not.toBeNull()
+    const { flight } = enemyFlight(plan!.trajectory, e.castInitialSpeed)
+    // 真の位置には当たりにくくなる（見かけ位置へ逸れる）
+    expect(firstHit(flight.samples, concealedTarget.pos, GAME.allyHitbox)).toBeNull()
+  })
+
   it('味方が全滅していれば null', () => {
     const e = enemy({ x: 0, y: 8 }, 'wave')
     expect(planEnemyShot(e, [ally('d', { x: 0, y: 0 }, 'neutral', 0)])).toBeNull()
+  })
+
+  it('guardian ロールは防御用の周回結界（閉軌道）を張る（#28）', () => {
+    const guard: Enemy = { ...enemy({ x: 0, y: 10 }, 'spiral'), role: 'guardian' }
+    const plan = planEnemyShot(guard, [ally('t', { x: 0, y: -8 })])
+    expect(plan).not.toBeNull()
+    expect(classifyTrajectory(plan!.trajectory)).toBe('orbit')
+  })
+
+  it('breaker ロールは壁ごしでも貫いて狙う（障害物ペナルティを受けない・#28）', () => {
+    // 敵(0,8)→味方(0,-8) の直線上に壁。breaker は減点されず、attacker より高評価になる
+    const wall: Obstacle = { id: 'w', element: 'dark', solids: [{ x: 0, y: 0, r: 2 }], carves: [] }
+    const target = ally('t', { x: 0, y: -8 }, 'light')
+    const attacker: Enemy = enemy({ x: 0, y: 8 }, 'line')
+    const breaker: Enemy = { ...attacker, role: 'breaker' }
+    const aPlan = planEnemyShot(attacker, [target], [wall])
+    const bPlan = planEnemyShot(breaker, [target], [wall])
+    expect(aPlan).not.toBeNull()
+    expect(bPlan).not.toBeNull()
+    expect(bPlan!.expectedDamage).toBeGreaterThan(aPlan!.expectedDamage)
+  })
+
+  it('複数得意関数（families）を持つ敵も軌道を返す（#28）', () => {
+    const multi: Enemy = { ...enemy({ x: 0, y: 8 }, 'line'), families: ['arc', 'wave'] }
+    const plan = planEnemyShot(multi, [ally('t', { x: 0, y: -8 })])
+    expect(plan).not.toBeNull()
   })
 
   it('波・弧・渦型も軌道を返す（牽制含む）', () => {
