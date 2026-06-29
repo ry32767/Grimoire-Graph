@@ -1193,9 +1193,10 @@ export function drawTrail(
 }
 
 /**
- * 暴発の大爆発（#9/#29/#41）。白熱の中心から光（金）と闇（紫）が入り混じる衝撃波。
- * 加算合成（'lighter'）で超高コントラストに光らせる。演出は AoE 半径を**少しはみ出して**
- * 弾け、光闇の粒が大量に飛散する。AoE 境界には白く明滅するリングを描き、実ダメージ範囲を明示する。
+ * 暴発の大渦（#9/#29/#41）。紫（闇）と黄（光）の腕が**ぐるぐる回りながら中心へ集まり**、
+ * 中心は白熱して最後は白く埋まる（虚式・茈のような渦）。紫と黄は完全には混ぜず、重なった所だけ
+ * 加算合成で白っぽく光る。**効果範囲（AoE）の内側を渦で埋め尽くす**（少しだけ外へはみ出す）。
+ * AoE 境界には白く明滅する破線円を描き、実ダメージ範囲を明示する。
  * ステージ全体の揺れ・降ってくる遺跡の破片は BattleCanvas 側で全体演出として足す。
  */
 export function drawMisfire(
@@ -1206,125 +1207,111 @@ export function drawMisfire(
 ): void {
   const c = toScreen(pos, vp)
   const s = scaleOf(vp)
-  const maxR = FIELD.aoeRadius * s // 演出の最大半径＝AoE 半径（#29）
-  const px = Math.max(4, Math.round(s * 0.32))
-  const GOLD = COLORS.light1 // 光＝金
-  const PURPLE = COLORS.dark1 // 闇＝紫
+  const maxR = FIELD.aoeRadius * s // AoE 半径（実ダメージ範囲・#29）
+  const effR = maxR * 1.18 // 渦は AoE を少しだけはみ出す
+  const px = Math.max(3, Math.round(s * 0.28))
+  const TAU = Math.PI * 2
+  const GOLD = COLORS.light1 // 光＝黄（金）
+  const PURPLE = '#b483ff' // 闇＝紫（加算合成で黄に負けないよう明るめの紫）
   ctx.save()
   const cell = (gx: number, gy: number, col: string, a: number) => {
     ctx.globalAlpha = Math.max(0, Math.min(1, a))
     ctx.fillStyle = col
     ctx.fillRect(Math.round((c.x + gx) / px) * px, Math.round((c.y + gy) / px) * px, px, px)
   }
-  const ringAt = (rr: number, col: string, a: number, lw: number) => {
-    ctx.globalAlpha = Math.max(0, Math.min(1, a))
-    ctx.strokeStyle = col
-    ctx.lineWidth = lw
-    ctx.beginPath()
-    ctx.arc(c.x, c.y, rr, 0, Math.PI * 2)
-    ctx.stroke()
-  }
 
-  // AoE 境界：白く明滅するリング（高コントラスト・常時 = ダメージ範囲を明示）
-  ctx.globalAlpha = 0.45 + 0.45 * (1 - progress)
+  // AoE 境界：白く明滅する破線円（実ダメージ範囲を明示）
+  ctx.globalAlpha = 0.4 + 0.4 * (1 - progress)
   ctx.strokeStyle = '#ffffff'
-  ctx.lineWidth = Math.max(2, px * 0.45)
-  ctx.setLineDash([px * 1.3, px * 0.8])
+  ctx.lineWidth = Math.max(2, px * 0.5)
+  ctx.setLineDash([px * 1.4, px * 0.9])
   ctx.beginPath()
-  ctx.arc(c.x, c.y, maxR, 0, Math.PI * 2)
+  ctx.arc(c.x, c.y, maxR, 0, TAU)
   ctx.stroke()
   ctx.setLineDash([])
 
-  // 以降は加算合成で「光がぶつかって白飛びする」高コントラスト表現にする
+  // 加算合成：紫と黄が重なった所だけ白っぽく光る（完全には混ざらず色は残る）
   ctx.globalCompositeOperation = 'lighter'
 
-  if (progress < 0.22) {
-    // ===== 収縮：白核が育ち、光闇の粒が渦を巻いて吸い込まれる =====
-    const ip = progress / 0.22
-    const n = 28
-    for (let i = 0; i < n; i++) {
-      const ang = (i / n) * Math.PI * 2 + i * 1.7 + ip * 4
-      const rr = maxR * (1 - ip) * (0.55 + ((i * 29) % 8) / 14)
-      cell(Math.cos(ang) * rr, Math.sin(ang) * rr, i % 2 === 0 ? GOLD : PURPLE, 0.35 + ip * 0.65)
-    }
-    const core = px * (1 + ip * 5)
-    const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, core)
-    g.addColorStop(0, '#ffffff')
-    g.addColorStop(0.4, GOLD)
-    g.addColorStop(0.7, PURPLE)
-    g.addColorStop(1, 'rgba(0,0,0,0)')
-    ctx.globalAlpha = 0.8 + ip * 0.2
-    ctx.fillStyle = g
-    ctx.beginPath()
-    ctx.arc(c.x, c.y, core, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.globalCompositeOperation = 'source-over'
-    ctx.restore()
-    return
-  }
+  const spin = progress * 10 // 進むほど回る（ぐるぐる）
 
-  // ===== 爆発：白熱コア＋光闇が入り混じる多重衝撃波（AoE を少しはみ出す） =====
-  const ep = (progress - 0.22) / 0.78 // 0→1
-  const effR = maxR * 1.22 // 演出の実効半径＝AoE を少しはみ出す（#41）
-
-  // 白熱の中心コア（序盤に最大、急速に収束）
-  const coreA = Math.max(0, 1 - ep * 1.5)
-  if (coreA > 0) {
-    const coreR = px * 2 + maxR * 0.55 * coreA
-    const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, coreR)
-    g.addColorStop(0, `rgba(255,255,255,${coreA})`)
-    g.addColorStop(0.45, `rgba(244,196,48,${0.8 * coreA})`)
-    g.addColorStop(0.8, `rgba(123,92,196,${0.5 * coreA})`)
-    g.addColorStop(1, 'rgba(0,0,0,0)')
-    ctx.globalAlpha = 1
-    ctx.fillStyle = g
+  // 渦の土台：紫と黄の薄いハロを少し回しながら重ね、AoE 内を隙間なく埋める
+  for (const [hcol, off] of [[PURPLE, 0], [GOLD, TAU / 2]] as const) {
+    const hx = c.x + Math.cos(spin + off) * maxR * 0.12
+    const hy = c.y + Math.sin(spin + off) * maxR * 0.12
+    const hg = ctx.createRadialGradient(hx, hy, 0, hx, hy, effR)
+    hg.addColorStop(0, hcol)
+    hg.addColorStop(1, 'rgba(0,0,0,0)')
+    ctx.globalAlpha = 0.16 + progress * 0.1
+    ctx.fillStyle = hg
     ctx.beginPath()
-    ctx.arc(c.x, c.y, coreR, 0, Math.PI * 2)
+    ctx.arc(c.x, c.y, effR, 0, TAU)
     ctx.fill()
   }
 
-  // 時間差で広がる衝撃波（白い芯＋光輪/闇輪が交互）。AoE を少し越えて弾ける
-  const WAVES = 3
-  for (let w = 0; w < WAVES; w++) {
-    const wp = ep * 1.25 - w * 0.2 // 各輪を遅延させて重ねる
-    if (wp <= 0 || wp >= 1) continue
-    const wr = Math.min(effR, effR * wp)
-    const a = Math.max(0, 1 - wp)
-    ringAt(wr, '#ffffff', a * 0.95, px * (1.0 - wp * 0.5)) // 白い芯
-    ringAt(wr, w % 2 === 0 ? GOLD : PURPLE, a, px * (1.9 - wp)) // 光/闇の輪
-  }
-
-  // 環状に飛散する光闇＋白の粒（高コントラスト・AoE を少しはみ出す）
-  const rings = 4
-  for (let ring = 0; ring < rings; ring++) {
-    const rr = Math.min(effR, effR * ep * (0.4 + ring * 0.22))
-    const count = 14 + ring * 6
-    const fade = (1 - ep) * (1 - ring * 0.12)
-    if (fade <= 0) continue
-    for (let i = 0; i < count; i++) {
-      const ang = (i / count) * Math.PI * 2 + ring * 0.5 + ep * 1.1
-      const gx = Math.cos(ang) * rr
-      const gy = Math.sin(ang) * rr + ep * ep * px * 1.0
-      const m = (i + ring) % 3
-      const col = m === 0 ? GOLD : m === 1 ? PURPLE : '#ffffff'
-      cell(gx, gy, col, Math.min(1, fade))
+  // ===== 渦：紫と黄の腕がぐるぐる回りながら中心へ流れ込み、AoE 内を埋め尽くす =====
+  const inflow = progress * 1.5 // 縁→中心へ吸い込まれる量
+  const ARMS = 12
+  const PTS = 32
+  const WIND = 1.7 // らせんの巻き数
+  for (let a = 0; a < ARMS; a++) {
+    const base = (a / ARMS) * TAU
+    const isPurple = a % 2 !== 0
+    const col = isPurple ? PURPLE : GOLD
+    for (let k = 0; k < PTS; k++) {
+      // u から inflow を引いて剰余＝粒が縁→中心へ流れ続ける（常に AoE を埋める）
+      const t = ((((k / PTS + a * 0.011 - inflow) % 1) + 1) % 1) // 0(中心)..1(縁)
+      const rad = effR * t
+      const ang = base + t * WIND * TAU + spin // 半径で巻く＝らせん
+      const gx = Math.cos(ang) * rad
+      const gy = Math.sin(ang) * rad
+      // 縁と中心でフェード（ワープのちらつき防止）。内側ほど明るい＝集まって見える
+      const fade = Math.min(1, t * 6) * Math.min(1, (1 - t) * 5)
+      // 紫は黄より暗く見えるので濃いめに出す（色を残す）
+      const a1 = (0.34 + (1 - t) * 0.55) * (0.55 + progress * 0.45) * fade * (isPurple ? 1.45 : 1)
+      cell(gx, gy, col, a1)
+      // 中心寄りは白を混ぜる（密になり白っぽく＝最後は白く埋まる）
+      if (t < 0.5) cell(gx * 0.9, gy * 0.9, '#fff8e1', a1 * (0.6 - t) * (0.5 + progress))
     }
   }
 
-  // 光と闇の粒が四方へ大量に飛び散る（バラつき・重力つき・一部は AoE を越える・#41）
-  const SCATTER = 52
-  for (let i = 0; i < SCATTER; i++) {
+  // きらめく火花（紫/黄/白がチカチカ・渦に散る）
+  const SPARK = 58
+  for (let i = 0; i < SPARK; i++) {
     const h = Math.sin(i * 12.9898) * 43758.5453
-    const rnd = h - Math.floor(h) // 0..1 の決定的擬似乱数（フレーム間で安定）
-    const ang = (i / SCATTER) * Math.PI * 2 + (rnd - 0.5) * 0.7
-    const reach = effR * (0.55 + rnd * 0.7) // 距離はばらつく（一部は AoE 外へ）
-    const rr = reach * Math.min(1, ep * 1.2)
-    const gx = Math.cos(ang) * rr
-    const gy = Math.sin(ang) * rr + ep * ep * px * (1.4 + rnd * 1.8) // 重力で落ちる
+    const rnd = h - Math.floor(h)
+    const ang = rnd * TAU + spin * 0.6
+    const rad = effR * (0.12 + rnd * 0.88)
+    const tw = 0.5 + 0.5 * Math.sin(progress * 22 + i * 1.3) // 明滅
     const m = i % 3
-    const col = m === 0 ? GOLD : m === 1 ? PURPLE : '#fff8e1'
-    cell(gx, gy, col, Math.max(0, (1 - ep) * (0.55 + rnd * 0.45)))
+    const col = m === 0 ? GOLD : m === 1 ? PURPLE : '#ffffff'
+    cell(Math.cos(ang) * rad, Math.sin(ang) * rad, col, tw * (0.45 + progress * 0.4) * (m === 1 ? 1.4 : 1))
   }
+
+  // 白熱の中心コア（進行で巨大化＝最後は中心が白く埋まる）
+  const coreR = px * 1.2 + maxR * (0.1 + progress * progress * 0.7)
+  const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, coreR)
+  g.addColorStop(0, '#ffffff')
+  g.addColorStop(0.4, `rgba(255,248,225,${0.55 + 0.45 * progress})`)
+  g.addColorStop(0.75, `rgba(244,196,48,${0.35 * (1 - progress * 0.4)})`)
+  g.addColorStop(1, 'rgba(0,0,0,0)')
+  ctx.globalAlpha = 1
+  ctx.fillStyle = g
+  ctx.beginPath()
+  ctx.arc(c.x, c.y, coreR, 0, TAU)
+  ctx.fill()
+
+  // 中心から伸びる十字の星スパーク（白・明滅）
+  ctx.globalAlpha = 0.6 + 0.4 * Math.abs(Math.sin(progress * 26))
+  ctx.strokeStyle = '#ffffff'
+  ctx.lineWidth = Math.max(1.5, px * 0.5)
+  const sl = coreR * 1.8
+  ctx.beginPath()
+  ctx.moveTo(c.x - sl, c.y)
+  ctx.lineTo(c.x + sl, c.y)
+  ctx.moveTo(c.x, c.y - sl)
+  ctx.lineTo(c.x, c.y + sl)
+  ctx.stroke()
 
   ctx.globalCompositeOperation = 'source-over'
   ctx.restore()
