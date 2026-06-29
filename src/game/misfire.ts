@@ -31,7 +31,7 @@ export interface AoeTarget {
 export interface MisfireResult {
   pos: Vec2
   speed: number
-  /** 威力 = 暴発時の速度 × Smax */
+  /** 威力 = 常に最大（Smax × 終端速度 maxFlightSpeed）。暴発は常に最大威力の術式（§3.5） */
   power: number
   /** ダメージ = 威力 × 1.5（常に有利側） */
   damage: number
@@ -52,8 +52,9 @@ export function resolveMisfire(
   speed: number,
   targets: AoeTarget[],
 ): MisfireResult {
-  const power = speed * FIELD.sMax
-  const damage = power * AFFINITY.opposite // 常に有利側
+  // 暴発は常に最大威力：強度・速度ともに最大（Smax × maxFlightSpeed）。速度に依らず一定（§3.5）
+  const power = FIELD.sMax * FIELD.maxFlightSpeed
+  const damage = power * AFFINITY.opposite // 常に有利側（光・闇の両極性を最大で帯びる）
   const hitIds = targets.filter((t) => dist(t.pos, point.pos) <= FIELD.aoeRadius).map((t) => t.id)
   const selfHit = dist(point.pos, { x: 0, y: 0 }) <= FIELD.aoeRadius
   return { pos: point.pos, speed, power, damage, statuses: maxStatuses(), hitIds, selfHit }

@@ -439,3 +439,47 @@ describe('狙う味方の選択', () => {
     expect(hi.hp).toBe(100)
   })
 })
+
+describe('暴発の壁破壊（#41）', () => {
+  // 真上へ直進。z 場が y>7 でエラー → (0,~7) で暴発する軌道。
+  const upMisfire: Trajectory = {
+    mode: 'rotate',
+    g: () => 0,
+    angle: Math.PI / 2,
+    origin: { x: 0, y: 0 },
+    z: (_x, y) => (y > 7 ? NaN : FIELD.zRef),
+  }
+
+  it('AoE 内の壁素材を削る（範囲内の点が素材でなくなる）', () => {
+    const wall: Obstacle = { id: 'w', element: 'neutral', solids: [{ x: 0, y: 9, r: 2.4 }], carves: [] }
+    expect(isSolidAt(wall, { x: 0, y: 9 })).toBe(true)
+    const res = resolveTurn({
+      allies: [ally('m', { x: 0, y: 0 })],
+      casts: [cast('m', upMisfire)],
+      enemies: [],
+      castingEnemyIds: [],
+      obstacles: [wall],
+      mechanics: withObs,
+    })
+    const w2 = res.obstacles.find((o) => o.id === 'w')!
+    expect(w2.carves.length).toBeGreaterThan(0)
+    expect(isSolidAt(w2, { x: 0, y: 9 })).toBe(false) // AoE 内の素材は消えた
+    // 暴発ログが出ている
+    expect(res.log.some((l) => l.kind === 'misfire')).toBe(true)
+  })
+
+  it('壊れない壁（unbreakable）は暴発でも削れない', () => {
+    const wall: Obstacle = { id: 'u', element: 'neutral', kind: 'unbreakable', solids: [{ x: 0, y: 9, r: 2.4 }], carves: [] }
+    const res = resolveTurn({
+      allies: [ally('m', { x: 0, y: 0 })],
+      casts: [cast('m', upMisfire)],
+      enemies: [],
+      castingEnemyIds: [],
+      obstacles: [wall],
+      mechanics: withObs,
+    })
+    const w2 = res.obstacles.find((o) => o.id === 'u')!
+    expect(w2.carves.length).toBe(0)
+    expect(isSolidAt(w2, { x: 0, y: 9 })).toBe(true) // 残る
+  })
+})

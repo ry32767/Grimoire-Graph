@@ -1193,10 +1193,10 @@ export function drawTrail(
 }
 
 /**
- * 暴発の大爆発（#9/#29）。「収縮 → 紫の虚空が弾ける」二段構え。
- * 序盤(0〜0.3)は周囲のドットが中心へ吸い込まれ特異点が育つ＝虚式・紫の予兆。
- * 中盤以降(0.3〜1)で紫の球が膨張し、白い閃光・多重衝撃枠・光闇のドットが飛散する。
- * グリッド整列の四角ピクセルで 8bit 風を保ちつつ、紫の発光球で派手さを足す。
+ * 暴発の大爆発（#9/#29/#41）。白熱の中心から光（金）と闇（紫）が入り混じる衝撃波。
+ * 加算合成（'lighter'）で超高コントラストに光らせる。最大半径＝効果範囲（AoE）と一致させ、
+ * AoE 境界には白く明滅するリングを描く（見た目＝実ダメージ範囲）。
+ * ステージ全体の揺れ・降ってくる遺跡の破片は BattleCanvas 側で全体演出として足す。
  */
 export function drawMisfire(
   ctx: CanvasRenderingContext2D,
@@ -1206,107 +1206,147 @@ export function drawMisfire(
 ): void {
   const c = toScreen(pos, vp)
   const s = scaleOf(vp)
-  // 演出の最大半径＝効果範囲（AoE）と一致させる（#29：見た目と実ダメージ範囲を揃える）
-  const maxR = FIELD.aoeRadius * s
-  const px = Math.max(4, Math.round(s * 0.32)) // ドットの一辺
+  const maxR = FIELD.aoeRadius * s // 演出の最大半径＝AoE 半径（#29）
+  const px = Math.max(4, Math.round(s * 0.32))
+  const GOLD = COLORS.light1 // 光＝金
+  const PURPLE = COLORS.dark1 // 闇＝紫
   ctx.save()
   const cell = (gx: number, gy: number, col: string, a: number) => {
     ctx.globalAlpha = Math.max(0, Math.min(1, a))
     ctx.fillStyle = col
     ctx.fillRect(Math.round((c.x + gx) / px) * px, Math.round((c.y + gy) / px) * px, px, px)
   }
+  const ringAt = (rr: number, col: string, a: number, lw: number) => {
+    ctx.globalAlpha = Math.max(0, Math.min(1, a))
+    ctx.strokeStyle = col
+    ctx.lineWidth = lw
+    ctx.beginPath()
+    ctx.arc(c.x, c.y, rr, 0, Math.PI * 2)
+    ctx.stroke()
+  }
 
-  const VOID2 = '#b483ff' // 虚式・紫の輝き
-
-  // 効果範囲（AoE）の境界円を常時うっすら示す：この円内の敵・味方がダメージを受ける（#29）
-  ctx.globalAlpha = 0.18 + 0.22 * (1 - progress)
-  ctx.strokeStyle = VOID2
-  ctx.lineWidth = Math.max(1.5, px * 0.3)
-  ctx.setLineDash([px, px])
+  // AoE 境界：白く明滅するリング（高コントラスト・常時 = ダメージ範囲を明示）
+  ctx.globalAlpha = 0.45 + 0.45 * (1 - progress)
+  ctx.strokeStyle = '#ffffff'
+  ctx.lineWidth = Math.max(2, px * 0.45)
+  ctx.setLineDash([px * 1.3, px * 0.8])
   ctx.beginPath()
   ctx.arc(c.x, c.y, maxR, 0, Math.PI * 2)
   ctx.stroke()
   ctx.setLineDash([])
-  ctx.globalAlpha = 1
 
-  if (progress < 0.3) {
-    // ===== 収縮フェーズ：周囲のドットが中心へ吸い込まれる（AoE 内から集まる） =====
-    const ip = progress / 0.3 // 0→1
-    const n = 22
+  // 以降は加算合成で「光がぶつかって白飛びする」高コントラスト表現にする
+  ctx.globalCompositeOperation = 'lighter'
+
+  if (progress < 0.22) {
+    // ===== 収縮：白核が育ち、光闇の粒が渦を巻いて吸い込まれる =====
+    const ip = progress / 0.22
+    const n = 28
     for (let i = 0; i < n; i++) {
-      const ang = (i / n) * Math.PI * 2 + i * 1.3
-      const rr = maxR * (1 - ip) * (0.5 + ((i * 29) % 8) / 16)
-      cell(Math.cos(ang) * rr, Math.sin(ang) * rr, i % 2 === 0 ? VOID2 : COLORS.light2, 0.3 + ip * 0.7)
+      const ang = (i / n) * Math.PI * 2 + i * 1.7 + ip * 4
+      const rr = maxR * (1 - ip) * (0.55 + ((i * 29) % 8) / 14)
+      cell(Math.cos(ang) * rr, Math.sin(ang) * rr, i % 2 === 0 ? GOLD : PURPLE, 0.35 + ip * 0.65)
     }
-    // 育つ特異点（紫の発光球＋白核）
-    const core = px * (1 + ip * 3)
+    const core = px * (1 + ip * 5)
     const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, core)
-    g.addColorStop(0, '#fff8e1')
-    g.addColorStop(0.4, VOID2)
-    g.addColorStop(1, 'rgba(106,46,196,0)')
-    ctx.globalAlpha = 0.7 + ip * 0.3
+    g.addColorStop(0, '#ffffff')
+    g.addColorStop(0.4, GOLD)
+    g.addColorStop(0.7, PURPLE)
+    g.addColorStop(1, 'rgba(0,0,0,0)')
+    ctx.globalAlpha = 0.8 + ip * 0.2
     ctx.fillStyle = g
     ctx.beginPath()
     ctx.arc(c.x, c.y, core, 0, Math.PI * 2)
     ctx.fill()
+    ctx.globalCompositeOperation = 'source-over'
     ctx.restore()
     return
   }
 
-  // ===== 爆発フェーズ（AoE 半径いっぱいまで広がる） =====
-  const ep = (progress - 0.3) / 0.7 // 0→1
-  const r = maxR * ep
+  // ===== 爆発：白熱コア＋光闇が入り混じる多重衝撃波（AoE 半径まで） =====
+  const ep = (progress - 0.22) / 0.78 // 0→1
 
-  // 紫の虚空球（膨張しながら薄れる）。ep=1 で AoE 半径ちょうどに達する
-  const voidR = maxR * (0.3 + ep * 0.7)
-  const vg = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, voidR)
-  vg.addColorStop(0, `rgba(180,131,255,${0.85 * (1 - ep)})`)
-  vg.addColorStop(0.55, `rgba(106,46,196,${0.6 * (1 - ep)})`)
-  vg.addColorStop(1, 'rgba(40,12,80,0)')
-  ctx.fillStyle = vg
-  ctx.globalAlpha = 1
-  ctx.beginPath()
-  ctx.arc(c.x, c.y, voidR, 0, Math.PI * 2)
-  ctx.fill()
-
-  // 中心の白い閃光（序盤に強く弾ける）
-  const flash = Math.max(0, 1 - ep * 1.7)
-  if (flash > 0) {
-    ctx.shadowColor = VOID2
-    ctx.shadowBlur = 16
-    cell(0, 0, '#fff8e1', flash)
-    cell(px, 0, '#fff8e1', flash * 0.8)
-    cell(-px, 0, '#fff8e1', flash * 0.8)
-    cell(0, px, '#fff8e1', flash * 0.8)
-    cell(0, -px, '#fff8e1', flash * 0.8)
-    ctx.shadowBlur = 0
+  // 白熱の中心コア（序盤に最大、急速に収束）
+  const coreA = Math.max(0, 1 - ep * 1.5)
+  if (coreA > 0) {
+    const coreR = px * 2 + maxR * 0.5 * coreA
+    const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, coreR)
+    g.addColorStop(0, `rgba(255,255,255,${coreA})`)
+    g.addColorStop(0.45, `rgba(244,196,48,${0.8 * coreA})`)
+    g.addColorStop(0.8, `rgba(123,92,196,${0.5 * coreA})`)
+    g.addColorStop(1, 'rgba(0,0,0,0)')
+    ctx.globalAlpha = 1
+    ctx.fillStyle = g
+    ctx.beginPath()
+    ctx.arc(c.x, c.y, coreR, 0, Math.PI * 2)
+    ctx.fill()
   }
 
-  // 放射状に飛び散るドット（光・闇・紫が混ざる。重力で少し落ちる）。AoE 半径内に収める
+  // 時間差で広がる衝撃波（白い芯＋光輪/闇輪が交互）。AoE 半径ちょうどで止まる
+  const WAVES = 3
+  for (let w = 0; w < WAVES; w++) {
+    const wp = ep * 1.25 - w * 0.2 // 各輪を遅延させて重ねる
+    if (wp <= 0 || wp >= 1) continue
+    const wr = Math.min(maxR, maxR * wp)
+    const a = Math.max(0, 1 - wp)
+    ringAt(wr, '#ffffff', a * 0.95, px * (1.0 - wp * 0.5)) // 白い芯
+    ringAt(wr, w % 2 === 0 ? GOLD : PURPLE, a, px * (1.9 - wp)) // 光/闇の輪
+  }
+
+  // 飛散する光闇＋白の粒（高コントラスト・AoE 内に収める）
   const rings = 4
   for (let ring = 0; ring < rings; ring++) {
-    const rr = Math.min(maxR, r * (0.34 + ring * 0.2))
-    const count = 10 + ring * 5
-    const fade = (1 - ep) * (1 - ring * 0.14)
+    const rr = Math.min(maxR, maxR * ep * (0.35 + ring * 0.22))
+    const count = 12 + ring * 5
+    const fade = (1 - ep) * (1 - ring * 0.12)
     if (fade <= 0) continue
     for (let i = 0; i < count; i++) {
-      const ang = (i / count) * Math.PI * 2 + ring * 0.4 + ep * 0.9
+      const ang = (i / count) * Math.PI * 2 + ring * 0.5 + ep * 1.1
       const gx = Math.cos(ang) * rr
-      const gy = Math.sin(ang) * rr + ep * ep * px * 1.2
-      const col = (i + ring) % 3 === 0 ? VOID2 : (i + ring) % 3 === 1 ? COLORS.light1 : COLORS.dark1
+      const gy = Math.sin(ang) * rr + ep * ep * px * 1.0
+      const m = (i + ring) % 3
+      const col = m === 0 ? GOLD : m === 1 ? PURPLE : '#ffffff'
       cell(gx, gy, col, Math.min(1, fade))
     }
   }
 
-  // 衝撃波の円リング（AoE 円に沿って外へ広がり、効果範囲ちょうどで止まる）
-  for (let k = 0; k < 2; k++) {
-    const kr = Math.min(maxR, r * (0.7 + k * 0.3))
-    ctx.globalAlpha = (1 - ep) * 0.8 * (1 - k * 0.3)
-    ctx.strokeStyle = k === 0 ? VOID2 : COLORS.dark1
-    ctx.lineWidth = px * 0.6
-    ctx.beginPath()
-    ctx.arc(c.x, c.y, kr, 0, Math.PI * 2)
-    ctx.stroke()
+  ctx.globalCompositeOperation = 'source-over'
+  ctx.restore()
+}
+
+/**
+ * 暴発に伴いステージ上空から降ってくる遺跡の破片（#41）。
+ * 画面全体の演出。progress 0→1 で上から下へ落ち、フィールド円内にクリップする。
+ */
+export function drawFallingDebris(ctx: CanvasRenderingContext2D, vp: Viewport, progress: number): void {
+  const s = scaleOf(vp)
+  const W = vp.width
+  const H = vp.height
+  const N = 18
+  const COLS = ['#6b5a44', '#544a5e', '#7a6f86', '#8a7350']
+  ctx.save()
+  // フィールド円内にクリップ（盤面の外へはみ出さない）
+  const center = toScreen({ x: 0, y: 0 }, vp)
+  ctx.beginPath()
+  ctx.arc(center.x, center.y, FIELD.rField * s, 0, Math.PI * 2)
+  ctx.clip()
+  for (let i = 0; i < N; i++) {
+    const fx = (((i * 73) % 100) / 100) * W
+    const delay = (((i * 37) % 100) / 100) * 0.4 // 落下開始をずらす
+    const p = (progress - delay) / (1 - delay)
+    if (p <= 0 || p >= 1) continue
+    const fy = -30 + p * (H + 60) // 上空から下へ抜ける
+    const size = s * 0.16 * (0.6 + (((i * 53) % 100) / 100) * 1.0)
+    const rot = p * (4 + (i % 5)) + i
+    ctx.save()
+    ctx.translate(fx, fy)
+    ctx.rotate(rot)
+    ctx.globalAlpha = 0.9 * Math.min(1, p * 4) // 出現時に軽くフェードイン
+    ctx.fillStyle = COLS[i % COLS.length]
+    ctx.fillRect(-size / 2, -size / 2, size, size)
+    ctx.fillStyle = 'rgba(210,200,220,0.55)' // 角のハイライト
+    ctx.fillRect(-size / 2, -size / 2, size * 0.42, size * 0.42)
+    ctx.restore()
   }
   ctx.restore()
 }

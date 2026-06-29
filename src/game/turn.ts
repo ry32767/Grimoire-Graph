@@ -650,6 +650,27 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
           }
         }
       }
+      // 暴発は AoE 内の壁をほぼ全て削る（unbreakable＝壊れない壁だけ残る・§3.5/§3.7）
+      if (mechanics.obstacles) {
+        const center = misfirePos
+        const misArc = flight.samples[flight.samples.length - 1]?.arcLen ?? 0
+        let di = 0
+        for (const ob of obstacles) {
+          if ((ob.kind ?? 'normal') === 'unbreakable') continue
+          // AoE 円に少しでも重なる素材があるか
+          const inRange = ob.solids.some((d) => dist({ x: d.x, y: d.y }, center) <= FIELD.aoeRadius + d.r)
+          if (!inRange) continue
+          // AoE 円ぶんを丸ごとえぐる＝範囲内の素材を全て除去（部分的に重なる壁も範囲内は消える）
+          ob.carves.push({ x: center.x, y: center.y, r: FIELD.aoeRadius })
+          // 砕け演出：AoE 内の各 disc 位置で破片バースト（光闇が交互）
+          for (const dsc of ob.solids) {
+            if (dist({ x: dsc.x, y: dsc.y }, center) <= FIELD.aoeRadius) {
+              p.carves.push({ pos: { x: dsc.x, y: dsc.y }, r: dsc.r, arcLen: misArc, attr: di % 2 === 0 ? 'light' : 'dark', obstacleId: ob.id })
+              di++
+            }
+          }
+        }
+      }
       log.push({
         kind: 'misfire',
         text: `${nameOf(allies, p.cast.allyId)}の術式が綻び暴発！ ${mis.damage.toFixed(0)} のAoE`,

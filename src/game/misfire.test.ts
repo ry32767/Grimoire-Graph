@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { detectMisfire, resolveMisfire } from './misfire'
 import { dist } from './coords'
-import { FIELD, AFFINITY } from '../data/constants'
+import { FIELD, AFFINITY, COMBAT } from '../data/constants'
 import type { Trajectory } from './types'
 
 describe('暴発点の検出（§3.5・機能8）', () => {
@@ -68,16 +68,25 @@ describe('暴発点の検出（§3.5・機能8）', () => {
 })
 
 describe('暴発の AoE 解決', () => {
-  it('威力=速度×Smax、ダメージ=威力×1.5（常に有利側）', () => {
-    const r = resolveMisfire({ type: 'invalid', pos: { x: 5, y: 0 } }, 4, [])
-    expect(r.power).toBe(4 * FIELD.sMax)
-    expect(r.damage).toBe(4 * FIELD.sMax * AFFINITY.opposite)
+  it('威力は常に最大（Smax×maxFlightSpeed）・速度に依らず一定、ダメージ=威力×1.5', () => {
+    const maxPower = FIELD.sMax * FIELD.maxFlightSpeed
+    for (const sp of [0, 4, 12, 24, 100]) {
+      const r = resolveMisfire({ type: 'invalid', pos: { x: 5, y: 0 } }, sp, [])
+      expect(r.power).toBe(maxPower) // 速度に依らず常に最大
+      expect(r.damage).toBe(maxPower * AFFINITY.opposite) // 常に有利側（×1.5）
+    }
   })
 
-  it('光ひるみ＋闇DoT の両状態異常を付与', () => {
+  it('光・闇の両属性を最大強度（Smax）で付与する', () => {
     const r = resolveMisfire({ type: 'invalid', pos: { x: 5, y: 0 } }, 4, [])
-    expect(r.statuses.some((s) => s.kind === 'flinch')).toBe(true)
-    expect(r.statuses.some((s) => s.kind === 'burn')).toBe(true)
+    const flinch = r.statuses.find((s) => s.kind === 'flinch')
+    const burn = r.statuses.find((s) => s.kind === 'burn')
+    expect(flinch).toBeTruthy()
+    expect(burn).toBeTruthy()
+    // ひるみ（光）は最大強度 Smax 由来、継続ダメージ（闇）も Smax 由来で最長ターン
+    expect(flinch!.magnitude).toBe(FIELD.sMax)
+    expect(burn!.magnitude).toBe((FIELD.sMax * COMBAT.burnScale) / COMBAT.burnTurns)
+    expect(burn!.remainingTurns).toBe(COMBAT.burnTurns)
   })
 
   it('AoE 半径内の敵に当たる', () => {

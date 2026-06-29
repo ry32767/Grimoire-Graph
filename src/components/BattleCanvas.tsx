@@ -9,6 +9,7 @@ import {
   drawWaveTrail,
   drawParticle,
   drawMisfire,
+  drawFallingDebris,
   drawCarveBurst,
   drawClashSpark,
   drawOrbitDissipation,
@@ -327,6 +328,30 @@ export default function BattleCanvas(props: Props) {
         if (t >= 0 && t < 1) flash[id] = 1 - t
       }
 
+      // 暴発のステージ全体演出（#41）：揺れの強さ（爆発直後が最強→減衰）と破片の落下進行
+      let mfShake = 0
+      let mfProgress = 0
+      anim.bullets.forEach((b, i) => {
+        if (!b.misfirePos) return
+        const tl = timelines[i]
+        const arrivalMs = maxTotal > 0 ? (tl.total / maxTotal) * flightMs : 0
+        if (elapsed < arrivalMs) return
+        const mp = Math.min(1, (elapsed - arrivalMs) / Math.max(1, realMs - arrivalMs))
+        if (mp > mfProgress) mfProgress = mp
+        const sh = Math.max(0, 1 - mp * 1.6) // 直後が最強
+        if (sh > mfShake) mfShake = sh
+      })
+      // ステージ全体をガタガタ揺らす（ズレで端に隙間が出ないよう、先に背景で塗りつぶす）
+      const gAmp = mfShake * 9
+      const gx = mfShake > 0 ? Math.sin(elapsed * 0.07) * gAmp : 0
+      const gy = mfShake > 0 ? Math.cos(elapsed * 0.085) * gAmp : 0
+      if (mfShake > 0) {
+        ctx.fillStyle = COLORS.bg
+        ctx.fillRect(0, 0, INTERNAL, INTERNAL)
+      }
+      ctx.save()
+      ctx.translate(gx, gy)
+
       drawScene(ctx, {
         ...staticParams,
         obstacles,
@@ -476,6 +501,11 @@ export default function BattleCanvas(props: Props) {
           if (cp >= 0 && cp < 1) drawClashSpark(ctx, pos, cp, VP, sizeFrac)
         })
       }
+
+      // 暴発：上空から遺跡の破片が降ってくる（ステージ全体・揺れの中で・#41）
+      if (mfProgress > 0 && mfProgress < 1) drawFallingDebris(ctx, VP, mfProgress)
+
+      ctx.restore() // ステージ全体シェイクの translate を戻す
 
       if (elapsed < realMs) raf = requestAnimationFrame(frame)
       else finish()
