@@ -1194,8 +1194,8 @@ export function drawTrail(
 
 /**
  * 暴発の大爆発（#9/#29/#41）。白熱の中心から光（金）と闇（紫）が入り混じる衝撃波。
- * 加算合成（'lighter'）で超高コントラストに光らせる。最大半径＝効果範囲（AoE）と一致させ、
- * AoE 境界には白く明滅するリングを描く（見た目＝実ダメージ範囲）。
+ * 加算合成（'lighter'）で超高コントラストに光らせる。演出は AoE 半径を**少しはみ出して**
+ * 弾け、光闇の粒が大量に飛散する。AoE 境界には白く明滅するリングを描き、実ダメージ範囲を明示する。
  * ステージ全体の揺れ・降ってくる遺跡の破片は BattleCanvas 側で全体演出として足す。
  */
 export function drawMisfire(
@@ -1263,13 +1263,14 @@ export function drawMisfire(
     return
   }
 
-  // ===== 爆発：白熱コア＋光闇が入り混じる多重衝撃波（AoE 半径まで） =====
+  // ===== 爆発：白熱コア＋光闇が入り混じる多重衝撃波（AoE を少しはみ出す） =====
   const ep = (progress - 0.22) / 0.78 // 0→1
+  const effR = maxR * 1.22 // 演出の実効半径＝AoE を少しはみ出す（#41）
 
   // 白熱の中心コア（序盤に最大、急速に収束）
   const coreA = Math.max(0, 1 - ep * 1.5)
   if (coreA > 0) {
-    const coreR = px * 2 + maxR * 0.5 * coreA
+    const coreR = px * 2 + maxR * 0.55 * coreA
     const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, coreR)
     g.addColorStop(0, `rgba(255,255,255,${coreA})`)
     g.addColorStop(0.45, `rgba(244,196,48,${0.8 * coreA})`)
@@ -1282,22 +1283,22 @@ export function drawMisfire(
     ctx.fill()
   }
 
-  // 時間差で広がる衝撃波（白い芯＋光輪/闇輪が交互）。AoE 半径ちょうどで止まる
+  // 時間差で広がる衝撃波（白い芯＋光輪/闇輪が交互）。AoE を少し越えて弾ける
   const WAVES = 3
   for (let w = 0; w < WAVES; w++) {
     const wp = ep * 1.25 - w * 0.2 // 各輪を遅延させて重ねる
     if (wp <= 0 || wp >= 1) continue
-    const wr = Math.min(maxR, maxR * wp)
+    const wr = Math.min(effR, effR * wp)
     const a = Math.max(0, 1 - wp)
     ringAt(wr, '#ffffff', a * 0.95, px * (1.0 - wp * 0.5)) // 白い芯
     ringAt(wr, w % 2 === 0 ? GOLD : PURPLE, a, px * (1.9 - wp)) // 光/闇の輪
   }
 
-  // 飛散する光闇＋白の粒（高コントラスト・AoE 内に収める）
+  // 環状に飛散する光闇＋白の粒（高コントラスト・AoE を少しはみ出す）
   const rings = 4
   for (let ring = 0; ring < rings; ring++) {
-    const rr = Math.min(maxR, maxR * ep * (0.35 + ring * 0.22))
-    const count = 12 + ring * 5
+    const rr = Math.min(effR, effR * ep * (0.4 + ring * 0.22))
+    const count = 14 + ring * 6
     const fade = (1 - ep) * (1 - ring * 0.12)
     if (fade <= 0) continue
     for (let i = 0; i < count; i++) {
@@ -1308,6 +1309,21 @@ export function drawMisfire(
       const col = m === 0 ? GOLD : m === 1 ? PURPLE : '#ffffff'
       cell(gx, gy, col, Math.min(1, fade))
     }
+  }
+
+  // 光と闇の粒が四方へ大量に飛び散る（バラつき・重力つき・一部は AoE を越える・#41）
+  const SCATTER = 52
+  for (let i = 0; i < SCATTER; i++) {
+    const h = Math.sin(i * 12.9898) * 43758.5453
+    const rnd = h - Math.floor(h) // 0..1 の決定的擬似乱数（フレーム間で安定）
+    const ang = (i / SCATTER) * Math.PI * 2 + (rnd - 0.5) * 0.7
+    const reach = effR * (0.55 + rnd * 0.7) // 距離はばらつく（一部は AoE 外へ）
+    const rr = reach * Math.min(1, ep * 1.2)
+    const gx = Math.cos(ang) * rr
+    const gy = Math.sin(ang) * rr + ep * ep * px * (1.4 + rnd * 1.8) // 重力で落ちる
+    const m = i % 3
+    const col = m === 0 ? GOLD : m === 1 ? PURPLE : '#fff8e1'
+    cell(gx, gy, col, Math.max(0, (1 - ep) * (0.55 + rnd * 0.45)))
   }
 
   ctx.globalCompositeOperation = 'source-over'
