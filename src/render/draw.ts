@@ -1206,7 +1206,8 @@ export function drawMisfire(
 ): void {
   const c = toScreen(pos, vp)
   const s = scaleOf(vp)
-  const maxR = FIELD.aoeRadius * s * 1.3 // 演出は AoE より少し大きく弾けさせる
+  // 演出の最大半径＝効果範囲（AoE）と一致させる（#29：見た目と実ダメージ範囲を揃える）
+  const maxR = FIELD.aoeRadius * s
   const px = Math.max(4, Math.round(s * 0.32)) // ドットの一辺
   ctx.save()
   const cell = (gx: number, gy: number, col: string, a: number) => {
@@ -1217,13 +1218,24 @@ export function drawMisfire(
 
   const VOID2 = '#b483ff' // 虚式・紫の輝き
 
+  // 効果範囲（AoE）の境界円を常時うっすら示す：この円内の敵・味方がダメージを受ける（#29）
+  ctx.globalAlpha = 0.18 + 0.22 * (1 - progress)
+  ctx.strokeStyle = VOID2
+  ctx.lineWidth = Math.max(1.5, px * 0.3)
+  ctx.setLineDash([px, px])
+  ctx.beginPath()
+  ctx.arc(c.x, c.y, maxR, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.setLineDash([])
+  ctx.globalAlpha = 1
+
   if (progress < 0.3) {
-    // ===== 収縮フェーズ：周囲のドットが中心へ吸い込まれる =====
+    // ===== 収縮フェーズ：周囲のドットが中心へ吸い込まれる（AoE 内から集まる） =====
     const ip = progress / 0.3 // 0→1
     const n = 22
     for (let i = 0; i < n; i++) {
       const ang = (i / n) * Math.PI * 2 + i * 1.3
-      const rr = maxR * (1 - ip) * (0.6 + ((i * 29) % 8) / 10)
+      const rr = maxR * (1 - ip) * (0.5 + ((i * 29) % 8) / 16)
       cell(Math.cos(ang) * rr, Math.sin(ang) * rr, i % 2 === 0 ? VOID2 : COLORS.light2, 0.3 + ip * 0.7)
     }
     // 育つ特異点（紫の発光球＋白核）
@@ -1241,12 +1253,12 @@ export function drawMisfire(
     return
   }
 
-  // ===== 爆発フェーズ =====
+  // ===== 爆発フェーズ（AoE 半径いっぱいまで広がる） =====
   const ep = (progress - 0.3) / 0.7 // 0→1
   const r = maxR * ep
 
-  // 紫の虚空球（膨張しながら薄れる）
-  const voidR = maxR * (0.35 + ep * 1.0)
+  // 紫の虚空球（膨張しながら薄れる）。ep=1 で AoE 半径ちょうどに達する
+  const voidR = maxR * (0.3 + ep * 0.7)
   const vg = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, voidR)
   vg.addColorStop(0, `rgba(180,131,255,${0.85 * (1 - ep)})`)
   vg.addColorStop(0.55, `rgba(106,46,196,${0.6 * (1 - ep)})`)
@@ -1270,29 +1282,31 @@ export function drawMisfire(
     ctx.shadowBlur = 0
   }
 
-  // 放射状に飛び散るドット（光・闇・紫が混ざる。重力で少し落ちる）
+  // 放射状に飛び散るドット（光・闇・紫が混ざる。重力で少し落ちる）。AoE 半径内に収める
   const rings = 4
   for (let ring = 0; ring < rings; ring++) {
-    const rr = r * (0.45 + ring * 0.24)
+    const rr = Math.min(maxR, r * (0.34 + ring * 0.2))
     const count = 10 + ring * 5
     const fade = (1 - ep) * (1 - ring * 0.14)
     if (fade <= 0) continue
     for (let i = 0; i < count; i++) {
       const ang = (i / count) * Math.PI * 2 + ring * 0.4 + ep * 0.9
       const gx = Math.cos(ang) * rr
-      const gy = Math.sin(ang) * rr + ep * ep * px * 2
+      const gy = Math.sin(ang) * rr + ep * ep * px * 1.2
       const col = (i + ring) % 3 === 0 ? VOID2 : (i + ring) % 3 === 1 ? COLORS.light1 : COLORS.dark1
       cell(gx, gy, col, Math.min(1, fade))
     }
   }
 
-  // 多重衝撃リング（中空の四角枠が外へ広がる）
+  // 衝撃波の円リング（AoE 円に沿って外へ広がり、効果範囲ちょうどで止まる）
   for (let k = 0; k < 2; k++) {
-    const kr = r * (0.7 + k * 0.5)
+    const kr = Math.min(maxR, r * (0.7 + k * 0.3))
     ctx.globalAlpha = (1 - ep) * 0.8 * (1 - k * 0.3)
     ctx.strokeStyle = k === 0 ? VOID2 : COLORS.dark1
     ctx.lineWidth = px * 0.6
-    ctx.strokeRect(c.x - kr, c.y - kr, kr * 2, kr * 2)
+    ctx.beginPath()
+    ctx.arc(c.x, c.y, kr, 0, Math.PI * 2)
+    ctx.stroke()
   }
   ctx.restore()
 }
