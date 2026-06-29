@@ -637,7 +637,12 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       misfirePos = flight.endPos
       // endSpeed は samples 空でも v0(=初速) を保持するため常に正しい
       const speed = flight.endSpeed
-      const mis = resolveMisfire({ type: 'invalid', pos: misfirePos }, speed, enemies.map((e) => ({ id: e.id, pos: e.pos })))
+      // 倒した敵（hp0）は AoE 対象に含めない（味方側と同様・撃破済みに判定が出ないように）
+      const mis = resolveMisfire(
+        { type: 'invalid', pos: misfirePos },
+        speed,
+        enemies.filter((e) => e.hp > 0).map((e) => ({ id: e.id, pos: e.pos })),
+      )
       for (const id of mis.hitIds) {
         const idx = enemies.findIndex((e) => e.id === id)
         if (idx >= 0) {

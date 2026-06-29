@@ -468,6 +468,26 @@ describe('暴発の壁破壊（#41）', () => {
     expect(res.log.some((l) => l.kind === 'misfire')).toBe(true)
   })
 
+  it('AoE 内に倒れた敵(hp0)がいてもダメージ判定を出さない（生存敵だけ巻き込む）', () => {
+    // 暴発点は (0,~7)。弾の直線上(x=0)に死体、外れた位置(x=3)に生存敵を AoE 内へ置く
+    const dead = enemy('dead', { x: 0, y: 6 }, 'dark', 0) // すでに撃破済み（AoE 内・経路上だが hp0 で素通り）
+    const alive = enemy('alive', { x: 3, y: 7 }, 'dark', 80) // 生存（AoE 内・経路外）
+    const res = resolveTurn({
+      allies: [ally('m', { x: 0, y: 0 })],
+      casts: [cast('m', upMisfire)],
+      enemies: [dead, alive],
+      castingEnemyIds: [],
+      obstacles: [],
+      mechanics: onlyHit,
+    })
+    // 倒した敵にはポップアップもダメージも出ない
+    expect(res.popups.some((p) => p.targetId === 'dead')).toBe(false)
+    expect(res.enemies.find((e) => e.id === 'dead')!.statuses).toHaveLength(0)
+    // 生存敵には暴発の白ダメージが入る
+    expect(res.popups.some((p) => p.targetId === 'alive' && p.kind === 'misfire')).toBe(true)
+    expect(res.enemies.find((e) => e.id === 'alive')!.hp).toBeLessThan(80)
+  })
+
   it('壊れない壁（unbreakable）は暴発でも削れない', () => {
     const wall: Obstacle = { id: 'u', element: 'neutral', kind: 'unbreakable', solids: [{ x: 0, y: 9, r: 2.4 }], carves: [] }
     const res = resolveTurn({
