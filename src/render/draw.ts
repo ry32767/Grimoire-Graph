@@ -718,12 +718,95 @@ export function drawZFieldOverlay(
   ctx.restore()
 }
 
+/** 極とみなす |z| の発散しきい（ここを超えて伸び続ければ極＝発散と判定）。 */
+const ERR_BLOWUP = 500
+
+/**
+ * 符号が反転する 2 点間が「極（発散）」かを二分法で判定する（#30）。
+ * 符号反転点へ寄せていき、|z| が際限なく増大（非有限/ERR_BLOWUP 超え）すれば極（1/x 型）。
+ * 連続関数の零点（|z| は 0 へ収束）と区別できる＝急峻でも有界な場を誤検出しない。
+ */
+function isPoleBetween(
+  zf: (x: number, y: number) => number,
+  ax: number, ay: number, za: number,
+  bx: number, by: number, zb: number,
+): boolean {
+  if (!Number.isFinite(za) || !Number.isFinite(zb)) return true
+  if (za === 0 || zb === 0 || Math.sign(za) === Math.sign(zb)) return false
+  for (let k = 0; k < 16; k++) {
+    const mx = (ax + bx) / 2
+    const my = (ay + by) / 2
+    const zm = zf(mx, my)
+    if (!Number.isFinite(zm)) return true
+    if (Math.abs(zm) > ERR_BLOWUP) return true // 寄せるほど発散＝極
+    if (Math.sign(zm) === Math.sign(za)) { ax = mx; ay = my; za = zm }
+    else { bx = mx; by = my; zb = zm }
+  }
+  return false // 零点へ収束した（有界）＝極ではない
+}
+
+/**
+ * z 場（属性関数）が**エラーになる地点を全て**赤で可視化する（#30）。
+ * 場を走査し、(1) 非有限（NaN/±∞＝sqrt(-1)・log(0) など定義域外）の点を赤で塗り、
+ * (2) 隣接サンプル間で符号反転する箇所を二分法で調べ、極（発散）なら赤で塗る。
+ * 極は赤い線として、定義域外は赤い領域として現れる。編集中（showZField）だけ表示する。
+ */
+export function drawZFieldErrors(
+  ctx: CanvasRenderingContext2D,
+  zField: (x: number, y: number) => number,
+  vp: Viewport,
+): void {
+  const step = 0.8 // ユニット
+  const s = scaleOf(vp)
+  const cell = step * s
+  const R = FIELD.rField
+  const xs: number[] = []
+  for (let x = -R; x <= R + 1e-9; x += step) xs.push(x)
+  ctx.save()
+  ctx.fillStyle = 'rgba(255,60,60,0.5)'
+  const mark = (x: number, y: number) => {
+    const c = toScreen({ x, y }, vp)
+    ctx.fillRect(c.x - cell / 2, c.y - cell / 2, cell + 1, cell + 1)
+  }
+  let prevRow: number[] | null = null
+  for (let y = -R; y <= R + 1e-9; y += step) {
+    const row: number[] = []
+    let prevZ: number | null = null
+    for (let xi = 0; xi < xs.length; xi++) {
+      const x = xs[xi]
+      const inField = Math.hypot(x, y) <= R
+      const z = inField ? zField(x, y) : NaN
+      row.push(z)
+      if (!inField) {
+        prevZ = null
+        continue
+      }
+      if (!Number.isFinite(z)) {
+        mark(x, y) // 定義域外（NaN/±∞）
+        prevZ = null
+        continue
+      }
+      // 横方向（左隣）／縦方向（上の行）の符号反転が極かを調べる（隣が有限な点のみ）
+      if (prevZ !== null && isPoleBetween(zField, x - step, y, prevZ, x, y, z)) mark(x - step / 2, y)
+      else if (prevRow && Number.isFinite(prevRow[xi]) && isPoleBetween(zField, x, y - step, prevRow[xi], x, y, z))
+        mark(x, y - step / 2)
+      prevZ = z
+    }
+    prevRow = row
+  }
+  ctx.restore()
+}
+
 /** 静的シーン一式を描画する。 */
 export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
   drawBackground(ctx, p.vp)
 
   // 編集中の z 場を薄い場として表示（#37）。敵・壁より下のレイヤ＝背景直後に描く
-  if (p.showZField && p.zField) drawZFieldOverlay(ctx, p.zField, p.vp)
+  if (p.showZField && p.zField) {
+    drawZFieldOverlay(ctx, p.zField, p.vp)
+    // 場がエラーになる地点を全て赤で可視化（極=線・定義域外=領域・#30）
+    drawZFieldErrors(ctx, p.zField, p.vp)
+  }
 
   // 敵ゴースト軌道
   if (p.ghostPaths) {

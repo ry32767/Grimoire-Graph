@@ -60,7 +60,14 @@ AoE 半径 = aoeRadius(=5)
 
 ### プレビューでのエラー可視化（#30）
 
-作成フェーズのプレビューでは、軌道・z 場のどちらかがエラーで暴発する点を**赤い ✕ マーカー**で表示する（`draw.ts` `drawMisfireMarker`）。`computePreview` が `detectMisfire` の結果（`type==='invalid'` のみ）を `Preview.misfirePos` として返し、`App.tsx` → `BattleCanvas`（`misfirePoints` prop）→ `drawScene` の最前面に描く。場外脱出（ただの外れ）には出さない。これで「式のどこで暴発するか」を撃つ前に確認できる。
+作成フェーズのプレビューで、関数エラーを 2 通りに可視化する：
+
+1. **弾の暴発点（赤い ✕）**：軌道・z 場のどちらかがエラーで、弾が実際に暴発する点。`draw.ts` `drawMisfireMarker`。`computePreview` が `detectMisfire` の結果（`type==='invalid'` のみ）を `Preview.misfirePos` として返し、`App.tsx` → `BattleCanvas`（`misfirePoints` prop）→ `drawScene` の最前面に描く。場外脱出（ただの外れ）には出さない。各味方ぶん表示。
+2. **場のエラー地点を全て（赤い線/領域）**：z 場を編集している間（`showZField`）、アクティブな術者の z 場が**エラーになる地点を全て**赤で重ねる（`draw.ts` `drawZFieldErrors`）。
+   - **非有限**（`sqrt(-1)`・`log(0)` などの定義域外）→ 赤い**領域**。
+   - **極（発散・`1/x` 型）** → 赤い**線**。場を `step=0.8` で走査し、符号反転する隣接点を二分法（`isPoleBetween`）で調べ、寄せるほど \|z\| が際限なく増大（非有限 or `ERR_BLOWUP=500` 超え）すれば極と判定する。連続関数の零点（\|z\|→0 に収束）と区別でき、急峻でも有界な場は誤検出しない。
+
+①は「弾がどこで暴発するか」、②は「場のどこが危険か（全エラー地点）」を示す。撃つ前に式の破綻箇所を確認できる。
 
 ---
 
