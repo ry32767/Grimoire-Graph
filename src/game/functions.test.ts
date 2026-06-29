@@ -150,10 +150,11 @@ describe('z 場の自由入力（f(x,y)・#30）', () => {
     expect(parseZExpression('a + x')).toBeNull()
   })
 
-  it('非有限/非実数は 0（中立）に正規化する', () => {
+  it('非有限/非実数は NaN を返す（その点で暴発扱い・#30）', () => {
     const f = parseZExpression('log(x)')
     expect(f).not.toBeNull()
-    expect(f!(0, 0)).toBe(0) // log(0) = -Infinity → 0
+    expect(Number.isNaN(f!(0, 0))).toBe(true) // log(0) = -Infinity → NaN（暴発）
+    expect(f!(1, 0)).toBeCloseTo(0, 6) // log(1) = 0（正常値は通る）
   })
 })
 

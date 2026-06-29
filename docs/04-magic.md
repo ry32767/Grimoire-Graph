@@ -55,7 +55,12 @@ AoE 半径 = aoeRadius(=5)
 - AoE 内の敵全員＋暴発点 `aoeRadius` 以内の味方全員にダメージ＋状態異常。
 - 暴発点が術者（原点）近傍なら**自爆**（`selfHit`）。足元で関数が壊れると味方を巻き込むので注意。
 - `detectMisfire` は `pathTermination` を使い、`maxParam`（場内で完結）なら暴発しない。
+- **z 場（属性関数）のエラーでも暴発する**（#30）。`sqrt(-1)`・`log(0)`・`1/x` の極など、**軌道は有効でも z 場が経路上でエラー（非有限）になる点**で同じ暴発が起きる（検出は `coords.ts` の `applyZValidity`・[03-functions.md](03-functions.md) §3.3）。暴発点はエラー手前の場内有効点。
 - ステージ 6 のヒントにある通り「狙って暴発させて最大 AoE を当てる」高等戦術も成立する。
+
+### プレビューでのエラー可視化（#30）
+
+作成フェーズのプレビューでは、軌道・z 場のどちらかがエラーで暴発する点を**赤い ✕ マーカー**で表示する（`draw.ts` `drawMisfireMarker`）。`computePreview` が `detectMisfire` の結果（`type==='invalid'` のみ）を `Preview.misfirePos` として返し、`App.tsx` → `BattleCanvas`（`misfirePoints` prop）→ `drawScene` の最前面に描く。場外脱出（ただの外れ）には出さない。これで「式のどこで暴発するか」を撃つ前に確認できる。
 
 ---
 

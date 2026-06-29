@@ -231,7 +231,9 @@ export function parseExpression(
 /**
  * z 場の自由入力式 f(x,y) をパースして ZField を返す（#30：2変数）。
  * 構文エラー・許可外ノード・未知変数なら null（UI は直前の有効関数を維持）。
- * 非実数/非有限/例外時は 0 を返す（中立扱い）。x,y に依存しない定数式も許可する。
+ * 評価が実数でない（複素数など）／非有限／例外時は NaN を返す。軌道関数と同様、
+ * その点で「暴発」扱いになる（経路サンプリングで無効点として検出される）。
+ * x,y に依存しない定数式も許可する。
  */
 export function parseZExpression(expr: string): ZField | null {
   const compiled = compileExpr(expr)
@@ -242,9 +244,9 @@ export function parseZExpression(expr: string): ZField | null {
     scope.y = y
     try {
       const r = compiled.evalWith(scope)
-      return typeof r === 'number' && Number.isFinite(r) ? r : 0
+      return typeof r === 'number' && Number.isFinite(r) ? r : NaN
     } catch {
-      return 0
+      return NaN
     }
   }
 }

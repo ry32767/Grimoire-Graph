@@ -67,7 +67,7 @@ polar:  { mode:'polar',  f: preset.buildF(coeffs), origin }
 |---|---|---|
 | 回転軌道 | `parseExpression(expr, 'x')` | `x` |
 | 極座標軌道 | `parseExpression(expr, 't')` | `t`（=θ） |
-| z 場 | `parseZExpression(expr)` | `x`, `y`（定数式も可） |
+| z 場 | `parseZExpression(expr)` | `x`, `y`（定数式も可・errは NaN→暴発） |
 
 加えて定数 `pi`, `e`, `tau` を許可。
 
@@ -85,10 +85,12 @@ polar:  { mode:'polar',  f: preset.buildF(coeffs), origin }
 
 ### エラーと暴発の分離
 
-- **構文エラー・許可外ノード・未知変数** → `parseExpression` は `null` を返す。UI は**直前の有効関数を維持**（壊れた式では撃たせない）。
-- **式は正当だが評価が非実数/非有限/例外**（複素数・`1/0` の極など）→ 軌道では `NaN`、z 場では `0` を返す。`NaN` はサンプリングで「無効点」となり、**暴発**として扱われる（[04-magic.md](04-magic.md) §4.3）。
+- **構文エラー・許可外ノード・未知変数** → `parseExpression` / `parseZExpression` は `null` を返す。UI は**直前の有効関数を維持**（壊れた式では撃たせない）。
+- **式は正当だが評価が非実数/非有限/例外**（複素数・`sqrt(-1)`・`log(0)`・`1/0` の極など）→ **軌道関数・z 場ともに `NaN` を返す**（#30）。`NaN` はサンプリングで「無効点」となり、その手前の点で**暴発**として扱われる（[04-magic.md](04-magic.md) §4.3）。
 
 この「不正式（維持）」と「正当式の発散（暴発）」の明確な分離が設計上の要点。
+
+> **z 場のエラーも軌道関数と同様に暴発する**（#30）。`zfieldAt` は属性・強度の評価では非有限 z を 0（中立）に丸めるが、`sampleTrajectory` が経路上で z を評価し、**非有限の点**、または**符号反転しつつ両側の \|z\| が `2·zPeak`(=10) を超える点（＝`1/x` 型の極を跨いだ）**を無効点にする（`coords.ts` の `applyZValidity`）。これにより z 場のエラー点でも発射型の弾はそこで暴発し、結界リングは途切れる。
 
 ---
 

@@ -17,6 +17,8 @@ export interface SceneParams {
   activeAllyId?: string | null
   /** 各味方のプレビュー軌道（z つき＝属性で色分け。発射型=飛行軌道／軌道型=リング） */
   playerPaths?: (ZPoint[] | null)[]
+  /** 各味方の暴発（関数エラー）点。プレビューで赤い✕として可視化する。エラー無しは null */
+  misfirePoints?: (Vec2 | null)[]
   /** 敵ゴースト軌道（数学座標の点列の配列） */
   ghostPaths?: Vec2[][]
   /** 被弾中の対象ID→フラッシュ強度（1→0）。赤く光って揺れる（#20） */
@@ -745,6 +747,30 @@ export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
   // 敵・術者は軌跡の上に描く（軌跡で隠れない・#27）
   drawEnemies(ctx, p.enemies, p.vp, p.flash, p.shakePhase)
   drawCasters(ctx, p.allies, p.vp, p.activeAllyId, p.flash, p.shakePhase)
+
+  // 関数エラーで暴発する点を赤い✕で可視化（最前面・#30）
+  if (p.misfirePoints) {
+    for (const m of p.misfirePoints) if (m) drawMisfireMarker(ctx, m, p.vp)
+  }
+}
+
+/** プレビュー：関数（軌道 or z 場）がエラーで暴発する点を赤い✕で示す（#30）。 */
+export function drawMisfireMarker(ctx: CanvasRenderingContext2D, pos: Vec2, vp: Viewport): void {
+  const c = toScreen(pos, vp)
+  const r = 7
+  ctx.save()
+  ctx.strokeStyle = '#ff4b4b'
+  ctx.lineWidth = 2.5
+  ctx.lineCap = 'round'
+  ctx.shadowColor = '#ff2a2a'
+  ctx.shadowBlur = 8
+  ctx.beginPath()
+  ctx.moveTo(c.x - r, c.y - r)
+  ctx.lineTo(c.x + r, c.y + r)
+  ctx.moveTo(c.x + r, c.y - r)
+  ctx.lineTo(c.x - r, c.y + r)
+  ctx.stroke()
+  ctx.restore()
 }
 
 /** z（属性の高さ）から弾の色を選ぶ。光=金・闇=紫・中立=淡い白。 */

@@ -1,6 +1,9 @@
 // 座標変換と軌道の幾何展開。描画・当たり判定・物理・暴発で共有する唯一の変換層（§3.1）。
-import type { Vec2, Trajectory } from './types'
+import type { Vec2, Trajectory, ZField } from './types'
 import { FIELD, SAMPLING } from '../data/constants'
+
+/** z 場が「極（発散）」とみなす符号反転時の最小 |z|（強度が 0 になる 2·zPeak 以上）。 */
+const POLE_Z = 2 * FIELD.zPeak
 
 // ===== Canvas ⇔ 数学座標 =====
 
@@ -57,6 +60,37 @@ export interface Sample {
   inField: boolean
 }
 
+/**
+ * z 場（属性関数）が経路上で「エラー（暴発）」になる点を検出して、その手前までで打ち切る（#30）。
+ * 軌道関数のエラーと同様に扱う：z が非有限（NaN/±∞＝sqrt(-1)・log(-1)・1/0 など）の点、
+ * または隣り合うサンプルで符号が反転しつつ両側の |z| が大きい点（=極を跨いだ＝1/x 型の発散）を
+ * 無効点としてマークする。以後 validPrefix / pathTermination が暴発点として扱う。
+ */
+function applyZValidity(samples: Sample[], zf?: ZField): void {
+  if (!zf) return
+  let prevZ: number | null = null
+  for (const s of samples) {
+    if (!s.valid) {
+      prevZ = null
+      continue
+    }
+    const z = zf(s.pos.x, s.pos.y)
+    const finite = Number.isFinite(z)
+    const pole =
+      finite &&
+      prevZ !== null &&
+      Math.sign(z) !== Math.sign(prevZ) &&
+      Math.min(Math.abs(z), Math.abs(prevZ)) > POLE_Z
+    if (!finite || pole) {
+      s.valid = false
+      s.inField = false
+      prevZ = null
+      continue
+    }
+    prevZ = z
+  }
+}
+
 /** 軌道を原点側から外側へサンプリングする（無効点・場外点も含めて返す）。 */
 export function sampleTrajectory(traj: Trajectory): Sample[] {
   const out: Sample[] = []
@@ -83,6 +117,8 @@ export function sampleTrajectory(traj: Trajectory): Sample[] {
       out.push({ param: t, pos, valid, inField: valid && dist(pos) <= FIELD.rField })
     }
   }
+  // z 場のエラー点（暴発）を反映：軌道は有効でも z がエラーになる点で打ち切る（#30）
+  applyZValidity(out, traj.z)
   return out
 }
 

@@ -111,6 +111,8 @@ interface Props {
   obstacles: Obstacle[]
   activeAllyId?: string | null
   playerPaths?: (ZPoint[] | null)[]
+  /** 各味方の暴発（関数エラー）点。プレビューで赤い✕として可視化する（#30） */
+  misfirePoints?: (Vec2 | null)[]
   ghostPaths?: Vec2[][]
   /** 編集中の z 場（#37）。showZField の間だけ薄い場として表示する */
   zField?: (x: number, y: number) => number
@@ -196,6 +198,7 @@ export default function BattleCanvas(props: Props) {
     obstacles: props.obstacles,
     activeAllyId: props.activeAllyId,
     playerPaths: props.playerPaths,
+    misfirePoints: props.misfirePoints,
     ghostPaths: props.ghostPaths,
     zField: props.zField,
     showZField: props.showZField,
@@ -328,6 +331,7 @@ export default function BattleCanvas(props: Props) {
         ...staticParams,
         obstacles,
         playerPaths: undefined,
+        misfirePoints: undefined,
         showZField: false,
         flash,
         shakePhase: elapsed * 0.05,
@@ -491,6 +495,7 @@ export default function BattleCanvas(props: Props) {
     props.obstacles,
     props.activeAllyId,
     props.playerPaths,
+    props.misfirePoints,
     props.ghostPaths,
     props.zField,
     props.showZField,

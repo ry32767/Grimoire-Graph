@@ -118,6 +118,11 @@ export default function App() {
     () => aliveAllies.map((a) => previews[a.id]?.path ?? null),
     [aliveAllies, previews],
   )
+  // 関数（軌道 or z 場）がエラーで暴発する点（#30）。プレビューで赤い✕として可視化する
+  const misfirePoints = useMemo(
+    () => aliveAllies.map((a) => previews[a.id]?.misfirePos ?? null),
+    [aliveAllies, previews],
+  )
   // 編集中の z 場（#37）。アクティブな術者の z 場を場として薄く表示する
   const activeZField = useMemo(() => {
     const c = composers[activeAllyId]
@@ -444,6 +449,7 @@ export default function App() {
               obstacles={battle.obstacles}
               activeAllyId={composing ? activeAllyId : null}
               playerPaths={composing ? playerPaths : undefined}
+              misfirePoints={composing ? misfirePoints : undefined}
               zField={composing ? activeZField ?? undefined : undefined}
               showZField={composing && zEditing}
               standingOrbits={composing ? standingOrbits : undefined}

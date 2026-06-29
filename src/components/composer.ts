@@ -98,6 +98,8 @@ export interface Preview {
   maxStrength: number
   /** 足元で暴発（自爆）の恐れ */
   selfMisfireWarning: boolean
+  /** 関数（軌道 or z 場）がエラーで暴発する点。プレビューで赤く可視化する。エラーが無ければ null */
+  misfirePos: Vec2 | null
 }
 
 const EMPTY_PREVIEW: Preview = {
@@ -107,6 +109,7 @@ const EMPTY_PREVIEW: Preview = {
   powerEstimate: 0,
   maxStrength: 0,
   selfMisfireWarning: false,
+  misfirePos: null,
 }
 
 /**
@@ -138,6 +141,8 @@ export function computePreview(
   const maxStrength = geomPts.reduce((m, pos) => Math.max(m, strengthOf(zfieldAt(traj, pos))), 0)
 
   const mis = detectMisfire(traj)
+  // エラー暴発（invalid）のみ赤マーカーで可視化する。場外脱出（outOfField＝ただの外れ）は出さない
+  const misfirePos = mis && mis.type === 'invalid' ? mis.pos : null
   const selfMisfireWarning = !!mis && mis.type === 'invalid' && dist(mis.pos) <= FIELD.aoeRadius + 1
 
   return {
@@ -149,5 +154,6 @@ export function computePreview(
     powerEstimate: endSpeed * strengthOf(endZ),
     maxStrength,
     selfMisfireWarning,
+    misfirePos,
   }
 }

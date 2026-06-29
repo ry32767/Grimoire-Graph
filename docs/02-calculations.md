@@ -27,6 +27,7 @@ rotate(p, θ) = { x: p.x·cosθ - p.y·sinθ, y: p.x·sinθ + p.y·cosθ }
 | 極座標 `polar` | θ | `0 〜 polarThetaMax(=4π)` | `polarStep=0.02` | `origin + (r·cosθ, r·sinθ)`、`r=f(θ)` |
 
 - **回転方式の平行移動**：局所 y を `g(0)` だけ引いて、術者位置 `origin` を必ず始点にする（#14）。
+- **z 場のエラー反映（#30）**：サンプリング後に `applyZValidity` が経路上で z 場を評価し、**非有限の点**、または**符号反転しつつ両側の \|z\| が `2·zPeak`(=10) を超える点（極を跨いだ）**を `valid=false` にする。これで軌道が有効でも z 場がエラーになる点で暴発・打ち切りが起きる（軌道関数のエラーと同じ扱い）。
 - `validPrefix`：最初に「無効 or 場外」になる手前までの連続区間（発射型の飛行に使う）。
 - `validFinitePrefix`：最初に「無効（非有限）」になる手前まで（**場外で切らない**＝結界リングは一周する・#22/#25）。
 - `buildPolyline`：有効プレフィックスに累積弧長 `cumLen` を付けたポリライン。弧長で位置を引ける。
@@ -50,6 +51,8 @@ rotate(p, θ) = { x: p.x·cosθ - p.y·sinθ, y: p.x·sinθ + p.y·cosθ }
 ```ts
 zfieldAt(traj, pos) = traj.z ? traj.z(pos.x, pos.y) : 0   // 未指定なら中立 0
 ```
+
+> 属性・強度の評価では非有限 z は 0（中立）に丸める。一方、経路上で z 場が非有限になる点は `sampleTrajectory`（`applyZValidity`）が**暴発点**として扱う（§2.1・#30）。
 
 ### 属性判定
 

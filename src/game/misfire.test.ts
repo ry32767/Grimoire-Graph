@@ -35,6 +35,36 @@ describe('暴発点の検出（§3.5・機能8）', () => {
     const pole2: Trajectory = { mode: 'rotate', g: (x) => 1 / (2.5 - x), angle: 0 }
     expect(detectMisfire(pole2)?.type).toBe('invalid')
   })
+
+  it('#30：z 場（属性関数）がエラーになる点でも暴発する（軌道は有効でも）', () => {
+    // 軌道は直進で場内有効。z 場が局所 x>8 で非有限（NaN）になる → その手前で暴発。
+    const traj: Trajectory = {
+      mode: 'rotate',
+      g: () => 0,
+      angle: 0,
+      z: (x) => (x > 8 ? NaN : 5),
+    }
+    const m = detectMisfire(traj)
+    expect(m?.type).toBe('invalid')
+    expect(dist(m!.pos)).toBeGreaterThan(0) // 原点ではなく、エラー手前の場内点
+    expect(dist(m!.pos)).toBeLessThanOrEqual(FIELD.rField)
+  })
+
+  it('#30：z 場の極（1/x 型の符号反転発散）も暴発に分類する', () => {
+    // z = 1/(x-10) は world x=10 で発散。直進軌道がそこを跨ぐと暴発。
+    const traj: Trajectory = {
+      mode: 'rotate',
+      g: () => 0,
+      angle: 0,
+      z: (x) => 1 / (x - 10),
+    }
+    expect(detectMisfire(traj)?.type).toBe('invalid')
+  })
+
+  it('#30：正常な z 場（一定）では暴発しない', () => {
+    const traj: Trajectory = { mode: 'polar', f: () => 5, z: () => 5 }
+    expect(detectMisfire(traj)).toBeNull()
+  })
 })
 
 describe('暴発の AoE 解決', () => {
