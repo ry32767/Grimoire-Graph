@@ -20,6 +20,7 @@
 | 07 | [animation.md](07-animation.md) | **アニメーション**：解決演出のタイムライン・描画レイヤー・パーティクル・音 |
 | 08 | [constants.md](08-constants.md) | **定数リファレンス**：全バランス数値の一覧表 |
 | 09 | [data-model.md](09-data-model.md) | データモデル（型）・ターン進行・解決順序・モジュール構成 |
+| 10 | [recording.md](10-recording.md) | （開発ツール）アニメーションの録画・GIF 作成手順（Playwright + 同梱 ffmpeg / gifenc） |
 
 ## 30 秒でわかるコアループ
 
