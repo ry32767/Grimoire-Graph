@@ -92,6 +92,7 @@ intensity = 1 − (elapsed − flashStart)/FLASH_MS    // 1→0 に減衰
 | 14 | 暴発 | `drawMisfire` |
 | 15 | 弾の霧散 | `drawBulletDissipation` |
 | 16 | 隠蔽ヴェール | `drawConcealVeil`：闇結界の内側を 3px ぼかし＋暗幕 `rgba(6,5,14,0.5)` 重ね |
+| 17 | ダメージ／回復の数値（#42） | `drawDamageNumber`：被弾/回復の数値が浮かび上がる。**揺れの外**（UI として安定）に最前面で描く |
 
 ### 弾の色・大きさ
 
@@ -111,6 +112,16 @@ glowR = (9 + sizeFrac×18) × pulse,  coreR = (2.0 + sizeFrac×3.4) × pulse
 変位 `= ampAt(i)·sin(TRAIL_FREQ·arc − phase)`、`phase = e×flightMs×0.02`。
 
 ---
+
+### ダメージ／回復の数値（`drawDamageNumber`・#42）
+
+被弾・回復のたびに、対象の頭上に数値が**浮かび上がって（上へ昇りながらフェード）**表示される。`resolveTurn` が `DamagePopup[]`（位置・量・種別・対象ID・タイミング）を集め、`BattleCanvas` が描く。
+
+- **色**：属性色（光=金 `#f4c430`／闇=紫 `#b483ff`／中立=淡）。**暴発=白 `#ffffff`**、**回復=緑 `#5ad16a`（先頭に `+`）**。
+- **大きさ**：受けたダメージ量に依存（`size = min(40, 14 + amount × 0.22)`px）。大ダメージほど大きい。
+- **タイミング**：`trigger` で同期。`flash`＝被弾フラッシュと同時（命中/掃射）、`misfire`＝暴発の爆発時、`heal`＝固定（flightMs×0.5）。同じ対象の数値は少しずつ遅らせて縦に積む。
+- **表示時間**：`POPUP_MS = 950`ms（数値を最後まで見せるため、ターンの余韻 `tailMs` も最低 `POPUP_MS+300` を確保）。
+- 暗い縁取り付きで高コントラスト。**画面揺れの外**に描くので暴発中でも読みやすい。
 
 ## 7.3 配色パレット（`theme.ts`）
 

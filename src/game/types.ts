@@ -246,6 +246,23 @@ export interface ActiveOrbit {
 /** ターンのフェーズ（敵公開→作成→解決・§4） */
 export type Phase = 'enemyReveal' | 'compose' | 'resolve'
 
+/**
+ * 浮かび上がるダメージ／回復の数値表示（#42）。
+ * 色は属性色（光=金/闇=紫/中立=淡）、暴発=白、回復=緑。大きさは量に依存。
+ */
+export interface DamagePopup {
+  /** 表示位置（数学座標・対象の位置） */
+  pos: Vec2
+  /** 量（ダメージ or 回復の絶対値） */
+  amount: number
+  /** 色の種別：属性色／暴発(misfire)=白／回復(heal)=緑 */
+  kind: Attribute | 'misfire' | 'heal'
+  /** 同期する対象ID（trigger='flash' のとき被弾フラッシュに合わせて出す） */
+  targetId: string
+  /** 出すタイミング：被弾フラッシュ／暴発の爆発／回復（固定） */
+  trigger: 'flash' | 'misfire' | 'heal'
+}
+
 /** 戦闘ログの1エントリ */
 export interface LogEntry {
   kind:

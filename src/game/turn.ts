@@ -6,6 +6,7 @@ import type {
   Ally,
   AllyCast,
   CarveBurst,
+  DamagePopup,
   Enemy,
   Flight,
   FlightSample,
@@ -120,6 +121,8 @@ export interface ResolveResult {
   clashes: { pos: Vec2; power: number }[]
   /** このターン終了時に持続している周回結界（#39）。次ターンへ持ち越す（破壊されたものは含まない）。 */
   orbits: ActiveOrbit[]
+  /** 浮かび上がるダメージ／回復の数値表示（#42） */
+  popups: DamagePopup[]
 }
 
 /** 永続周回の安定ID（#39）：所有者＋リング重心＋点数から決め、同じ場所の再展開は同一IDに集約する。 */
@@ -300,6 +303,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
   const { mechanics } = input
   const log: LogEntry[] = []
   const clashes: { pos: Vec2; power: number }[] = [] // 弾・結界の衝突点と威力（#20/#38）
+  const popups: DamagePopup[] = [] // ダメージ／回復の数値表示（#42）
   const allies = input.allies.map((a) => ({ ...a, statuses: [...a.statuses] }))
   const enemies = input.enemies.map((e) => ({ ...e, statuses: [...e.statuses] }))
   // carves は削りで増えるので、入力を壊さないようターンごとに新しい配列へ複製（solids は不変で共有）
@@ -541,6 +545,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
             hp: Math.max(0, enemies[idx].hp - h.damage),
             statuses: addStatus(enemies[idx].statuses, makeStatus(h.attr, h.strength)),
           }
+          popups.push({ pos: enemies[idx].pos, amount: h.damage, kind: h.attr, targetId: h.id, trigger: 'flash' })
           log.push({
             kind: 'playerHit',
             text: `${nameOf(allies, p.cast.allyId)}の周回が${enemies[idx].name}を掃射！ ${h.damage.toFixed(0)} ダメージ`,
@@ -622,6 +627,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
         hp: Math.max(0, enemy.hp - dmg.damage),
         statuses: addStatus(enemy.statuses, makeStatus(dmg.attackAttr, dmg.strength)),
       }
+      popups.push({ pos: enemy.pos, amount: dmg.damage, kind: dmg.attackAttr, targetId: hit.id, trigger: 'flash' })
       log.push({
         kind: 'playerHit',
         text: `${nameOf(allies, p.cast.allyId)}→${enemy.name}に命中！ 速${dmg.speed.toFixed(1)}×強${dmg.strength.toFixed(1)}×相性${dmg.affinity} = ${dmg.damage.toFixed(0)}`,
@@ -634,12 +640,14 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       const mis = resolveMisfire({ type: 'invalid', pos: misfirePos }, speed, enemies.map((e) => ({ id: e.id, pos: e.pos })))
       for (const id of mis.hitIds) {
         const idx = enemies.findIndex((e) => e.id === id)
-        if (idx >= 0)
+        if (idx >= 0) {
           enemies[idx] = {
             ...enemies[idx],
             hp: Math.max(0, enemies[idx].hp - mis.damage),
             statuses: mis.statuses.reduce((acc, s) => addStatus(acc, s), enemies[idx].statuses),
           }
+          popups.push({ pos: enemies[idx].pos, amount: mis.damage, kind: 'misfire', targetId: id, trigger: 'misfire' })
+        }
       }
       for (let i = 0; i < allies.length; i++) {
         if (allies[i].hp > 0 && dist(allies[i].pos, misfirePos) <= FIELD.aoeRadius) {
@@ -648,6 +656,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
             hp: Math.max(0, allies[i].hp - mis.damage),
             statuses: mis.statuses.reduce((acc, s) => addStatus(acc, s), allies[i].statuses),
           }
+          popups.push({ pos: allies[i].pos, amount: mis.damage, kind: 'misfire', targetId: allies[i].id, trigger: 'misfire' })
         }
       }
       // 暴発は AoE 内の壁をほぼ全て削る（unbreakable＝壊れない壁だけ残る・§3.5/§3.7）
@@ -733,8 +742,10 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       }
     }
     const newHp = heal > 0 ? Math.min(allies[i].maxHp, allies[i].hp + heal) : allies[i].hp
+    const gained = newHp - allies[i].hp
     allies[i] = { ...allies[i], hp: newHp, concealed: conceal, concealRmse: rmse }
     if (heal > 0) {
+      if (gained > 0) popups.push({ pos: allies[i].pos, amount: gained, kind: 'heal', targetId: allies[i].id, trigger: 'heal' })
       log.push({ kind: 'orbit', text: `${allies[i].name}は光の周回で ${heal.toFixed(0)} 回復した` })
     }
     if (conceal >= COMBAT.orbitConcealFull) {
@@ -767,6 +778,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     shot.damage = damage
     shot.hitAllyId = allies[idx].id
     shot.hitArcLen = hit.arcLen
+    popups.push({ pos: allies[idx].pos, amount: damage, kind: bAttr, targetId: allies[idx].id, trigger: 'flash' })
     log.push({
       kind: 'enemyHit',
       text: `${nameOf(enemies, shot.enemyId)}の術式が${allies[idx].name}に命中！ ${damage.toFixed(0)} ダメージ`,
@@ -803,6 +815,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     enemyRings: enemyRings.map((r) => ({ ring: r.ring, broken: r.broken, ringSpeed: r.ringSpeed })),
     clashes,
     orbits: [...orbitMap.values()],
+    popups,
   }
 }
 

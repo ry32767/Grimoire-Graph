@@ -273,7 +273,7 @@ export default function App() {
     if (resolution.clashes.length > 0) sfx.push('clash') // パリィ/結界の「バチッ」（#38）
     sfxRef.current = sfx
     setBattle({ ...battle, phase: 'resolve' })
-    setAnimation({ bullets, orbits, clashes: resolution.clashes })
+    setAnimation({ bullets, orbits, clashes: resolution.clashes, popups: resolution.popups })
     setPendingState(after)
     playSfx('fire')
   }

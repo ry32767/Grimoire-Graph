@@ -1317,6 +1317,30 @@ export function drawMisfire(
   ctx.restore()
 }
 
+/** ダメージ／回復の数値を縁取りつきで描く（#42）。screen 座標・中央揃え。 */
+export function drawDamageNumber(
+  ctx: CanvasRenderingContext2D,
+  sx: number,
+  sy: number,
+  text: string,
+  color: string,
+  sizePx: number,
+  alpha: number,
+): void {
+  ctx.save()
+  ctx.globalAlpha = Math.max(0, Math.min(1, alpha))
+  ctx.font = `bold ${Math.round(sizePx)}px "DotGothic16", monospace`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.lineJoin = 'round'
+  ctx.lineWidth = Math.max(2.5, sizePx * 0.22)
+  ctx.strokeStyle = 'rgba(8,6,16,0.9)' // 暗い縁取り（高コントラスト）
+  ctx.strokeText(text, sx, sy)
+  ctx.fillStyle = color
+  ctx.fillText(text, sx, sy)
+  ctx.restore()
+}
+
 /**
  * 暴発に伴いステージ上空から降ってくる遺跡の破片（#41）。
  * 画面全体の演出。progress 0→1 で上から下へ落ち、フィールド円内にクリップする。

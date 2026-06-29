@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
-import type { Ally, CarveBurst, Disc, Enemy, Obstacle, Vec2, ZPoint } from '../game/types'
+import type { Ally, CarveBurst, DamagePopup, Disc, Enemy, Obstacle, Vec2, ZPoint } from '../game/types'
 import { FIELD } from '../data/constants'
-import type { Viewport } from '../game/coords'
+import { toScreen, type Viewport } from '../game/coords'
 import {
   drawScene,
   drawBullet,
@@ -10,6 +10,7 @@ import {
   drawParticle,
   drawMisfire,
   drawFallingDebris,
+  drawDamageNumber,
   drawCarveBurst,
   drawClashSpark,
   drawOrbitDissipation,
@@ -98,7 +99,21 @@ export interface ResolveAnimation {
   orbits: AnimOrbit[]
   /** 弾・結界の衝突点と威力（#20/#38：パリィ/迎撃の火花。power で大きさが変わる） */
   clashes?: { pos: Vec2; power: number }[]
+  /** ダメージ／回復の数値表示（#42） */
+  popups?: DamagePopup[]
 }
+
+/** 数値ポップの色（属性色／暴発=白／回復=緑・#42）。 */
+function popupColor(kind: DamagePopup['kind']): string {
+  if (kind === 'heal') return '#5ad16a'
+  if (kind === 'misfire') return '#ffffff'
+  if (kind === 'light') return COLORS.light1
+  if (kind === 'dark') return '#b483ff'
+  return '#e2e2f0' // 中立
+}
+
+/** 数値ポップの表示時間（ms・#42）。 */
+const POPUP_MS = 950
 
 /** 持続中の周回結界（#39：作成フェーズでも常時表示し、闇は内側を暗くぼかす）。 */
 export interface StandingOrbit {
@@ -250,13 +265,16 @@ export default function BattleCanvas(props: Props) {
     const hasBrokenOrbit = anim.orbits.some((o) => o.broken)
     // 発射魔法の霧散（速度0・命中も暴発もしていない弾）にも余韻を確保する（#38）
     const hasVanish = anim.bullets.some((b) => b.vanished && !b.impact && !b.misfirePos)
-    const tailMs = hasMisfire
+    const baseTail = hasMisfire
       ? MISFIRE_TAIL_MS
       : hasBrokenOrbit || hasVanish
         ? Math.max(IMPACT_TAIL_MS, DISSIPATE_MS + 150)
         : hasImpact || hasClash
           ? IMPACT_TAIL_MS
           : 0
+    // ダメージ／回復の数値を最後まで見せる余韻を確保する（#42）
+    const hasPopups = (anim.popups?.length ?? 0) > 0
+    const tailMs = hasPopups ? Math.max(baseTail, POPUP_MS + 300) : baseTail
     const realMs = flightMs + tailMs
 
     // 被弾フラッシュ：対象IDごとに「反応を開始した実時刻」を記録し、以後減衰させる（#20）
@@ -265,6 +283,24 @@ export default function BattleCanvas(props: Props) {
     const clashStartByIdx: Record<number, number> = {}
     // 霧散：負けた周回ごとに「接触の実時刻」を記録し、その瞬間から散らせる（#34）
     const dissipateStartByIdx: Record<number, number> = {}
+
+    // ダメージ／回復の数値（#42）：同じ対象・契機のポップは縦に積む（重なり防止）
+    const popups = anim.popups ?? []
+    const popupOrd: number[] = []
+    const ordCount: Record<string, number> = {}
+    for (const p of popups) {
+      const k = `${p.targetId}|${p.trigger}`
+      const o = ordCount[k] ?? 0
+      ordCount[k] = o + 1
+      popupOrd.push(o)
+    }
+    // 暴発の爆発開始時刻（misfire ポップの基準）
+    let misfireArrivalMs = Infinity
+    anim.bullets.forEach((b, i) => {
+      if (!b.misfirePos) return
+      const arr = maxTotal > 0 ? (timelines[i].total / maxTotal) * flightMs : 0
+      misfireArrivalMs = Math.min(misfireArrivalMs, arr)
+    })
 
     let raf = 0
     let finished = false
@@ -506,6 +542,25 @@ export default function BattleCanvas(props: Props) {
       if (mfProgress > 0 && mfProgress < 1) drawFallingDebris(ctx, VP, mfProgress)
 
       ctx.restore() // ステージ全体シェイクの translate を戻す
+
+      // ダメージ／回復の数値（揺れの外＝読みやすい UI として安定表示・#42）
+      for (let i = 0; i < popups.length; i++) {
+        const p = popups[i]
+        let start: number | undefined
+        if (p.trigger === 'flash') start = flashStartByTarget[p.targetId]
+        else if (p.trigger === 'misfire') start = Number.isFinite(misfireArrivalMs) ? misfireArrivalMs : undefined
+        else start = flightMs * 0.5 // 回復は固定タイミング
+        if (start === undefined) continue
+        start += popupOrd[i] * 110 // 積み重ねは少し遅らせて出す
+        const t = (elapsed - start) / POPUP_MS
+        if (t < 0 || t >= 1) continue
+        const sp = toScreen(p.pos, VP)
+        const rise = t * 40 + popupOrd[i] * 6 // 上へ昇る
+        const alpha = t < 0.15 ? t / 0.15 : 1 - (t - 0.15) / 0.85 // フェードイン→アウト
+        const size = Math.min(40, 14 + p.amount * 0.22) // 大きさは量に依存
+        const text = p.kind === 'heal' ? `+${Math.round(p.amount)}` : `${Math.round(p.amount)}`
+        drawDamageNumber(ctx, sp.x, sp.y - 16 - rise, text, popupColor(p.kind), size, Math.max(0, alpha))
+      }
 
       if (elapsed < realMs) raf = requestAnimationFrame(frame)
       else finish()
