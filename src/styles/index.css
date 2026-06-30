@@ -216,11 +216,6 @@ h3 {
   grid-template-columns: minmax(0, 1fr) 380px;
   gap: 12px;
 }
-@media (max-width: 960px) {
-  .battle {
-    grid-template-columns: 1fr;
-  }
-}
 
 .battle-left {
   display: flex;
@@ -232,6 +227,89 @@ h3 {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+.stage-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* スマホ専用要素は PC では隠す（#48）。ユーティリティなので !important で確実に効かせる */
+.show-mobile {
+  display: none !important;
+}
+
+/* 盤面の発射・メニュー行（#48） */
+.stage-actions {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.stage-actions .fire-all {
+  flex: 1;
+}
+.menu-wrap {
+  position: relative;
+}
+.menu-toggle {
+  height: 100%;
+}
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+.menu-pop {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--panel-bg);
+  border: 3px solid var(--panel-border);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.5);
+  min-width: 140px;
+}
+
+/* ===== スマホ：盤面/編集の画面切替（#48） ===== */
+@media (max-width: 820px) {
+  .battle {
+    grid-template-columns: 1fr;
+  }
+  .show-mobile {
+    display: flex !important;
+  }
+  /* 表示中の view に合わせて片方だけ見せる（盤面の canvas は常時） */
+  .battle[data-view='stage'] .show-edit {
+    display: none;
+  }
+  .battle[data-view='edit'] .show-stage {
+    display: none;
+  }
+  /* スマホは canvas を正方形のまま高さで抑える。編集中は操作欄と同時に見えるよう小さめ */
+  .canvas-wrap {
+    margin: 0 auto;
+  }
+  .battle[data-view='stage'] .canvas-wrap {
+    max-width: min(100%, 58vh);
+  }
+  .battle[data-view='edit'] .canvas-wrap {
+    max-width: min(100%, 40vh);
+  }
+  /* タップ領域を大きく（44px 目安） */
+  .btn {
+    min-height: 42px;
+    padding: 10px 14px;
+  }
+  .btn.small {
+    min-height: 38px;
+  }
+  .select {
+    min-height: 42px;
+  }
 }
 
 .canvas-wrap {
@@ -294,6 +372,30 @@ h3 {
 }
 .hp-row.dead {
   opacity: 0.4;
+}
+/* タップで関数編集へ（#48）。ボタン化しても見た目は行のまま */
+button.hp-row {
+  width: 100%;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  padding: 4px 4px;
+}
+button.hp-row.tappable {
+  border: 1px solid var(--panel-bevel);
+}
+button.hp-row.tappable:hover {
+  border-color: var(--light-1);
+  background: rgba(244, 196, 48, 0.08);
+}
+.hp-row .edit-cue {
+  flex: 0 0 auto;
+  color: var(--light-1);
+  opacity: 0.7;
+  font-size: 13px;
 }
 .hp-name {
   width: 92px;
@@ -426,6 +528,72 @@ h3 {
   padding: 6px 8px;
   background: rgba(0, 0, 0, 0.3);
   border-left: 3px solid var(--light-1);
+}
+
+/* フォーム行（プルダウン・#48） */
+.form-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+.form-label {
+  font-family: var(--font-pixel);
+  font-size: 10px;
+  color: var(--light-1);
+  flex: 0 0 auto;
+  width: 28px;
+}
+.select {
+  flex: 1;
+  background: var(--bg-2);
+  color: var(--text);
+  border: 3px solid var(--panel-border);
+  box-shadow: 0 3px 0 #000;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: var(--font-body);
+}
+.select:focus {
+  outline: none;
+  border-color: var(--light-1);
+}
+
+/* 関数パネル：フィット優先のシンプル構成（#48） */
+.func-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fit-section.primary {
+  padding: 8px;
+  border: 2px solid rgba(90, 209, 255, 0.45);
+  border-radius: 6px;
+  background: rgba(90, 209, 255, 0.08);
+}
+.fit-section.primary .action-row {
+  margin-top: 8px;
+}
+.btn.おまかせ {
+  width: 100%;
+  border-color: var(--light-1);
+  color: var(--light-1);
+}
+.btn.disclosure {
+  width: 100%;
+  text-align: left;
+  opacity: 0.85;
+}
+.advanced {
+  border-top: 2px dotted var(--panel-bevel);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ally-tabs .back-to-stage {
+  border-color: var(--light-1);
+  color: var(--light-1);
 }
 .slider-row {
   display: flex;

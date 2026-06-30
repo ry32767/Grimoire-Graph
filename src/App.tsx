@@ -102,6 +102,10 @@ export default function App() {
   // #46：通過点フィット。点ピック中フラグと、選んだ通過点（数学座標）
   const [fitPickActive, setFitPickActive] = useState(false)
   const [fitPoints, setFitPoints] = useState<Vec2[]>([])
+  // #48：スマホ向けの画面切替（盤面 ⇄ キャラ関数編集）。PC は CSS で常に両方表示
+  const [view, setView] = useState<'stage' | 'edit'>('stage')
+  // #48：ボタンを減らすためのメニュー（遊び方/図鑑/音）開閉
+  const [menuOpen, setMenuOpen] = useState(false)
   const [codexOpen, setCodexOpen] = useState(false)
   // #23：図鑑用に「遭遇した敵」を記録（セッション内・永続化しない）
   const [seenEnemies, setSeenEnemies] = useState<Set<string>>(new Set())
@@ -197,6 +201,7 @@ export default function App() {
     setActiveAllyId(party[0].id)
     setAnimation(null)
     setPendingState(null)
+    setView('stage')
     setScreen('battle')
     if (stageIndex === 0 && !guideShown) {
       setGuideOpen(true)
@@ -249,16 +254,19 @@ export default function App() {
     // 点は残したまま（曲線が点に近づいた結果を確認できる）。ピックは抜ける。クリアは手動。
     setFitPickActive(false)
   }
-  // 別の味方に切り替えたらピック状態は破棄する
+  // 別の味方に切り替えたらピック状態は破棄する。スマホではそのキャラの編集画面へ（#48）
   const switchAlly = (id: string) => {
     clearFit()
     playSfx('select')
     setActiveAllyId(id)
+    setView('edit')
   }
 
   const fireAll = () => {
     if (!battle) return
     clearFit()
+    setView('stage') // 発射＝盤面（ステージ）画面へ（#48）
+    setMenuOpen(false)
     const casts: AllyCast[] = []
     for (const a of battle.allies) {
       if (a.hp <= 0 || impairedIds.includes(a.id)) continue
@@ -357,6 +365,7 @@ export default function App() {
     setBattle(prep.state)
     setCastingIds(prep.castingEnemyIds)
     setImpairedIds(prep.impairedAllyIds)
+    setView('stage') // 次ターンは盤面（ステージ）画面から始める（#48）
     const stillActive = prep.state.allies.find((a) => a.id === activeAllyId)
     if (!stillActive || stillActive.hp <= 0) {
       const firstAlive = prep.state.allies.find((a) => a.hp > 0)
@@ -483,7 +492,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <div className="battle">
+      <div className="battle" data-view={view}>
         <div className="battle-left">
           <div className="phase-bar">
             <span>
@@ -514,13 +523,58 @@ export default function App() {
               aimAngle={composing && activeComposer?.mode === 'rotate' ? activeComposer.angle : undefined}
             />
           </div>
-          <Hud allies={battle.allies} enemies={battle.enemies} activeAllyId={activeAllyId} />
+
+          {/* 盤面（ステージ）側：HP・キャラ選択・発射・メニュー（スマホは view=stage で表示） */}
+          <div className="stage-pane show-stage">
+            <Hud
+              allies={battle.allies}
+              enemies={battle.enemies}
+              activeAllyId={activeAllyId}
+              onSelectAlly={composing ? switchAlly : undefined}
+              impairedIds={impairedIds}
+            />
+            <div className="stage-actions">
+              <button className="btn primary fire-all" onClick={fireAll}>
+                {anyCastable ? '全員発射' : '次のターンへ'}
+              </button>
+              <div className="menu-wrap">
+                <button
+                  className="btn small menu-toggle"
+                  aria-haspopup="true"
+                  aria-expanded={menuOpen}
+                  onClick={() => setMenuOpen((o) => !o)}
+                >
+                  ≡ メニュー
+                </button>
+                {menuOpen && (
+                  <>
+                    <div className="menu-backdrop" onClick={() => setMenuOpen(false)} />
+                    <div className="menu-pop">
+                      <button className="btn small" onClick={() => { setGuideOpen(true); setMenuOpen(false) }}>遊び方</button>
+                      <button className="btn small" onClick={() => { setCodexOpen(true); setMenuOpen(false) }}>図鑑</button>
+                      <button
+                        className="btn small"
+                        onClick={() => { ensureAudio(); setMutedState(toggleMuted()) }}
+                      >
+                        {muted ? '🔇 音オフ' : '🔊 音オン'}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+            <BattleLog log={battle.log} />
+          </div>
         </div>
 
-        <div className="battle-right">
+        {/* 編集側：選んだキャラの関数を組む（スマホは view=edit で表示） */}
+        <div className="battle-right show-edit">
           {composing && activeComposer && activePreview ? (
             <>
               <div className="ally-tabs">
+                <button className="btn small show-mobile back-to-stage" onClick={() => setView('stage')}>
+                  ← 盤面へ
+                </button>
                 {battle.allies.map((a) => {
                   const impaired = impairedIds.includes(a.id)
                   const dead = a.hp <= 0
@@ -551,25 +605,12 @@ export default function App() {
                 onRunFit={runFit}
                 onClearFitPoints={clearFit}
               />
-              <div className="action-row">
+              <div className="action-row show-mobile">
                 <button className="btn primary fire-all" onClick={fireAll}>
-                  {anyCastable ? '全員発射' : 'ターンを進める'}
+                  {anyCastable ? '全員発射' : '次のターンへ'}
                 </button>
-                <button className="btn small" onClick={() => setGuideOpen(true)}>
-                  遊び方
-                </button>
-                <button className="btn small" onClick={() => setCodexOpen(true)}>
-                  図鑑
-                </button>
-                <button
-                  className="btn small"
-                  title="音のオン/オフ"
-                  onClick={() => {
-                    ensureAudio()
-                    setMutedState(toggleMuted())
-                  }}
-                >
-                  {muted ? '🔇' : '🔊'}
+                <button className="btn small" onClick={() => setView('stage')}>
+                  盤面へ戻る
                 </button>
               </div>
             </>
@@ -579,7 +620,6 @@ export default function App() {
               <p className="hint">魔法が進行・解決しています。</p>
             </div>
           )}
-          <BattleLog log={battle.log} />
         </div>
       </div>
 

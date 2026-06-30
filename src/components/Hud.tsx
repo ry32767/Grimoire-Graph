@@ -20,6 +20,8 @@ function HpRow({
   enemy,
   active,
   statuses,
+  impaired,
+  onSelect,
 }: {
   name: string
   hp: number
@@ -27,6 +29,8 @@ function HpRow({
   enemy?: boolean
   active?: boolean
   statuses: StatusEffect[]
+  impaired?: boolean
+  onSelect?: () => void
 }) {
   const pct = Math.max(0, Math.min(100, (hp / maxHp) * 100))
   const dead = hp <= 0
@@ -34,9 +38,19 @@ function HpRow({
   const hasFlinch = statuses.some((s) => s.kind === 'flinch')
   const hasBurn = statuses.some((s) => s.kind === 'burn')
   const barClass = `hp-bar${hasFlinch ? ' flinch' : ''}${hasBurn ? ' burn' : ''}`
+  const tappable = !!onSelect && !dead
+  // 味方は行ごとタップでそのキャラの関数編集へ（#48）
+  const Tag = tappable ? 'button' : 'div'
   return (
-    <div className={`hp-row${active ? ' active' : ''}${dead ? ' dead' : ''}`}>
-      <span className="hp-name">{name}</span>
+    <Tag
+      className={`hp-row${active ? ' active' : ''}${dead ? ' dead' : ''}${tappable ? ' tappable' : ''}`}
+      onClick={tappable ? onSelect : undefined}
+      {...(tappable ? { type: 'button' as const } : {})}
+    >
+      <span className="hp-name">
+        {name}
+        {impaired && !dead ? '（ひるみ）' : ''}
+      </span>
       <span className={barClass}>
         <span className={`hp-fill${enemy ? ' enemy' : ''}`} style={{ width: `${pct}%` }} />
       </span>
@@ -44,7 +58,8 @@ function HpRow({
         {Math.ceil(hp)}/{maxHp}
       </span>
       <StatusBadges statuses={statuses} />
-    </div>
+      {tappable && <span className="edit-cue" aria-hidden="true">⚙</span>}
+    </Tag>
   )
 }
 
@@ -52,13 +67,16 @@ interface Props {
   allies: Ally[]
   enemies: Enemy[]
   activeAllyId?: string | null
+  /** 味方行のタップで関数編集へ（#48）。未指定なら非タップ。 */
+  onSelectAlly?: (id: string) => void
+  impairedIds?: string[]
 }
 
-export default function Hud({ allies, enemies, activeAllyId }: Props) {
+export default function Hud({ allies, enemies, activeAllyId, onSelectAlly, impairedIds = [] }: Props) {
   return (
     <div className="hud panel">
       <div className="hud-col">
-        <div className="hud-label">自陣営</div>
+        <div className="hud-label">自陣営{onSelectAlly ? '（タップで関数編集）' : ''}</div>
         {allies.map((a) => (
           <HpRow
             key={a.id}
@@ -67,6 +85,8 @@ export default function Hud({ allies, enemies, activeAllyId }: Props) {
             maxHp={a.maxHp}
             active={a.id === activeAllyId}
             statuses={a.statuses}
+            impaired={impairedIds.includes(a.id)}
+            onSelect={onSelectAlly ? () => onSelectAlly(a.id) : undefined}
           />
         ))}
       </div>

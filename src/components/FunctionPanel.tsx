@@ -41,6 +41,7 @@ export default function FunctionPanel(props: Props) {
   const { composer: c, onChange, preview } = props
   const [freeDraft, setFreeDraft] = useState(c.freeExpr)
   const [zFreeDraft, setZFreeDraft] = useState(c.zFreeExpr)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const preset = findPreset(c.presetId)
   const zPreset = findZPreset(c.zPresetId)
 
@@ -95,120 +96,61 @@ export default function FunctionPanel(props: Props) {
     else onChange({ zFreeExpr: zFreeDraft, zUseFree: true, zFreeError: null })
   }
 
-  const presets = c.mode === 'rotate' ? ROTATE_PRESETS : POLAR_PRESETS
+  const canFit = c.mode === 'rotate' && preview.kind === 'projectile' && c.fitParams.length > 0
 
   return (
-    <div className="panel">
+    <div className="panel func-panel">
       <div className="panel-head">
         <span className="panel-ally">{props.allyName} の術式</span>
         <span className={`kind-badge ${preview.kind}`}>
-          {preview.kind === 'orbit' ? '軌道型（周回・防御兼）' : '発射型（火球）'}
+          {preview.kind === 'orbit' ? '軌道型（周回）' : '発射型（火球）'}
         </span>
       </div>
 
-      <div className="mode-tabs">
-        <button className={`btn small${c.mode === 'rotate' ? ' selected' : ''}`} onClick={() => switchMode('rotate')}>
-          回転 y=g(x)
-        </button>
-        <button className={`btn small${c.mode === 'polar' ? ' selected' : ''}`} onClick={() => switchMode('polar')}>
-          極座標 r=f(θ)
-        </button>
+      {/* 形（プリセット）をプルダウンで選ぶ（#48：ボタンを減らす） */}
+      <div className="form-row">
+        <label className="form-label">形</label>
+        <select
+          className="select"
+          value={`${c.mode}:${c.presetId}`}
+          onChange={(e) => {
+            const [mode, id] = e.target.value.split(':')
+            if (mode !== c.mode) switchMode(mode as 'rotate' | 'polar')
+            selectPreset(id)
+          }}
+        >
+          <optgroup label="発射型（回転 y=g(x)）">
+            {ROTATE_PRESETS.map((p) => (
+              <option key={p.id} value={`rotate:${p.id}`}>{p.name}</option>
+            ))}
+          </optgroup>
+          <optgroup label="軌道型（極座標 r=f(θ)）">
+            {POLAR_PRESETS.map((p) => (
+              <option key={p.id} value={`polar:${p.id}`}>{p.name}</option>
+            ))}
+          </optgroup>
+        </select>
       </div>
+      <div className="preset-desc">{preset?.description ?? '自由入力式'}</div>
 
-      <div className="section-title">プリセット</div>
-      <div className="preset-grid">
-        {presets.map((p) => (
-          <button
-            key={p.id}
-            className={`btn small${c.presetId === p.id ? ' selected' : ''}`}
-            onClick={() => selectPreset(p.id)}
-          >
-            {p.name}
-          </button>
-        ))}
-      </div>
-      <div className="preset-desc">
-        {preset?.description ?? '自由入力式'}
-        {preset && (
-          <div className="free-hint">
-            自由入力名: <code>{preset.freeName}</code>
-          </div>
-        )}
-      </div>
-
-      {/* 自由入力式から自動検出した係数のスライダー（回転=x／極座標=t・#46） */}
-      {c.fitParams.length > 0 && (
-        <>
-          <div className="section-title">係数（式から自動検出）</div>
-          {c.fitParams.map((p) => (
-            <div className="slider-row" key={p.key}>
-              <label title={`初期値 ${p.value}`}>{p.label}</label>
-              <input
-                type="range"
-                min={p.min}
-                max={p.max}
-                step={p.step}
-                value={c.fitValues[p.key] ?? p.value}
-                onChange={(e) => onChange(setCoeffPatch(c, p.key, Number(e.target.value)))}
-              />
-              <span className="val">{(c.fitValues[p.key] ?? p.value).toFixed(2)}</span>
-            </div>
-          ))}
-        </>
-      )}
-
-      <div className="free-input-wrap">
-        <div className="section-title">
-          自由入力（{c.mode === 'polar' ? 'θ の式・θ は t で入力' : 'x の式'}）
-        </div>
-        <div className="free-input">
-          <input
-            type="text"
-            value={freeDraft}
-            placeholder={c.mode === 'polar' ? '例: 8*cos(2*t)' : '例: sin(x)*2 + 1'}
-            onChange={(e) => setFreeDraft(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && applyFree()}
-          />
-          <button className="btn small" onClick={applyFree}>
-            適用
-          </button>
-        </div>
-        {c.freeError && <div className="field-error">{c.freeError}</div>}
-        <div className="hint">
-          使える関数: <code>sin cos tan sqrt exp abs log</code>（<code>^</code>はべき乗）。 変数は{' '}
-          <code>{c.mode === 'polar' ? 't（=θ）' : 'x'}</code>
-        </div>
-        {preset && (
-          <button className="btn small" onClick={() => setFreeDraft(preset.toExpr(c.coeffs))}>
-            今の関数を式にコピー
-          </button>
-        )}
-      </div>
-
-      {/* 通過点フィット（最小二乗・射出のみ・#46）：点を選んで係数を自動調整 */}
-      {c.mode === 'rotate' && c.fitParams.length > 0 && preview.kind === 'projectile' && (
-        <div className="fit-section">
-          <div className="section-title">通過点フィット（最小二乗）</div>
+      {/* 基本操作：方向はドラッグ、通過点フィットで仕上げる（#46/#47/#48） */}
+      {canFit ? (
+        <div className="fit-section primary">
           <div className="hint">
-            「点を選ぶ」を押し、フィールドを<strong>クリックして通したい点</strong>を置く。
-            「フィット」で式の係数を点群に近づける。
+            盤面を<strong>ドラッグで発射方向</strong>。<strong>通したい点をタップ</strong>→「フィット」で曲線を合わせる。
           </div>
           <div className="action-row">
             <button
-              className={`btn small${props.fitPickActive ? ' selected' : ''}`}
+              className={`btn${props.fitPickActive ? ' selected' : ''}`}
               onClick={props.onToggleFitPick}
             >
-              {props.fitPickActive ? '点ピック中…' : '点を選ぶ'}
+              {props.fitPickActive ? '点を置く…' : '点を選ぶ'}
+            </button>
+            <button className="btn primary" disabled={(props.fitPointCount ?? 0) < 1} onClick={props.onRunFit}>
+              フィット（{props.fitPointCount ?? 0}）
             </button>
             <button
-              className="btn small"
-              disabled={(props.fitPointCount ?? 0) < 1}
-              onClick={props.onRunFit}
-            >
-              フィット（{props.fitPointCount ?? 0}点）
-            </button>
-            <button
-              className="btn small"
+              className="btn"
               disabled={(props.fitPointCount ?? 0) < 1 && !props.fitPickActive}
               onClick={props.onClearFitPoints}
             >
@@ -216,115 +158,165 @@ export default function FunctionPanel(props: Props) {
             </button>
           </div>
         </div>
-      )}
-
-      {c.mode === 'rotate' && (
-        <>
-          <div className="slider-row">
-            <label>θ</label>
-            <input
-              type="range"
-              min={0}
-              max={Math.PI * 2}
-              step={0.01}
-              value={c.angle}
-              onChange={(e) => onChange({ angle: Number(e.target.value) })}
-            />
-            <span className="val">{Math.round((c.angle * 180) / Math.PI)}°</span>
-          </div>
-          <div className="hint">発射方向は<strong>フィールドをクリック／ドラッグ</strong>しても決められる（#47）。</div>
-        </>
-      )}
-
-      {/* 属性の z 場 z=f(x,y)（軌道と別入力・#30/#21）。いじっている間だけ場をプレビュー（#37） */}
-      <div
-        className="zfield-section"
-        onMouseEnter={() => props.onZEditing?.(true)}
-        onMouseLeave={() => props.onZEditing?.(false)}
-        onFocusCapture={() => props.onZEditing?.(true)}
-        onBlurCapture={() => props.onZEditing?.(false)}
-      >
-        <div className="section-title">属性の高さ z = f(x,y)（光⇔闇）</div>
-        <div className="preset-grid">
-          {ZFIELD_PRESETS.map((p) => (
-            <button
-              key={p.id}
-              className={`btn small${!c.zUseFree && c.zPresetId === p.id ? ' selected' : ''}`}
-              onClick={() => selectZPreset(p.id)}
-            >
-              {p.name}
-            </button>
-          ))}
-        </div>
-        <div className="preset-desc">{c.zUseFree ? '自由入力の z 場を使用中' : (zPreset?.description ?? '')}</div>
-        {!c.zUseFree &&
-          zPreset?.coeffs.map((cf) => (
-            <div className="slider-row" key={cf.key}>
-              <label>{cf.label}</label>
-              <input
-                type="range"
-                min={cf.min}
-                max={cf.max}
-                step={cf.step}
-                value={c.zCoeffs[cf.key] ?? cf.default}
-                onChange={(e) => onChange({ zCoeffs: { ...c.zCoeffs, [cf.key]: Number(e.target.value) } })}
-              />
-              <span className="val">{(c.zCoeffs[cf.key] ?? cf.default).toFixed(2)}</span>
-            </div>
-          ))}
-        <div className="free-input">
-          <input
-            type="text"
-            value={zFreeDraft}
-            placeholder="例: 5  /  0.3*y  /  5*cos(0.2*x)"
-            onChange={(e) => setZFreeDraft(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && applyZFree()}
-          />
-          <button className="btn small" onClick={applyZFree}>
-            適用
-          </button>
-        </div>
-        {c.zFreeError && <div className="field-error">{c.zFreeError}</div>}
+      ) : (
         <div className="hint">
-          変数は <code>x, y</code>（位置）。 <code>|z|={FIELD.zPeak}</code> に近いほど強い。 z&gt;0=光・z&lt;0=闇。
-          発射するまで色は伏せられる。
+          {c.mode === 'polar'
+            ? '軌道型（結界）。係数スライダーや式で形を調整できる（通過点フィットは発射型のみ）。'
+            : '盤面をドラッグで発射方向を決められる。'}
         </div>
-      </div>
+      )}
 
-      <div className="hint">初速は固定（{FIELD.fixedSpeed}）。当てる位置の z で属性・威力が決まる。</div>
-
-      <div className="section-title">計算補助</div>
-      <div className="readout">
-        {samples.map((s, i) => (
-          <div key={i}>
-            <span className="k">{c.mode === 'rotate' ? `f(${s.x})` : `f(${s.x.toFixed(2)})`}</span> ={' '}
-            {Number.isFinite(s.y) ? s.y.toFixed(2) : '—'}
-          </div>
-        ))}
-        {preview.landing && (
-          <>
-            <div>
-              着弾の理: <span className={preview.landing.attr}>{attrLabel(preview.landing.attr)}</span>
-            </div>
-            <div>着弾強度 |z|: {preview.landing.strength.toFixed(2)}</div>
-            <div>最大強度: {preview.maxStrength.toFixed(2)}</div>
-            <div>威力目安: {preview.powerEstimate.toFixed(1)}</div>
-          </>
-        )}
-      </div>
+      <button className="btn おまかせ" onClick={props.onRecommend} title="無難に当たるおすすめ術式">
+        ✨ おまかせ（当たる術式）
+      </button>
 
       {preview.selfMisfireWarning && (
         <div className="warn">⚠ 足元で暴発（自爆）の恐れ。原点近くで発散する式です。</div>
       )}
 
-      <div className="action-row">
-        <button className="btn small" onClick={props.onRecommend} title="無難に当たるおすすめ関数">
-          困ったらこれ
-        </button>
-        <button className="btn small" onClick={props.onOpenCodex}>
-          図鑑
-        </button>
-      </div>
+      {/* 詳細設定（係数・自由式・θ・z 場・計算補助）は折りたたみ（#48） */}
+      <button
+        className="btn small disclosure"
+        aria-expanded={advancedOpen}
+        onClick={() => setAdvancedOpen((o) => !o)}
+      >
+        詳細設定 {advancedOpen ? '▴' : '▾'}
+      </button>
+
+      {advancedOpen && (
+        <div className="advanced">
+          {/* 自由入力式から自動検出した係数スライダー（#46） */}
+          {c.fitParams.length > 0 && (
+            <>
+              <div className="section-title">係数（式から自動検出）</div>
+              {c.fitParams.map((p) => (
+                <div className="slider-row" key={p.key}>
+                  <label title={`初期値 ${p.value}`}>{p.label}</label>
+                  <input
+                    type="range"
+                    min={p.min}
+                    max={p.max}
+                    step={p.step}
+                    value={c.fitValues[p.key] ?? p.value}
+                    onChange={(e) => onChange(setCoeffPatch(c, p.key, Number(e.target.value)))}
+                  />
+                  <span className="val">{(c.fitValues[p.key] ?? p.value).toFixed(2)}</span>
+                </div>
+              ))}
+            </>
+          )}
+
+          <div className="free-input-wrap">
+            <div className="section-title">自由入力（{c.mode === 'polar' ? 'θ の式・θ は t' : 'x の式'}）</div>
+            <div className="free-input">
+              <input
+                type="text"
+                value={freeDraft}
+                placeholder={c.mode === 'polar' ? '例: 8*cos(2*t)' : '例: sin(x)*2 + 1'}
+                onChange={(e) => setFreeDraft(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && applyFree()}
+              />
+              <button className="btn small" onClick={applyFree}>適用</button>
+            </div>
+            {c.freeError && <div className="field-error">{c.freeError}</div>}
+            <div className="hint">
+              使える関数: <code>sin cos tan sqrt exp abs log</code>（<code>^</code>はべき乗）。 変数は{' '}
+              <code>{c.mode === 'polar' ? 't（=θ）' : 'x'}</code>
+            </div>
+          </div>
+
+          {c.mode === 'rotate' && (
+            <>
+              <div className="slider-row">
+                <label>θ</label>
+                <input
+                  type="range"
+                  min={0}
+                  max={Math.PI * 2}
+                  step={0.01}
+                  value={c.angle}
+                  onChange={(e) => onChange({ angle: Number(e.target.value) })}
+                />
+                <span className="val">{Math.round((c.angle * 180) / Math.PI)}°</span>
+              </div>
+              <div className="hint">発射方向は<strong>盤面のクリック／ドラッグ</strong>でも決められる（#47）。</div>
+            </>
+          )}
+
+          {/* 属性の z 場 z=f(x,y)（#30/#21）。いじっている間だけ場をプレビュー（#37） */}
+          <div
+            className="zfield-section"
+            onMouseEnter={() => props.onZEditing?.(true)}
+            onMouseLeave={() => props.onZEditing?.(false)}
+            onFocusCapture={() => props.onZEditing?.(true)}
+            onBlurCapture={() => props.onZEditing?.(false)}
+          >
+            <div className="section-title">属性の高さ z = f(x,y)（光⇔闇）</div>
+            <div className="form-row">
+              <label className="form-label">場</label>
+              <select
+                className="select"
+                value={c.zUseFree ? '' : c.zPresetId}
+                onChange={(e) => selectZPreset(e.target.value)}
+              >
+                {ZFIELD_PRESETS.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="preset-desc">{c.zUseFree ? '自由入力の z 場を使用中' : (zPreset?.description ?? '')}</div>
+            {!c.zUseFree &&
+              zPreset?.coeffs.map((cf) => (
+                <div className="slider-row" key={cf.key}>
+                  <label>{cf.label}</label>
+                  <input
+                    type="range"
+                    min={cf.min}
+                    max={cf.max}
+                    step={cf.step}
+                    value={c.zCoeffs[cf.key] ?? cf.default}
+                    onChange={(e) => onChange({ zCoeffs: { ...c.zCoeffs, [cf.key]: Number(e.target.value) } })}
+                  />
+                  <span className="val">{(c.zCoeffs[cf.key] ?? cf.default).toFixed(2)}</span>
+                </div>
+              ))}
+            <div className="free-input">
+              <input
+                type="text"
+                value={zFreeDraft}
+                placeholder="例: 5  /  0.3*y  /  5*cos(0.2*x)"
+                onChange={(e) => setZFreeDraft(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && applyZFree()}
+              />
+              <button className="btn small" onClick={applyZFree}>適用</button>
+            </div>
+            {c.zFreeError && <div className="field-error">{c.zFreeError}</div>}
+            <div className="hint">
+              変数は <code>x, y</code>。 <code>|z|={FIELD.zPeak}</code> に近いほど強い。 z&gt;0=光・z&lt;0=闇。
+            </div>
+          </div>
+
+          <div className="section-title">計算補助</div>
+          <div className="readout">
+            {samples.map((s, i) => (
+              <div key={i}>
+                <span className="k">{c.mode === 'rotate' ? `f(${s.x})` : `f(${s.x.toFixed(2)})`}</span> ={' '}
+                {Number.isFinite(s.y) ? s.y.toFixed(2) : '—'}
+              </div>
+            ))}
+            {preview.landing && (
+              <>
+                <div>
+                  着弾の理: <span className={preview.landing.attr}>{attrLabel(preview.landing.attr)}</span>
+                </div>
+                <div>着弾強度 |z|: {preview.landing.strength.toFixed(2)}</div>
+                <div>威力目安: {preview.powerEstimate.toFixed(1)}</div>
+              </>
+            )}
+          </div>
+          <div className="hint">初速は固定（{FIELD.fixedSpeed}）。当てる位置の z で属性・威力が決まる。</div>
+        </div>
+      )}
     </div>
   )
 }
