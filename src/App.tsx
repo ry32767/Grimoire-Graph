@@ -46,6 +46,15 @@ function aimAngle(from: Vec2, to: Vec2, a: number): number {
   return Math.atan2(to.y - from.y, to.x - from.x) - Math.atan(a)
 }
 
+/** 触覚フィードバック（#49・対応端末のみ。非対応は無視）。 */
+function vibrate(pattern: number | number[]): void {
+  try {
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) navigator.vibrate(pattern)
+  } catch {
+    /* 非対応・権限なしは無視 */
+  }
+}
+
 /** ミリ秒を mm:ss に整形（#6：クリアタイム）。 */
 function formatTime(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000))
@@ -106,6 +115,10 @@ export default function App() {
   const [view, setView] = useState<'stage' | 'edit'>('stage')
   // #48：ボタンを減らすためのメニュー（遊び方/図鑑/音）開閉
   const [menuOpen, setMenuOpen] = useState(false)
+  // #49：このターンで術式を設定/変更した味方ID（準備状況の✓・発射前確認）
+  const [touchedAllies, setTouchedAllies] = useState<Set<string>>(new Set())
+  // #49：未設定の味方がいる時の発射確認オーバーレイ
+  const [confirmFire, setConfirmFire] = useState(false)
   const [codexOpen, setCodexOpen] = useState(false)
   // #23：図鑑用に「遭遇した敵」を記録（セッション内・永続化しない）
   const [seenEnemies, setSeenEnemies] = useState<Set<string>>(new Set())
@@ -167,8 +180,12 @@ export default function App() {
       .filter((p) => p.length > 0)
   }, [battle, castingIds])
 
-  const onChange = (patch: Partial<ComposerState>) =>
+  // #49：このターンで「術式を設定/変更した味方」を記録（準備状況の✓・発射確認に使う）
+  const markTouched = (id: string) => setTouchedAllies((s) => (s.has(id) ? s : new Set(s).add(id)))
+  const onChange = (patch: Partial<ComposerState>) => {
     setComposers((m) => ({ ...m, [activeAllyId]: { ...m[activeAllyId], ...patch } }))
+    markTouched(activeAllyId)
+  }
 
   // 開発ジャンプ時はクリアタイム計測の起点を初期化（#33）
   useEffect(() => {
@@ -202,6 +219,7 @@ export default function App() {
     setAnimation(null)
     setPendingState(null)
     setView('stage')
+    setTouchedAllies(new Set())
     setScreen('battle')
     if (stageIndex === 0 && !guideShown) {
       setGuideOpen(true)
@@ -209,21 +227,47 @@ export default function App() {
     }
   }
 
+  // 1人ぶんのおすすめ術式を作る（#46）。対象は最も近い生存敵。組めなければ null。
+  const recommendFor = (ally: Ally): ComposerState | null => {
+    const enemiesAlive = battle?.enemies.filter((e) => e.hp > 0) ?? []
+    if (enemiesAlive.length === 0) return null
+    const target = enemiesAlive.reduce((best, e) =>
+      Math.hypot(e.pos.x - ally.pos.x, e.pos.y - ally.pos.y) <
+      Math.hypot(best.pos.x - ally.pos.x, best.pos.y - ally.pos.y)
+        ? e
+        : best,
+    )
+    const r = recommendCast(ally.pos, target, battle?.mechanics.obstacles ? battle.obstacles : [])
+    const zPatch = { zPresetId: 'const', zCoeffs: { c: r.zConst }, zUseFree: false }
+    const expr = r.line ? `${r.line.a}*x` : (r.freeExpr ?? '')
+    return { ...makeComposer(r.angle), ...parametricPatch(expr, 'x'), ...zPatch } as ComposerState
+  }
   const recommend = () => {
     if (!battle || !activeAllyId) return
     const ally = battle.allies.find((a) => a.id === activeAllyId)
-    const target = battle.enemies.find((e) => e.hp > 0)
-    if (!ally || !target) return
-    // 障害物の貫通/迂回を込みで「当たる」術式を探す
-    const r = recommendCast(ally.pos, target, battle.mechanics.obstacles ? battle.obstacles : [])
-    // z 場は敵の反対極を最強で当てる一定値（#21）
-    const zPatch = { zPresetId: 'const', zCoeffs: { c: r.zConst }, zUseFree: false }
-    // おすすめ式も係数化フローに乗せる（#46）：数値をスライダー化して微調整できる
-    const expr = r.line ? `${r.line.a}*x` : (r.freeExpr ?? '')
-    setComposers((m) => ({
-      ...m,
-      [activeAllyId]: { ...makeComposer(r.angle), ...parametricPatch(expr, 'x'), ...zPatch },
-    }))
+    if (!ally) return
+    const c = recommendFor(ally)
+    if (!c) return
+    setComposers((m) => ({ ...m, [activeAllyId]: c }))
+    markTouched(activeAllyId)
+    vibrate(12)
+  }
+  // #49：一括おまかせ。生存・非ひるみの全味方へ当たる術式を自動設定
+  const recommendAll = () => {
+    if (!battle) return
+    const next: Record<string, ComposerState> = {}
+    const touched = new Set(touchedAllies)
+    for (const a of battle.allies) {
+      if (a.hp <= 0 || impairedIds.includes(a.id)) continue
+      const c = recommendFor(a)
+      if (c) {
+        next[a.id] = c
+        touched.add(a.id)
+      }
+    }
+    setComposers((m) => ({ ...m, ...next }))
+    setTouchedAllies(touched)
+    vibrate(18)
   }
 
   // #46：通過点フィット
@@ -234,6 +278,7 @@ export default function App() {
   const onFieldClick = (p: Vec2) => {
     if (!fitPickActive) return
     setFitPoints((prev) => [...prev, p])
+    vibrate(8)
   }
   // #47：フィールドのクリック／ドラッグで発射方向（θ）を決める（射出＝回転のみ）
   const aimAt = (p: Vec2) => {
@@ -253,20 +298,31 @@ export default function App() {
     onChange({ fitValues: values, freeExpr: renderExpr(spec, values), useFree: true, freeError: null })
     // 点は残したまま（曲線が点に近づいた結果を確認できる）。ピックは抜ける。クリアは手動。
     setFitPickActive(false)
+    vibrate(14)
   }
   // 別の味方に切り替えたらピック状態は破棄する。スマホではそのキャラの編集画面へ（#48）
   const switchAlly = (id: string) => {
     clearFit()
     playSfx('select')
+    vibrate(8)
     setActiveAllyId(id)
     setView('edit')
   }
 
-  const fireAll = () => {
+  const fireAll = (force = false) => {
     if (!battle) return
+    // #49：撃てる味方がいるのに未設定の味方がいたら、一度だけ確認する
+    const castable = battle.allies.filter((a) => a.hp > 0 && !impairedIds.includes(a.id))
+    const unset = castable.filter((a) => !touchedAllies.has(a.id))
+    if (!force && castable.length > 0 && unset.length > 0) {
+      setConfirmFire(true)
+      return
+    }
+    setConfirmFire(false)
     clearFit()
     setView('stage') // 発射＝盤面（ステージ）画面へ（#48）
     setMenuOpen(false)
+    vibrate([18, 40, 18])
     const casts: AllyCast[] = []
     for (const a of battle.allies) {
       if (a.hp <= 0 || impairedIds.includes(a.id)) continue
@@ -366,6 +422,7 @@ export default function App() {
     setCastingIds(prep.castingEnemyIds)
     setImpairedIds(prep.impairedAllyIds)
     setView('stage') // 次ターンは盤面（ステージ）画面から始める（#48）
+    setTouchedAllies(new Set()) // #49：準備状況は毎ターンリセット
     const stillActive = prep.state.allies.find((a) => a.id === activeAllyId)
     if (!stillActive || stillActive.hp <= 0) {
       const firstAlive = prep.state.allies.find((a) => a.hp > 0)
@@ -519,6 +576,7 @@ export default function App() {
               onAnimationDone={onAnimationDone}
               fitPoints={composing ? fitPoints : undefined}
               onFieldClick={composing && fitPickActive ? onFieldClick : undefined}
+              pickMode={composing && fitPickActive}
               onAim={composing && !fitPickActive && activeComposer?.mode === 'rotate' ? aimAt : undefined}
               aimAngle={composing && activeComposer?.mode === 'rotate' ? activeComposer.angle : undefined}
             />
@@ -532,9 +590,15 @@ export default function App() {
               activeAllyId={activeAllyId}
               onSelectAlly={composing ? switchAlly : undefined}
               impairedIds={impairedIds}
+              touchedIds={[...touchedAllies]}
             />
+            {composing && anyCastable && (
+              <button className="btn おまかせ batch-recommend" onClick={recommendAll}>
+                ✨ 全員おまかせ（当たる術式を自動設定）
+              </button>
+            )}
             <div className="stage-actions">
-              <button className="btn primary fire-all" onClick={fireAll}>
+              <button className="btn primary fire-all" onClick={() => fireAll()}>
                 {anyCastable ? '全員発射' : '次のターンへ'}
               </button>
               <div className="menu-wrap">
@@ -606,7 +670,7 @@ export default function App() {
                 onClearFitPoints={clearFit}
               />
               <div className="action-row show-mobile">
-                <button className="btn primary fire-all" onClick={fireAll}>
+                <button className="btn primary fire-all" onClick={() => fireAll()}>
                   {anyCastable ? '全員発射' : '次のターンへ'}
                 </button>
                 <button className="btn small" onClick={() => setView('stage')}>
@@ -623,6 +687,28 @@ export default function App() {
         </div>
       </div>
 
+      {confirmFire && (
+        <div className="overlay" onClick={() => setConfirmFire(false)}>
+          <div className="confirm-card panel" onClick={(e) => e.stopPropagation()}>
+            <div className="section-title">未設定の味方がいます</div>
+            <p className="hint">
+              {battle.allies
+                .filter((a) => a.hp > 0 && !impairedIds.includes(a.id) && !touchedAllies.has(a.id))
+                .map((a) => a.name)
+                .join('・')}{' '}
+              はまだ術式を設定していません（既定のまま）。このまま発射しますか？
+            </p>
+            <div className="action-row">
+              <button className="btn primary" onClick={() => fireAll(true)}>
+                このまま発射
+              </button>
+              <button className="btn" onClick={() => setConfirmFire(false)}>
+                戻って設定
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {codexOpen && (
         <Codex
           activePresetId={activeComposer?.presetId}

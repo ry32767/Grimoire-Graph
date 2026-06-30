@@ -19,6 +19,14 @@ Canvas は内部解像度 `INTERNAL = 520`px 正方形、ビューポート `uni
 
 合計 `realMs = flightMs + tailMs`。
 
+### 作成フェーズのオーバーレイ（`BattleCanvas`）
+
+解決演出がない作成フェーズでは、盤面に操作補助を重ねて描く：
+
+- **発射方向の矢印**（`drawAimArrow`・#47）：active ally から θ 方向へ金色の矢印。盤面ドラッグで θ を変えると追従。
+- **通過点の✛**（`drawFitPoints`・#46）：選んだ通過点を連番つきで表示。
+- **点ピックのルーペ**（`drawPickLoupe`・#49）：点ピック中のドラッグで、**指の少し上に拡大鏡**（`ctx.drawImage(ctx.canvas, …)` で指の下を `zoom=2.6` 拡大・`imageSmoothingEnabled=false`）を出し、中心クロスヘアと着地点✛を描く。指で点が隠れない。ポインタ移動時は `composeDrawRef` 経由で盤面を再描画してから重ねる。
+
 ### 速度→時間の対応（`buildTimeline` / `posAtTime`）
 
 各弾サンプル `{pos, speed, arcLen, z}` を逆速度で積分して時間を作る：

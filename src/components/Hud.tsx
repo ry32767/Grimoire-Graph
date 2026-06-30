@@ -21,6 +21,7 @@ function HpRow({
   active,
   statuses,
   impaired,
+  ready,
   onSelect,
 }: {
   name: string
@@ -30,6 +31,7 @@ function HpRow({
   active?: boolean
   statuses: StatusEffect[]
   impaired?: boolean
+  ready?: boolean
   onSelect?: () => void
 }) {
   const pct = Math.max(0, Math.min(100, (hp / maxHp) * 100))
@@ -58,7 +60,11 @@ function HpRow({
         {Math.ceil(hp)}/{maxHp}
       </span>
       <StatusBadges statuses={statuses} />
-      {tappable && <span className="edit-cue" aria-hidden="true">⚙</span>}
+      {tappable && (
+        <span className={`edit-cue${ready ? ' ready' : ''}`} aria-hidden="true">
+          {ready ? '✓' : '⚙'}
+        </span>
+      )}
     </Tag>
   )
 }
@@ -70,9 +76,18 @@ interface Props {
   /** 味方行のタップで関数編集へ（#48）。未指定なら非タップ。 */
   onSelectAlly?: (id: string) => void
   impairedIds?: string[]
+  /** このターンで術式を設定/変更した味方ID（#49：準備状況✓） */
+  touchedIds?: string[]
 }
 
-export default function Hud({ allies, enemies, activeAllyId, onSelectAlly, impairedIds = [] }: Props) {
+export default function Hud({
+  allies,
+  enemies,
+  activeAllyId,
+  onSelectAlly,
+  impairedIds = [],
+  touchedIds = [],
+}: Props) {
   return (
     <div className="hud panel">
       <div className="hud-col">
@@ -86,6 +101,7 @@ export default function Hud({ allies, enemies, activeAllyId, onSelectAlly, impai
             active={a.id === activeAllyId}
             statuses={a.statuses}
             impaired={impairedIds.includes(a.id)}
+            ready={touchedIds.includes(a.id)}
             onSelect={onSelectAlly ? () => onSelectAlly(a.id) : undefined}
           />
         ))}

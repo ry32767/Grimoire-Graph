@@ -289,15 +289,36 @@ h3 {
   .battle[data-view='edit'] .show-stage {
     display: none;
   }
-  /* スマホは canvas を正方形のまま高さで抑える。編集中は操作欄と同時に見えるよう小さめ */
+  /* スマホは canvas を正方形のまま高さで抑える */
   .canvas-wrap {
     margin: 0 auto;
+    max-width: min(100%, 54vh);
   }
-  .battle[data-view='stage'] .canvas-wrap {
-    max-width: min(100%, 58vh);
+
+  /* 編集はボトムシート：盤面を残したまま操作欄を下からせり出す（#49） */
+  .battle[data-view='edit'] .battle-right {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-height: 66vh;
+    overflow-y: auto;
+    z-index: 30;
+    margin: 0;
+    padding: 6px 10px 16px;
+    background: var(--panel-bg);
+    border-top: 3px solid var(--light-1);
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.65);
   }
-  .battle[data-view='edit'] .canvas-wrap {
-    max-width: min(100%, 40vh);
+  .battle[data-view='edit'] .battle-right::before {
+    content: '';
+    display: block;
+    width: 44px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--panel-border);
+    margin: 0 auto 8px;
   }
   /* タップ領域を大きく（44px 目安） */
   .btn {
@@ -309,6 +330,38 @@ h3 {
   }
   .select {
     min-height: 42px;
+  }
+}
+
+/* ===== スマホ横向き：PC 風の左右並列に戻す（#49） ===== */
+@media (max-width: 820px) and (orientation: landscape) {
+  .battle {
+    grid-template-columns: minmax(0, 1fr) 300px;
+  }
+  /* どちらの view でも両方表示し、ボトムシートを解除 */
+  .battle[data-view='stage'] .show-edit,
+  .battle[data-view='edit'] .show-stage {
+    display: flex;
+  }
+  .show-mobile {
+    display: none !important;
+  }
+  .canvas-wrap {
+    max-width: min(100%, 88vh);
+  }
+  .battle[data-view='edit'] .battle-right {
+    position: static;
+    max-height: none;
+    overflow: visible;
+    z-index: auto;
+    padding: 0;
+    background: none;
+    border-top: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .battle[data-view='edit'] .battle-right::before {
+    content: none;
   }
 }
 
@@ -396,6 +449,34 @@ button.hp-row.tappable:hover {
   color: var(--light-1);
   opacity: 0.7;
   font-size: 13px;
+  width: 16px;
+  text-align: center;
+}
+/* 準備済み（#49）：✓を緑で強調 */
+.hp-row .edit-cue.ready {
+  color: var(--ok);
+  opacity: 1;
+}
+
+/* 一括おまかせ（#49） */
+.batch-recommend {
+  width: 100%;
+}
+
+/* 発射前の確認オーバーレイ（#49） */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.confirm-card {
+  max-width: 360px;
+  width: 100%;
 }
 .hp-name {
   width: 92px;

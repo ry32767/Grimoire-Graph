@@ -1,9 +1,4 @@
-import {
-  useEffect,
-  useRef,
-  type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent,
-} from 'react'
+import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import type { Ally, CarveBurst, DamagePopup, Disc, Enemy, Obstacle, Vec2, ZPoint } from '../game/types'
 import { FIELD } from '../data/constants'
 import { toScreen, toMath, type Viewport } from '../game/coords'
@@ -151,6 +146,8 @@ interface Props {
   onAim?: (mathPos: Vec2) => void
   /** 発射方向インジケータ用の角度（#47・回転のみ）。active ally から伸ばす矢印を描く */
   aimAngle?: number
+  /** 通過点ピック中か（#49）。true の間はドラッグでルーペを出し、離した位置を点にする */
+  pickMode?: boolean
 }
 
 const MS_PER_GAMESEC = 360
@@ -218,6 +215,10 @@ function drawStandingOrbit(ctx: CanvasRenderingContext2D, o: StandingOrbit, trai
 export default function BattleCanvas(props: Props) {
   const ref = useRef<HTMLCanvasElement>(null)
   const aimingRef = useRef(false)
+  // #49：点ピックのルーペ。現在の指位置（数学座標）と、作成フェーズの再描画関数
+  const pickPosRef = useRef<Vec2 | null>(null)
+  const composeDrawRef = useRef<(() => void) | null>(null)
+  const lastTrailRef = useRef(0)
   const doneRef = useRef(props.onAnimationDone)
   doneRef.current = props.onAnimationDone
 
@@ -244,6 +245,7 @@ export default function BattleCanvas(props: Props) {
       // 作成フェーズ：持続周回があれば粒を回し続ける（#39）。無ければ1回だけ描画（z場プレビュー含む・#37）。
       const standing = props.standingOrbits ?? []
       const drawComposeFrame = (trailPhase: number) => {
+        lastTrailRef.current = trailPhase
         drawScene(ctx, { ...staticParams, trailPhase })
         for (const o of standing) drawStandingOrbit(ctx, o, trailPhase)
         // 闇の周回は内側を暗くぼかす（プレイヤー視点の視認性低下・#39）
@@ -255,10 +257,16 @@ export default function BattleCanvas(props: Props) {
         }
         // 通過点フィットの選択点を✛で表示（#46）
         drawFitPoints(ctx, props.fitPoints)
+        // 点ピック中は指の上に拡大鏡（ルーペ）を出す（#49：指で点が隠れない）
+        if (pickPosRef.current) drawPickLoupe(ctx, pickPosRef.current)
       }
+      // ポインタ移動時に手動で再描画できるよう関数を保持
+      composeDrawRef.current = () => drawComposeFrame(lastTrailRef.current)
       if (standing.length === 0) {
         drawComposeFrame(0)
-        return
+        return () => {
+          composeDrawRef.current = null
+        }
       }
       let raf = 0
       const start = performance.now()
@@ -267,7 +275,10 @@ export default function BattleCanvas(props: Props) {
         raf = requestAnimationFrame(loop)
       }
       raf = requestAnimationFrame(loop)
-      return () => cancelAnimationFrame(raf)
+      return () => {
+        composeDrawRef.current = null
+        cancelAnimationFrame(raf)
+      }
     }
 
     const anim = props.animation
@@ -628,49 +639,118 @@ export default function BattleCanvas(props: Props) {
     const py = ((e.clientY - rect.top) * INTERNAL) / rect.height
     return toMath({ x: px, y: py }, VP)
   }
-  // 通過点フィットの点ピック（クリック・#46）
-  const handleClick = (e: ReactMouseEvent<HTMLCanvasElement>) => {
-    const cb = props.onFieldClick
-    if (!cb) return
+  const redrawCompose = () => composeDrawRef.current?.()
+
+  // ポインタ操作：点ピック中はルーペ（#49）、それ以外は発射方向ドラッグ（#47）
+  const handlePointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     const m = eventToMath(e)
-    if (m) cb(m)
-  }
-  // 発射方向（θ）をクリック／ドラッグで決める（#47）。ドラッグ中はポインタを捕捉して追従
-  const handleAimDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (!props.onAim) return
-    aimingRef.current = true
+    if (!m) return
     try {
       ref.current?.setPointerCapture(e.pointerId)
     } catch {
-      /* setPointerCapture 非対応でも無視 */
+      /* 非対応は無視 */
     }
-    const m = eventToMath(e)
-    if (m) props.onAim(m)
+    if (props.pickMode) {
+      pickPosRef.current = m
+      redrawCompose()
+    } else if (props.onAim) {
+      aimingRef.current = true
+      props.onAim(m)
+    }
   }
-  const handleAimMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (!props.onAim || !aimingRef.current) return
+  const handlePointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     const m = eventToMath(e)
-    if (m) props.onAim(m)
+    if (!m) return
+    if (props.pickMode && pickPosRef.current) {
+      pickPosRef.current = m
+      redrawCompose()
+    } else if (props.onAim && aimingRef.current) {
+      props.onAim(m)
+    }
   }
-  const handleAimUp = () => {
+  const handlePointerUp = () => {
+    if (props.pickMode && pickPosRef.current) {
+      props.onFieldClick?.(pickPosRef.current)
+      pickPosRef.current = null
+      redrawCompose()
+    }
     aimingRef.current = false
   }
 
-  const interactive = !!props.onFieldClick || !!props.onAim
+  const interactive = !!props.pickMode || !!props.onAim
   return (
     <canvas
       ref={ref}
       width={INTERNAL}
       height={INTERNAL}
       aria-label="バトルフィールド"
-      onClick={props.onFieldClick ? handleClick : undefined}
-      onPointerDown={props.onAim ? handleAimDown : undefined}
-      onPointerMove={props.onAim ? handleAimMove : undefined}
-      onPointerUp={props.onAim ? handleAimUp : undefined}
-      onPointerLeave={props.onAim ? handleAimUp : undefined}
+      onPointerDown={interactive ? handlePointerDown : undefined}
+      onPointerMove={interactive ? handlePointerMove : undefined}
+      onPointerUp={interactive ? handlePointerUp : undefined}
+      onPointerLeave={interactive ? handlePointerUp : undefined}
       style={interactive ? { cursor: 'crosshair', touchAction: 'none' } : undefined}
     />
   )
+}
+
+/** 点ピック中の拡大鏡（ルーペ・#49）。指の少し上に、指の下の盤面を拡大して見せる。 */
+function drawPickLoupe(ctx: CanvasRenderingContext2D, pos: Vec2): void {
+  const fs = toScreen(pos, VP)
+  const R = 70
+  const zoom = 2.6
+  const gap = 40
+  let cx = fs.x
+  let cy = fs.y - R - gap
+  if (cy - R < 4) cy = fs.y + R + gap // 上が見切れるなら下に出す
+  cx = Math.max(R + 4, Math.min(INTERNAL - R - 4, cx))
+  cy = Math.max(R + 4, Math.min(INTERNAL - R - 4, cy))
+  const half = R / zoom
+  ctx.save()
+  // 指→ルーペの接続線
+  ctx.strokeStyle = 'rgba(90, 209, 255, 0.5)'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.moveTo(fs.x, fs.y)
+  ctx.lineTo(cx, cy)
+  ctx.stroke()
+  // ルーペ円の内側に、指の下の領域を拡大して描く
+  ctx.beginPath()
+  ctx.arc(cx, cy, R, 0, Math.PI * 2)
+  ctx.save()
+  ctx.clip()
+  ctx.fillStyle = '#0d0b14'
+  ctx.fillRect(cx - R, cy - R, R * 2, R * 2)
+  ctx.imageSmoothingEnabled = false
+  ctx.drawImage(ctx.canvas, fs.x - half, fs.y - half, half * 2, half * 2, cx - R, cy - R, R * 2, R * 2)
+  // 中心のクロスヘア
+  ctx.strokeStyle = '#5ad1ff'
+  ctx.lineWidth = 1.5
+  ctx.beginPath()
+  ctx.moveTo(cx - 12, cy)
+  ctx.lineTo(cx + 12, cy)
+  ctx.moveTo(cx, cy - 12)
+  ctx.lineTo(cx, cy + 12)
+  ctx.stroke()
+  ctx.restore() // クリップ解除
+  // 枠
+  ctx.strokeStyle = '#5ad1ff'
+  ctx.lineWidth = 3
+  ctx.shadowColor = '#5ad1ff'
+  ctx.shadowBlur = 8
+  ctx.beginPath()
+  ctx.arc(cx, cy, R, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.shadowBlur = 0
+  // 実際に点が置かれる位置に小さな✛
+  ctx.strokeStyle = '#ffffff'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.moveTo(fs.x - 7, fs.y)
+  ctx.lineTo(fs.x + 7, fs.y)
+  ctx.moveTo(fs.x, fs.y - 7)
+  ctx.lineTo(fs.x, fs.y + 7)
+  ctx.stroke()
+  ctx.restore()
 }
 
 /** 発射方向（θ）の矢印を active ally から伸ばす（#47）。 */

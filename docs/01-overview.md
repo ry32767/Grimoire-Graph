@@ -115,4 +115,5 @@ title（タイトル）
 - **編集（edit）ビュー**：盤面 canvas（編集中は小さめ＝操作欄と同時に見える）＋味方タブ＋関数パネル（フィット優先・詳細は折りたたみ）＋「盤面へ戻る」。
 - **発射すると stage ビューへ戻る**（`fireAll`／`onAnimationDone` で `view='stage'`）。次ターンも盤面から始まる。
 - 関数パネルは**基本フィットのみで完結**：形はプルダウン、発射方向は盤面ドラッグ（`aimAt`）、係数・自由式・z 場・θ は「詳細設定」に格納。`✨おまかせ`＝`recommend`。
+- **#49 強化**：このターン設定済みの味方は HP 横に ✓（`touchedAllies`）。`✨全員おまかせ`＝`recommendAll`。点ピックは**ルーペ**（`pickMode`→`drawPickLoupe`）。編集は**ボトムシート**（横向きは左右並列）。未設定で発射時は確認（`confirmFire`）。選択/発射等で `navigator.vibrate`。
 </content>
