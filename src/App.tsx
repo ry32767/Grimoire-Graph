@@ -294,8 +294,9 @@ export default function App() {
     const ally = battle?.allies.find((a) => a.id === activeAllyId)
     if (!c || !ally || c.mode !== 'rotate' || c.fitParams.length === 0 || fitPoints.length === 0) return
     const spec = fitSpecOf(c)
-    const values = fitToPoints(spec, c.fitValues, c.angle, ally.pos, fitPoints)
-    onChange({ fitValues: values, freeExpr: renderExpr(spec, values), useFree: true, freeError: null })
+    // #50：打った順に通すよう発射方向 θ も選び直す。係数は多スタート LM（sin/指数/1/x 対応）
+    const { values, angle } = fitToPoints(spec, c.fitValues, c.angle, ally.pos, fitPoints)
+    onChange({ fitValues: values, freeExpr: renderExpr(spec, values), angle, useFree: true, freeError: null })
     // 点は残したまま（曲線が点に近づいた結果を確認できる）。ピックは抜ける。クリアは手動。
     setFitPickActive(false)
     vibrate(14)

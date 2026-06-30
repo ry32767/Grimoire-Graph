@@ -5,8 +5,37 @@ import {
   renderExpr,
   buildParamFn,
   fitToPoints,
+  type ParamSpec,
+  type ParamValues,
 } from './exprFit'
 import { parseExpression } from './functions'
+import { sampleTrajectory, validFinitePrefix } from './coords'
+import type { Trajectory, Vec2 } from './types'
+
+// 係数値・角度・原点から軌道（場内の世界座標列）を作る
+function trajPoly(spec: ParamSpec, values: ParamValues, angle: number, origin: Vec2): Vec2[] {
+  const g = buildParamFn(spec, values)!
+  return validFinitePrefix(sampleTrajectory({ mode: 'rotate', g, angle, origin } as Trajectory)).map((s) => s.pos)
+}
+// 折れ線上で点 p に最も近いサンプルの { 距離, index }
+function closest(poly: Vec2[], p: Vec2): { dist: number; idx: number } {
+  let best = Infinity
+  let bi = 0
+  for (let i = 0; i < poly.length; i++) {
+    const d = Math.hypot(poly[i].x - p.x, poly[i].y - p.y)
+    if (d < best) {
+      best = d
+      bi = i
+    }
+  }
+  return { dist: best, idx: bi }
+}
+// 目標式を角度0・原点からサンプルして「実際に通る点列」を作る
+function pointsOnCurve(expr: string, origin: Vec2, xs: number[]): Vec2[] {
+  const spec = detectParams(expr, 'x')!
+  const g = buildParamFn(spec, initialValues(spec))!
+  return xs.map((x) => ({ x: origin.x + x, y: origin.y + (g(x) - g(0)) }))
+}
 
 describe('係数の自動検出（数値リテラル）', () => {
   it('式中の数値を係数化し、べき指数は除外する', () => {
@@ -55,66 +84,72 @@ describe('係数値の反映（renderExpr / buildParamFn）', () => {
 })
 
 describe('通過点フィット（最小二乗・射出魔法）', () => {
-  it('直線 a*x の傾きを点群に合わせる（原点・角度0）', () => {
-    // 目標：傾き2の点群。初期は a=1。
-    // 注：回転軌道は g(0) を引いて術者位置から発射するため、加算定数 b は経路に効かない（既存仕様）。
-    const spec = detectParams('1*x', 'x')!
-    const origin = { x: 0, y: 0 }
-    const points = [
-      { x: 2, y: 4 },
-      { x: 5, y: 10 },
-      { x: 8, y: 16 },
-    ] // y=2x 上の点
-    const fitted = fitToPoints(spec, initialValues(spec), 0, origin, points)
-    expect(fitted.p0).toBeGreaterThan(1.7)
-    expect(fitted.p0).toBeLessThan(2.3)
-  })
-
-  it('フィット後は点群との距離二乗和が初期より小さい', () => {
-    const spec = detectParams('0.1*x^2 + 0', 'x')!
-    const origin = { x: 0, y: 0 }
-    const points = [
-      { x: 3, y: 4.5 },
-      { x: 6, y: 18 },
-    ] // y=0.5x^2 上
-    const before = initialValues(spec)
-    const after = fitToPoints(spec, before, 0, origin, points)
-    // p0 が 0.1 から 0.5 方向へ動く
-    expect(after.p0).toBeGreaterThan(before.p0)
-  })
-
   it('点が無ければ係数は変わらない', () => {
     const spec = detectParams('1*x + 0', 'x')!
     const v = initialValues(spec)
-    expect(fitToPoints(spec, v, 0, { x: 0, y: 0 }, [])).toEqual(v)
+    expect(fitToPoints(spec, v, 0, { x: 0, y: 0 }, [])).toEqual({ values: v, angle: 0 })
   })
 
-  it('通過点が1点でもフィットできる（直線が点を通る向きへ）', () => {
+  it('1点でも、その点を通る向きへ直線を合わせる', () => {
     const spec = detectParams('1*x', 'x')!
     const origin = { x: -14, y: -20 }
-    // 局所 (20, 14) を通したい → g(20)-g(0)=14 ⇒ 傾き 0.7
-    const fitted = fitToPoints(spec, initialValues(spec), 0, origin, [{ x: 6, y: -6 }])
-    const g = buildParamFn(spec, fitted)!
-    expect(Math.abs(g(20) - g(0) - 14)).toBeLessThan(0.1)
+    const p = { x: 6, y: -6 }
+    const res = fitToPoints(spec, initialValues(spec), 0, origin, [p])
+    const poly = trajPoly(spec, res.values, res.angle, origin)
+    expect(closest(poly, p).dist).toBeLessThan(0.6)
   })
 
-  it('高次多項式（4次）を5点へ精密フィットできる（LM・係数の桁違いに強い）', () => {
-    // 目標の4次曲線（角度0・原点(-14,-20)）から実際に通る5点をサンプルし、
-    // 別の初期係数からその点群へフィットして「ほぼ通る」ことを確認する。
+  it('高次多項式（4次）を5点へ精密フィットできる', () => {
     const origin = { x: -14, y: -20 }
-    const target = detectParams('0.0008*x^4 - 0.045*x^3 + 0.7*x^2 - 2*x', 'x')!
-    const gT = buildParamFn(target, initialValues(target))!
-    const pts = [8, 16, 24, 32, 40].map((x) => ({
-      x: origin.x + x,
-      y: origin.y + (gT(x) - gT(0)),
-    }))
+    const pts = pointsOnCurve('0.0008*x^4 - 0.045*x^3 + 0.7*x^2 - 2*x', origin, [8, 16, 24, 32, 40])
     const spec = detectParams('0.0008*x^4 - 0.02*x^3 + 0.2*x^2 + 0.5*x', 'x')!
-    const fitted = fitToPoints(spec, initialValues(spec), 0, origin, pts)
-    const g = buildParamFn(spec, fitted)!
-    // 各点で g(x)−g(0) が目標の縦オフセットにほぼ一致（残差 < 0.2 ユニット）
-    for (const x of [8, 16, 24, 32, 40]) {
-      const want = gT(x) - gT(0)
-      expect(Math.abs(g(x) - g(0) - want)).toBeLessThan(0.2)
-    }
+    const res = fitToPoints(spec, initialValues(spec), 0, origin, pts)
+    const poly = trajPoly(spec, res.values, res.angle, origin)
+    for (const p of pts) expect(closest(poly, p).dist).toBeLessThan(0.6)
+  })
+
+  it('サイン関数を点群へフィットできる（多スタートで周波数を当てる）', () => {
+    const origin = { x: 0, y: 0 }
+    const pts = pointsOnCurve('4*sin(0.4*x)', origin, [1, 3, 5, 7, 9, 11, 13])
+    // 初期は周波数違い（B=1.2）。多スタート LM で 0.4 付近へ
+    const spec = detectParams('4*sin(0.4*x)', 'x')!
+    const res = fitToPoints(spec, { p0: 4, p1: 1.2, p2: 0 }, 0, origin, pts)
+    const poly = trajPoly(spec, res.values, res.angle, origin)
+    for (const p of pts) expect(closest(poly, p).dist).toBeLessThan(1.0)
+  })
+
+  it('指数関数を点群へフィットできる', () => {
+    const origin = { x: 0, y: 0 }
+    const pts = pointsOnCurve('1.5*exp(0.25*x) - 1.5', origin, [1, 3, 5, 7, 9])
+    const spec = detectParams('1*exp(0.1*x) - 1', 'x')!
+    const res = fitToPoints(spec, initialValues(spec), 0, origin, pts)
+    const poly = trajPoly(spec, res.values, res.angle, origin)
+    for (const p of pts) expect(closest(poly, p).dist).toBeLessThan(1.0)
+  })
+
+  it('1/x（分数関数）を点群へフィットできる', () => {
+    const origin = { x: 0, y: 0 }
+    const pts = pointsOnCurve('12/(x + 4) - 3', origin, [1, 3, 5, 8, 12])
+    const spec = detectParams('8/(x + 6) - 1', 'x')!
+    const res = fitToPoints(spec, initialValues(spec), 0, origin, pts)
+    const poly = trajPoly(spec, res.values, res.angle, origin)
+    for (const p of pts) expect(closest(poly, p).dist).toBeLessThan(1.0)
+  })
+
+  it('打った順に通る：向きが合っていなくても tap 順で軌道が点を訪れる（#50）', () => {
+    const origin = { x: 0, y: 0 }
+    // x が増える順（=前方へ）にタップ。だが現在の狙いは上向き(90°)でズレている
+    const pts: Vec2[] = [
+      { x: 3, y: 9 },
+      { x: 7, y: 11 },
+      { x: 12, y: 8 },
+      { x: 17, y: 12 },
+    ]
+    const spec = detectParams('0.05*x^2 + 0.5*x', 'x')!
+    const res = fitToPoints(spec, initialValues(spec), Math.PI / 2, origin, pts)
+    const poly = trajPoly(spec, res.values, res.angle, origin)
+    // 各点に最も近い軌道サンプルの index が、タップ順に単調増加（＝順番に通る）
+    const idxs = pts.map((p) => closest(poly, p).idx)
+    for (let i = 1; i < idxs.length; i++) expect(idxs[i]).toBeGreaterThan(idxs[i - 1])
   })
 })
