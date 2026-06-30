@@ -32,6 +32,27 @@ export function toMath(px: Vec2, vp: Viewport): Vec2 {
   return { x: (px.x - vp.width / 2) / s, y: (vp.height / 2 - px.y) / s }
 }
 
+/**
+ * 画面に実際に映る数学座標の範囲（四隅を逆変換）。
+ * グリッドや z 場の描画範囲をこの範囲から決めることで、ステージのスケール
+ * （unitsRadius）やアスペクト比を変えても方眼が画面全体を覆い、崩れない（#53）。
+ */
+export function visibleBounds(vp: Viewport): {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+} {
+  const tl = toMath({ x: 0, y: 0 }, vp)
+  const br = toMath({ x: vp.width, y: vp.height }, vp)
+  return {
+    minX: Math.min(tl.x, br.x),
+    maxX: Math.max(tl.x, br.x),
+    minY: Math.min(tl.y, br.y),
+    maxY: Math.max(tl.y, br.y),
+  }
+}
+
 // ===== 幾何ユーティリティ =====
 
 /** 原点まわりに angle[rad] 回転 */

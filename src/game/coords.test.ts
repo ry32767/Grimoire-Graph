@@ -10,6 +10,7 @@ import {
   buildPolyline,
   polylineLength,
   pointAtLength,
+  visibleBounds,
   type Viewport,
 } from './coords'
 import { FIELD } from '../data/constants'
@@ -34,6 +35,19 @@ describe('座標変換', () => {
     const s = scaleOf(vp)
     const up = toScreen({ x: 0, y: 1 }, vp)
     expect(up.y).toBeCloseTo(200 - s, 6)
+  })
+
+  it('可視範囲は画面四隅の数学座標（スケールに追従・#53）', () => {
+    // 短辺=400・unitsRadius=30 → 1ユニット=400/2/30、横幅600px ぶんが x 範囲
+    const b = visibleBounds(vp)
+    const corner = toMath({ x: 0, y: 0 }, vp) // 左上＝(minX, maxY)
+    expect(b.minX).toBeCloseTo(corner.x, 6)
+    expect(b.maxY).toBeCloseTo(corner.y, 6)
+    expect(b.maxX).toBeCloseTo(-b.minX, 6) // 原点中心なので左右対称
+    expect(b.maxY).toBeCloseTo(-b.minY, 6)
+    // unitsRadius を倍にすると見える範囲も倍（ズームアウト）＝崩れず追従する
+    const zoomed = visibleBounds({ ...vp, unitsRadius: FIELD.rField * 2 })
+    expect(zoomed.maxX).toBeCloseTo(b.maxX * 2, 6)
   })
 })
 
