@@ -89,6 +89,15 @@ describe('通過点フィット（最小二乗・射出魔法）', () => {
     expect(fitToPoints(spec, v, 0, { x: 0, y: 0 }, [])).toEqual(v)
   })
 
+  it('通過点が1点でもフィットできる（直線が点を通る向きへ）', () => {
+    const spec = detectParams('1*x', 'x')!
+    const origin = { x: -14, y: -20 }
+    // 局所 (20, 14) を通したい → g(20)-g(0)=14 ⇒ 傾き 0.7
+    const fitted = fitToPoints(spec, initialValues(spec), 0, origin, [{ x: 6, y: -6 }])
+    const g = buildParamFn(spec, fitted)!
+    expect(Math.abs(g(20) - g(0) - 14)).toBeLessThan(0.1)
+  })
+
   it('高次多項式（4次）を5点へ精密フィットできる（LM・係数の桁違いに強い）', () => {
     // 目標の4次曲線（角度0・原点(-14,-20)）から実際に通る5点をサンプルし、
     // 別の初期係数からその点群へフィットして「ほぼ通る」ことを確認する。

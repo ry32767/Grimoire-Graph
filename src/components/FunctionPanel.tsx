@@ -219,18 +219,21 @@ export default function FunctionPanel(props: Props) {
       )}
 
       {c.mode === 'rotate' && (
-        <div className="slider-row">
-          <label>θ</label>
-          <input
-            type="range"
-            min={0}
-            max={Math.PI * 2}
-            step={0.01}
-            value={c.angle}
-            onChange={(e) => onChange({ angle: Number(e.target.value) })}
-          />
-          <span className="val">{Math.round((c.angle * 180) / Math.PI)}°</span>
-        </div>
+        <>
+          <div className="slider-row">
+            <label>θ</label>
+            <input
+              type="range"
+              min={0}
+              max={Math.PI * 2}
+              step={0.01}
+              value={c.angle}
+              onChange={(e) => onChange({ angle: Number(e.target.value) })}
+            />
+            <span className="val">{Math.round((c.angle * 180) / Math.PI)}°</span>
+          </div>
+          <div className="hint">発射方向は<strong>フィールドをクリック／ドラッグ</strong>しても決められる（#47）。</div>
+        </>
       )}
 
       {/* 属性の z 場 z=f(x,y)（軌道と別入力・#30/#21）。いじっている間だけ場をプレビュー（#37） */}

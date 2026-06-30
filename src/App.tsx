@@ -230,6 +230,15 @@ export default function App() {
     if (!fitPickActive) return
     setFitPoints((prev) => [...prev, p])
   }
+  // #47：フィールドのクリック／ドラッグで発射方向（θ）を決める（射出＝回転のみ）
+  const aimAt = (p: Vec2) => {
+    const c = composers[activeAllyId]
+    const ally = battle?.allies.find((a) => a.id === activeAllyId)
+    if (!c || !ally || c.mode !== 'rotate') return
+    const ang = Math.atan2(p.y - ally.pos.y, p.x - ally.pos.x)
+    const norm = ((ang % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)
+    onChange({ angle: norm })
+  }
   const runFit = () => {
     const c = composers[activeAllyId]
     const ally = battle?.allies.find((a) => a.id === activeAllyId)
@@ -501,6 +510,8 @@ export default function App() {
               onAnimationDone={onAnimationDone}
               fitPoints={composing ? fitPoints : undefined}
               onFieldClick={composing && fitPickActive ? onFieldClick : undefined}
+              onAim={composing && !fitPickActive && activeComposer?.mode === 'rotate' ? aimAt : undefined}
+              aimAngle={composing && activeComposer?.mode === 'rotate' ? activeComposer.angle : undefined}
             />
           </div>
           <Hud allies={battle.allies} enemies={battle.enemies} activeAllyId={activeAllyId} />

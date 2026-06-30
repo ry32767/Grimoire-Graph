@@ -1,4 +1,9 @@
-import { useEffect, useRef, type MouseEvent as ReactMouseEvent } from 'react'
+import {
+  useEffect,
+  useRef,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import type { Ally, CarveBurst, DamagePopup, Disc, Enemy, Obstacle, Vec2, ZPoint } from '../game/types'
 import { FIELD } from '../data/constants'
 import { toScreen, toMath, type Viewport } from '../game/coords'
@@ -142,6 +147,10 @@ interface Props {
   fitPoints?: Vec2[]
   /** フィールドをクリックした時の数学座標を返す（#46：点ピック中だけ渡す） */
   onFieldClick?: (mathPos: Vec2) => void
+  /** フィールドをクリック／ドラッグして発射方向を決める（#47：点ピック中でない時だけ渡す） */
+  onAim?: (mathPos: Vec2) => void
+  /** 発射方向インジケータ用の角度（#47・回転のみ）。active ally から伸ばす矢印を描く */
+  aimAngle?: number
 }
 
 const MS_PER_GAMESEC = 360
@@ -208,6 +217,7 @@ function drawStandingOrbit(ctx: CanvasRenderingContext2D, o: StandingOrbit, trai
 
 export default function BattleCanvas(props: Props) {
   const ref = useRef<HTMLCanvasElement>(null)
+  const aimingRef = useRef(false)
   const doneRef = useRef(props.onAnimationDone)
   doneRef.current = props.onAnimationDone
 
@@ -238,6 +248,11 @@ export default function BattleCanvas(props: Props) {
         for (const o of standing) drawStandingOrbit(ctx, o, trailPhase)
         // 闇の周回は内側を暗くぼかす（プレイヤー視点の視認性低下・#39）
         for (const o of standing) if (ringAverageAttr(o.ring) === 'dark') drawConcealVeil(ctx, o.ring, VP)
+        // 発射方向インジケータ（#47）：active ally から θ 方向へ矢印
+        if (props.aimAngle !== undefined && props.activeAllyId) {
+          const a = props.allies.find((al) => al.id === props.activeAllyId)
+          if (a && a.hp > 0) drawAimArrow(ctx, a.pos, props.aimAngle)
+        }
         // 通過点フィットの選択点を✛で表示（#46）
         drawFitPoints(ctx, props.fitPoints)
       }
@@ -600,20 +615,48 @@ export default function BattleCanvas(props: Props) {
     props.showZField,
     props.standingOrbits,
     props.fitPoints,
+    props.aimAngle,
   ])
 
-  // クリック位置を数学座標へ変換してフィット点に渡す（#46）。内部解像度と表示サイズの差を補正
-  const handleClick = (e: ReactMouseEvent<HTMLCanvasElement>) => {
-    const cb = props.onFieldClick
+  // ポインタ位置を数学座標へ変換（内部解像度と表示サイズの差を補正）
+  const eventToMath = (e: { clientX: number; clientY: number }): Vec2 | null => {
     const canvas = ref.current
-    if (!cb || !canvas) return
+    if (!canvas) return null
     const rect = canvas.getBoundingClientRect()
-    if (rect.width === 0 || rect.height === 0) return
+    if (rect.width === 0 || rect.height === 0) return null
     const px = ((e.clientX - rect.left) * INTERNAL) / rect.width
     const py = ((e.clientY - rect.top) * INTERNAL) / rect.height
-    cb(toMath({ x: px, y: py }, VP))
+    return toMath({ x: px, y: py }, VP)
+  }
+  // 通過点フィットの点ピック（クリック・#46）
+  const handleClick = (e: ReactMouseEvent<HTMLCanvasElement>) => {
+    const cb = props.onFieldClick
+    if (!cb) return
+    const m = eventToMath(e)
+    if (m) cb(m)
+  }
+  // 発射方向（θ）をクリック／ドラッグで決める（#47）。ドラッグ中はポインタを捕捉して追従
+  const handleAimDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (!props.onAim) return
+    aimingRef.current = true
+    try {
+      ref.current?.setPointerCapture(e.pointerId)
+    } catch {
+      /* setPointerCapture 非対応でも無視 */
+    }
+    const m = eventToMath(e)
+    if (m) props.onAim(m)
+  }
+  const handleAimMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (!props.onAim || !aimingRef.current) return
+    const m = eventToMath(e)
+    if (m) props.onAim(m)
+  }
+  const handleAimUp = () => {
+    aimingRef.current = false
   }
 
+  const interactive = !!props.onFieldClick || !!props.onAim
   return (
     <canvas
       ref={ref}
@@ -621,9 +664,42 @@ export default function BattleCanvas(props: Props) {
       height={INTERNAL}
       aria-label="バトルフィールド"
       onClick={props.onFieldClick ? handleClick : undefined}
-      style={props.onFieldClick ? { cursor: 'crosshair' } : undefined}
+      onPointerDown={props.onAim ? handleAimDown : undefined}
+      onPointerMove={props.onAim ? handleAimMove : undefined}
+      onPointerUp={props.onAim ? handleAimUp : undefined}
+      onPointerLeave={props.onAim ? handleAimUp : undefined}
+      style={interactive ? { cursor: 'crosshair', touchAction: 'none' } : undefined}
     />
   )
+}
+
+/** 発射方向（θ）の矢印を active ally から伸ばす（#47）。 */
+function drawAimArrow(ctx: CanvasRenderingContext2D, from: Vec2, angle: number): void {
+  const LEN = 7 // 数学ユニット
+  const tip = { x: from.x + Math.cos(angle) * LEN, y: from.y + Math.sin(angle) * LEN }
+  const a = toScreen(from, VP)
+  const b = toScreen(tip, VP)
+  ctx.save()
+  ctx.strokeStyle = '#ffd56b'
+  ctx.fillStyle = '#ffd56b'
+  ctx.globalAlpha = 0.85
+  ctx.lineWidth = 2.5
+  ctx.setLineDash([5, 4])
+  ctx.beginPath()
+  ctx.moveTo(a.x, a.y)
+  ctx.lineTo(b.x, b.y)
+  ctx.stroke()
+  ctx.setLineDash([])
+  // 矢じり
+  const ang = Math.atan2(b.y - a.y, b.x - a.x)
+  const h = 9
+  ctx.beginPath()
+  ctx.moveTo(b.x, b.y)
+  ctx.lineTo(b.x - h * Math.cos(ang - 0.4), b.y - h * Math.sin(ang - 0.4))
+  ctx.lineTo(b.x - h * Math.cos(ang + 0.4), b.y - h * Math.sin(ang + 0.4))
+  ctx.closePath()
+  ctx.fill()
+  ctx.restore()
 }
 
 /** 通過点フィットで選んだ点を✛＋連番で表示する（#46）。 */
