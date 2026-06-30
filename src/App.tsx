@@ -112,8 +112,6 @@ export default function App() {
   const [activeAllyId, setActiveAllyId] = useState<string>('')
   const [animation, setAnimation] = useState<ResolveAnimation | null>(null)
   const [pendingState, setPendingState] = useState<BattleState | null>(null)
-  // #37：z 場をいじっている間だけ、場をプレビュー表示する
-  const [zEditing, setZEditing] = useState(false)
   // #46：通過点フィット。点ピック中フラグと、選んだ通過点（数学座標）
   const [fitPickActive, setFitPickActive] = useState(false)
   const [fitPoints, setFitPoints] = useState<Vec2[]>([])
@@ -312,13 +310,11 @@ export default function App() {
   const adjustZOnStage = () => {
     setFitPickActive(false)
     setZAdjustMode(true)
-    setZEditing(true)
     setView('stage')
     vibrate(8)
   }
   const endZAdjust = () => {
     setZAdjustMode(false)
-    setZEditing(false)
     setView('edit') // 調整を終えたら関数編集へ戻る
   }
   // #47：フィールドのクリック／ドラッグで発射方向（θ）を決める（射出＝回転のみ）
@@ -346,7 +342,6 @@ export default function App() {
   const switchAlly = (id: string) => {
     clearFit()
     setZAdjustMode(false)
-    setZEditing(false)
     playSfx('select')
     vibrate(8)
     setActiveAllyId(id)
@@ -365,7 +360,6 @@ export default function App() {
     setConfirmFire(false)
     clearFit()
     setZAdjustMode(false)
-    setZEditing(false)
     setView('stage') // 発射＝盤面（ステージ）画面へ（#48）
     setMenuOpen(false)
     vibrate([18, 40, 18])
@@ -615,7 +609,7 @@ export default function App() {
               playerPaths={composing ? playerPaths : undefined}
               misfirePoints={composing ? misfirePoints : undefined}
               zField={composing ? activeZField ?? undefined : undefined}
-              showZField={composing && (zEditing || zAdjustMode)}
+              showZField={composing}
               standingOrbits={composing ? standingOrbits : undefined}
               ghostPaths={ghostPaths}
               animation={animation}
@@ -745,7 +739,6 @@ export default function App() {
                 preview={activePreview}
                 onRecommend={recommend}
                 onOpenCodex={() => setCodexOpen(true)}
-                onZEditing={setZEditing}
                 fitPickActive={fitPickActive}
                 fitPointCount={fitPoints.length}
                 onToggleFitPick={toggleFitPick}

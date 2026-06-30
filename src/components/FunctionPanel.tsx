@@ -24,8 +24,6 @@ interface Props {
   preview: Preview
   onRecommend: () => void
   onOpenCodex: () => void
-  /** z 場の編集中フラグを通知（#37：いじっている間だけ場をプレビュー表示する） */
-  onZEditing?: (editing: boolean) => void
   /** 通過点フィット（#46・射出のみ） */
   fitPickActive?: boolean
   fitPointCount?: number
@@ -228,14 +226,8 @@ export default function FunctionPanel(props: Props) {
             </>
           )}
 
-          {/* 属性の z 場 z=f(x,y)（#30/#21）。いじっている間だけ場をプレビュー（#37） */}
-          <div
-            className="zfield-section"
-            onMouseEnter={() => props.onZEditing?.(true)}
-            onMouseLeave={() => props.onZEditing?.(false)}
-            onFocusCapture={() => props.onZEditing?.(true)}
-            onBlurCapture={() => props.onZEditing?.(false)}
-          >
+          {/* 属性の z 場 z=f(x,y)（#30/#21）。編集中は常に場をプレビュー表示（#55） */}
+          <div className="zfield-section">
             <div className="section-title">属性の高さ z = f(x,y)（光⇔闇）</div>
             {props.onAdjustZOnStage && (
               <button className="btn small show-mobile adjust-z-stage" onClick={props.onAdjustZOnStage}>
