@@ -12,8 +12,11 @@ import {
 import { findZPreset } from '../game/zfields'
 import {
   detectParams,
+  detectCoeffs,
   initialValues,
   renderExpr,
+  renderWithParams,
+  paramDefaults,
   type DetectedParam,
   type ParamSpec,
 } from '../game/exprFit'
@@ -49,6 +52,10 @@ export interface ComposerState {
   zUseFree: boolean
   zFreeExpr: string
   zFreeError: string | null
+  /** z 場の自動検出係数（#52）：z 式中の数値もスライダー化する（軌道と同じ仕組み） */
+  zFitTemplate: string
+  zFitParams: DetectedParam[]
+  zFitValues: Record<string, number>
 }
 
 /** 状態から z 場（属性 z=f(x,y)）を組み立てる（#30）。組み立てられなければ中立(0)。 */
@@ -100,6 +107,37 @@ export function parametricPatch(expr: string, varName: 'x' | 't'): Partial<Compo
 export function setCoeffPatch(c: ComposerState, key: string, value: number): Partial<ComposerState> {
   const values = { ...c.fitValues, [key]: value }
   return { fitValues: values, freeExpr: renderExpr(fitSpecOf(c), values), useFree: true, freeError: null }
+}
+
+/**
+ * z 場の式を係数化（数値リテラル→スライダー）して自由入力 z 場へ入るパッチを作る（#52）。
+ * 軌道と同じ仕組みを z 式（x,y の 2 変数）にも適用する。検出/評価不能なら zFreeError のみ返す。
+ */
+export function zParametricPatch(expr: string): Partial<ComposerState> {
+  const d = detectCoeffs(expr)
+  if (!d) return { zFreeError: '式が正しくありません' }
+  const values = paramDefaults(d.params)
+  const rendered = renderWithParams(d.template, d.params, values)
+  if (!parseZExpression(rendered)) return { zFreeError: '式が正しくありません' }
+  return {
+    zUseFree: true,
+    zFreeError: null,
+    zFreeExpr: rendered,
+    zFitTemplate: d.template,
+    zFitParams: d.params,
+    zFitValues: values,
+  }
+}
+
+/** z 場の係数1つを更新し、z 自由入力式（zFreeExpr）を再生成するパッチを作る（#52）。 */
+export function setZCoeffPatch(c: ComposerState, key: string, value: number): Partial<ComposerState> {
+  const values = { ...c.zFitValues, [key]: value }
+  return {
+    zFitValues: values,
+    zFreeExpr: renderWithParams(c.zFitTemplate, c.zFitParams, values),
+    zUseFree: true,
+    zFreeError: null,
+  }
 }
 
 export function presetsFor(mode: 'rotate' | 'polar'): Preset[] {

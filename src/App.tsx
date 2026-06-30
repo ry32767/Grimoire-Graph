@@ -16,6 +16,7 @@ import {
   buildZField,
   computePreview,
   parametricPatch,
+  zParametricPatch,
   fitSpecOf,
   NO_FIT,
 } from './components/composer'
@@ -68,6 +69,7 @@ function makeComposer(angle: number): ComposerState {
   const zPreset = ZFIELD_PRESETS[0] // 一定（const）
   const zCoeffs = defaultZCoeffs(zPreset)
   const expr = ROTATE_PRESETS[0].toExpr(coeffs)
+  const zExpr = zPreset.toExpr(zCoeffs)
   const base: ComposerState = {
     mode: 'rotate',
     presetId: 'line',
@@ -81,11 +83,14 @@ function makeComposer(angle: number): ComposerState {
     zPresetId: zPreset.id,
     zCoeffs,
     zUseFree: false,
-    zFreeExpr: zPreset.toExpr(zCoeffs),
+    zFreeExpr: zExpr,
     zFreeError: null,
+    zFitTemplate: '',
+    zFitParams: [],
+    zFitValues: {},
   }
-  // 射出（回転 y=g(x)）は既定で係数化フロー：式中の数値をスライダー化する（#46）
-  return { ...base, ...parametricPatch(expr, 'x') }
+  // 射出（回転）も z 場も、既定で係数化フロー：式中の数値をスライダー化する（#46/#52）
+  return { ...base, ...parametricPatch(expr, 'x'), ...zParametricPatch(zExpr) }
 }
 
 /** パーティ各自の初期コンポーザ（敵陣（上方）へ向ける）。 */
@@ -156,11 +161,16 @@ export default function App() {
     () => aliveAllies.map((a) => previews[a.id]?.misfirePos ?? null),
     [aliveAllies, previews],
   )
-  // 編集中の z 場（#37）。アクティブな術者の z 場を場として薄く表示する
+  // 編集中の z 場（#37）。アクティブな術者の z 場を場として薄く表示する。
+  // z 場は術者位置を原点に評価するため、プレビューも術者位置ぶんずらして描く（#52）
   const activeZField = useMemo(() => {
     const c = composers[activeAllyId]
-    return c ? buildZField(c) : null
-  }, [composers, activeAllyId])
+    if (!c) return null
+    const raw = buildZField(c)
+    const ally = battle?.allies.find((a) => a.id === activeAllyId)
+    if (!ally) return raw
+    return (x: number, y: number) => raw(x - ally.pos.x, y - ally.pos.y)
+  }, [composers, activeAllyId, battle])
   // 持続中の周回結界（#39：作成フェーズでも常時表示し、闇は内側を暗くぼかす）
   const standingOrbits = useMemo(
     () => (battle?.orbits ?? []).map((o) => ({ ring: o.ring, speed: o.ringSpeed })),
@@ -238,7 +248,8 @@ export default function App() {
         : best,
     )
     const r = recommendCast(ally.pos, target, battle?.mechanics.obstacles ? battle.obstacles : [])
-    const zPatch = { zPresetId: 'const', zCoeffs: { c: r.zConst }, zUseFree: false }
+    // z 場は敵の反対極を最強で当てる一定値（#21）。係数化フローに乗せる（#52）
+    const zPatch = { zPresetId: 'const', zCoeffs: { c: r.zConst }, ...zParametricPatch(`${r.zConst}`) }
     const expr = r.line ? `${r.line.a}*x` : (r.freeExpr ?? '')
     return { ...makeComposer(r.angle), ...parametricPatch(expr, 'x'), ...zPatch } as ComposerState
   }

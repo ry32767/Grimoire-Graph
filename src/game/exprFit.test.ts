@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
   detectParams,
+  detectCoeffs,
+  renderWithParams,
+  paramDefaults,
   initialValues,
   renderExpr,
   buildParamFn,
@@ -8,7 +11,7 @@ import {
   type ParamSpec,
   type ParamValues,
 } from './exprFit'
-import { parseExpression } from './functions'
+import { parseExpression, parseZExpression } from './functions'
 import { sampleTrajectory, validFinitePrefix } from './coords'
 import type { Trajectory, Vec2 } from './types'
 
@@ -62,6 +65,34 @@ describe('係数の自動検出（数値リテラル）', () => {
     expect(p.min).toBeLessThan(5)
     expect(p.max).toBeGreaterThan(5)
     expect(p.step).toBeGreaterThan(0)
+  })
+})
+
+describe('z 場の係数自動検出（2 変数 x,y・#52）', () => {
+  it('z 式中の数値を係数化し、値を変えて再評価できる', () => {
+    const d = detectCoeffs('0.3 * y + 0')!
+    expect(d).not.toBeNull()
+    // 0.3 と 0 の2つを検出（べき指数は除外）
+    expect(d.params.map((p) => p.value)).toEqual([0.3, 0])
+    expect(d.params.map((p) => p.label)).toEqual(['c1', 'c2'])
+    expect(d.template).toContain('p0')
+    // 既定値で復元すると元式と等価に評価できる（z=f(x,y)）
+    const base = renderWithParams(d.template, d.params, paramDefaults(d.params))
+    const zf = parseZExpression(base)!
+    expect(zf(0, 2)).toBeCloseTo(0.6, 6)
+    // 係数を差し替えると評価も変わる（c1=0.3→1）
+    const swapped = renderWithParams(d.template, d.params, { ...paramDefaults(d.params), p0: 1 })
+    const zf2 = parseZExpression(swapped)!
+    expect(zf2(0, 2)).toBeCloseTo(2, 6)
+  })
+
+  it('放射状 z 式（x,y 両方を含む）も係数化できる', () => {
+    const d = detectCoeffs('0.3 * sqrt(x ^ 2 + y ^ 2) + 0')!
+    // 0.3, 0 を検出（x^2 / y^2 の指数 2 は除外）
+    expect(d.params.map((p) => p.value)).toEqual([0.3, 0])
+    const rendered = renderWithParams(d.template, d.params, paramDefaults(d.params))
+    const zf = parseZExpression(rendered)!
+    expect(zf(3, 4)).toBeCloseTo(1.5, 6) // 0.3 * 5
   })
 })
 

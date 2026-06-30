@@ -4,7 +4,6 @@ import {
   POLAR_PRESETS,
   sampleOutputs,
   parseExpression,
-  parseZExpression,
   defaultCoeffs,
 } from '../game/functions'
 import { ZFIELD_PRESETS, findZPreset, defaultZCoeffs } from '../game/zfields'
@@ -16,6 +15,8 @@ import {
   presetsFor,
   parametricPatch,
   setCoeffPatch,
+  zParametricPatch,
+  setZCoeffPatch,
 } from './composer'
 
 interface Props {
@@ -83,17 +84,15 @@ export default function FunctionPanel(props: Props) {
     onChange(parametricPatch(freeDraft, varOf(c.mode)))
   }
 
-  // z 場（属性 z=f(x,y)・#30）の操作
+  // z 場（属性 z=f(x,y)・#30）の操作。式中の数値を自動検出してスライダー化（#52）
   const selectZPreset = (id: string) => {
     const p = findZPreset(id)
     if (!p) return
     const zCoeffs = defaultZCoeffs(p)
-    onChange({ zPresetId: id, zCoeffs, zUseFree: false, zFreeError: null, zFreeExpr: p.toExpr(zCoeffs) })
+    onChange({ zPresetId: id, zCoeffs, ...zParametricPatch(p.toExpr(zCoeffs)) })
   }
   const applyZFree = () => {
-    const f = parseZExpression(zFreeDraft)
-    if (!f) onChange({ zFreeError: '式が正しくありません' })
-    else onChange({ zFreeExpr: zFreeDraft, zUseFree: true, zFreeError: null })
+    onChange(zParametricPatch(zFreeDraft))
   }
 
   const canFit = c.mode === 'rotate' && preview.kind === 'projectile' && c.fitParams.length > 0
@@ -254,32 +253,28 @@ export default function FunctionPanel(props: Props) {
             <div className="section-title">属性の高さ z = f(x,y)（光⇔闇）</div>
             <div className="form-row">
               <label className="form-label">場</label>
-              <select
-                className="select"
-                value={c.zUseFree ? '' : c.zPresetId}
-                onChange={(e) => selectZPreset(e.target.value)}
-              >
+              <select className="select" value={c.zPresetId} onChange={(e) => selectZPreset(e.target.value)}>
                 {ZFIELD_PRESETS.map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
               </select>
             </div>
-            <div className="preset-desc">{c.zUseFree ? '自由入力の z 場を使用中' : (zPreset?.description ?? '')}</div>
-            {!c.zUseFree &&
-              zPreset?.coeffs.map((cf) => (
-                <div className="slider-row" key={cf.key}>
-                  <label>{cf.label}</label>
-                  <input
-                    type="range"
-                    min={cf.min}
-                    max={cf.max}
-                    step={cf.step}
-                    value={c.zCoeffs[cf.key] ?? cf.default}
-                    onChange={(e) => onChange({ zCoeffs: { ...c.zCoeffs, [cf.key]: Number(e.target.value) } })}
-                  />
-                  <span className="val">{(c.zCoeffs[cf.key] ?? cf.default).toFixed(2)}</span>
-                </div>
-              ))}
+            <div className="preset-desc">{zPreset?.description ?? '自由入力の z 場'}</div>
+            {/* z 式から自動検出した係数のスライダー（#52） */}
+            {c.zFitParams.map((p) => (
+              <div className="slider-row" key={p.key}>
+                <label title={`初期値 ${p.value}`}>{p.label}</label>
+                <input
+                  type="range"
+                  min={p.min}
+                  max={p.max}
+                  step={p.step}
+                  value={c.zFitValues[p.key] ?? p.value}
+                  onChange={(e) => onChange(setZCoeffPatch(c, p.key, Number(e.target.value)))}
+                />
+                <span className="val">{(c.zFitValues[p.key] ?? p.value).toFixed(2)}</span>
+              </div>
+            ))}
             <div className="free-input">
               <input
                 type="text"
@@ -292,7 +287,7 @@ export default function FunctionPanel(props: Props) {
             </div>
             {c.zFreeError && <div className="field-error">{c.zFreeError}</div>}
             <div className="hint">
-              変数は <code>x, y</code>。 <code>|z|={FIELD.zPeak}</code> に近いほど強い。 z&gt;0=光・z&lt;0=闇。
+              変数 <code>x, y</code> は<strong>術者位置が原点</strong>（#52）。 <code>|z|={FIELD.zPeak}</code> に近いほど強い。 z&gt;0=光・z&lt;0=闇。
             </div>
           </div>
 
