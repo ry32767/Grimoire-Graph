@@ -1,7 +1,7 @@
 // Canvas 描画関数（機能3・5・#15）。座標変換は coords に集約したものを使う。
 import type { Ally, Attribute, Enemy, Obstacle, ObstacleKind, Vec2, ZPoint } from '../game/types'
 import { FIELD } from '../data/constants'
-import { toScreen, scaleOf, type Viewport } from '../game/coords'
+import { toScreen, scaleOf, visibleBounds, type Viewport } from '../game/coords'
 import { attributeOf, strengthOf } from '../game/attribute'
 import { COLORS } from './theme'
 
@@ -71,26 +71,53 @@ function idSeed(id: string): number {
   return h
 }
 
-/** 背景：数学グリッドと軸・場外境界（場のタイルは廃止）。 */
+/** 方眼1マス＝数学1ユニット（射出関数・z 場と同じ基準で読めるように・#53）。 */
+export const GRID_UNIT = 1
+/** 数えやすさのため、5ユニットごとに濃い大目盛りを引く。 */
+const GRID_MAJOR = 5
+/** ズームアウト時でも線を引きすぎて固まらないための上限（#53：崩れない保険）。 */
+const GRID_MAX_LINES = 240
+
+/** u が大目盛り（GRID_MAJOR の倍数）か。 */
+function isMajorLine(u: number): boolean {
+  return Math.abs(u - Math.round(u / GRID_MAJOR) * GRID_MAJOR) < 1e-9
+}
+
+/** 背景：数学グリッドと軸・場外境界（場のタイルは廃止）。1マス=1ユニット・可視範囲に追従（#53）。 */
 export function drawBackground(ctx: CanvasRenderingContext2D, vp: Viewport): void {
   ctx.fillStyle = COLORS.bg
   ctx.fillRect(0, 0, vp.width, vp.height)
 
-  // グリッド線（数学ユニット）
-  ctx.strokeStyle = COLORS.grid
-  ctx.lineWidth = 1
-  for (let u = -FIELD.rField; u <= FIELD.rField; u += 2) {
-    const a = toScreen({ x: u, y: -FIELD.rField }, vp)
-    const b = toScreen({ x: u, y: FIELD.rField }, vp)
+  // 画面に映る数学範囲をユニット境界へ丸める（スケール変更でも方眼が全体を覆う）
+  const b = visibleBounds(vp)
+  // 線が多すぎる極端なズームアウトでは間隔を倍々に広げて固まりを防ぐ（通常スケールでは 1）
+  let unit = GRID_UNIT
+  const span = Math.max(b.maxX - b.minX, b.maxY - b.minY)
+  while (span / unit > GRID_MAX_LINES) unit *= 2
+  const x0 = Math.floor(b.minX / unit) * unit
+  const x1 = Math.ceil(b.maxX / unit) * unit
+  const y0 = Math.floor(b.minY / unit) * unit
+  const y1 = Math.ceil(b.maxY / unit) * unit
+
+  // 縦線・横線（小目盛り→大目盛りの順に2パスで描き、大目盛りを上に重ねる）
+  for (const major of [false, true]) {
+    ctx.strokeStyle = major ? COLORS.gridMajor : COLORS.grid
+    ctx.lineWidth = 1
     ctx.beginPath()
-    ctx.moveTo(a.x, a.y)
-    ctx.lineTo(b.x, b.y)
-    ctx.stroke()
-    const c = toScreen({ x: -FIELD.rField, y: u }, vp)
-    const d = toScreen({ x: FIELD.rField, y: u }, vp)
-    ctx.beginPath()
-    ctx.moveTo(c.x, c.y)
-    ctx.lineTo(d.x, d.y)
+    for (let u = x0; u <= x1 + 1e-9; u += unit) {
+      if (isMajorLine(u) !== major) continue
+      const a = toScreen({ x: u, y: y0 }, vp)
+      const c = toScreen({ x: u, y: y1 }, vp)
+      ctx.moveTo(a.x, a.y)
+      ctx.lineTo(c.x, c.y)
+    }
+    for (let u = y0; u <= y1 + 1e-9; u += unit) {
+      if (isMajorLine(u) !== major) continue
+      const a = toScreen({ x: x0, y: u }, vp)
+      const c = toScreen({ x: x1, y: u }, vp)
+      ctx.moveTo(a.x, a.y)
+      ctx.lineTo(c.x, c.y)
+    }
     ctx.stroke()
   }
   // 軸
@@ -697,19 +724,28 @@ export function drawZFieldOverlay(
   zField: (x: number, y: number) => number,
   vp: Viewport,
 ): void {
-  const step = 2 // ユニット（方眼1.0刻みに合わせた粗さ）
+  // 方眼と同じ1ユニット刻みのセルで塗る（1マス=1ユニット・グリッドに整列・#53）。
+  // セルは整数境界 [x, x+1] を占め、中心 (x+0.5, y+0.5) の z で代表させる。
   const s = scaleOf(vp)
-  const cell = step * s
+  const cell = GRID_UNIT * s
+  const R = FIELD.rField
+  const b = visibleBounds(vp)
+  const x0 = Math.max(-R, Math.floor(b.minX / GRID_UNIT) * GRID_UNIT)
+  const x1 = Math.min(R, Math.ceil(b.maxX / GRID_UNIT) * GRID_UNIT)
+  const y0 = Math.max(-R, Math.floor(b.minY / GRID_UNIT) * GRID_UNIT)
+  const y1 = Math.min(R, Math.ceil(b.maxY / GRID_UNIT) * GRID_UNIT)
   ctx.save()
-  for (let x = -FIELD.rField; x <= FIELD.rField; x += step) {
-    for (let y = -FIELD.rField; y <= FIELD.rField; y += step) {
-      if (Math.hypot(x, y) > FIELD.rField) continue
-      const z = zField(x, y)
+  for (let x = x0; x < x1 + 1e-9; x += GRID_UNIT) {
+    for (let y = y0; y < y1 + 1e-9; y += GRID_UNIT) {
+      const cx = x + GRID_UNIT / 2
+      const cy = y + GRID_UNIT / 2
+      if (Math.hypot(cx, cy) > R) continue
+      const z = zField(cx, cy)
       if (!Number.isFinite(z)) continue
       const attr = attributeOf(z)
       if (attr === 'neutral') continue
       const t = Math.min(strengthOf(z) / FIELD.sMax, 1)
-      const c = toScreen({ x, y }, vp)
+      const c = toScreen({ x: cx, y: cy }, vp)
       ctx.fillStyle =
         attr === 'light' ? `rgba(244,196,48,${0.04 + t * 0.16})` : `rgba(123,92,196,${0.05 + t * 0.18})`
       ctx.fillRect(c.x - cell / 2, c.y - cell / 2, cell + 1, cell + 1)
