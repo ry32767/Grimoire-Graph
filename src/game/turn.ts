@@ -178,12 +178,6 @@ interface AllyPlan {
 }
 
 /**
- * 周回結界の最低周回速度（#43）。強属性(|z|>zRef)で減速しても結界はこの速度を下回らない＝
- * 速度0で消えたりせず「ゆっくり回る弱い結界」として残り続ける（バリアとして機能し続ける）。
- */
-const ORBIT_MIN_SPEED = 4
-
-/**
  * 障害物判定の最大点間隔（ユニット・#1）。飛行サンプルは軌道頂点で、急な関数では頂点間が
  * 大きく開く。これより粗いと頂点と頂点の「あいだ」にある壁を判定できず弾がすり抜けるため、
  * 判定用にセグメントをこの間隔以下へ細分化する。
@@ -377,11 +371,17 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
           log.push({ kind: 'orbit', text: `${nameOf(allies, cast.allyId)}の周回は壁に当たって霧散した` })
         }
       }
-      // 強属性(|z|>zRef)で周回が減速しても、結界は消えずに「ゆっくり回る弱い結界」として残る（#43）。
-      // 速度を ORBIT_MIN_SPEED で下支えして 0 にしない＝バリアとして機能し続ける（自滅で穴が開かない）。
-      // 強い z ほど遅く＝弱くなる（強度×速度はほぼ保存）が、消えはしない（#31 のトレードオフは維持）。
-      const ringSpeed = Math.max(ORBIT_MIN_SPEED, meanSpeed(ringFlight))
-      plans.push({ cast, kind, ring, ringSpeed, freeFlight: null, carves, ringBroken })
+      // 強属性(|z|>zRef)で周回が減速し速度0へ達したら、周回も自滅して霧散する（#31）。壁破壊と同じ霧散演出に乗せる
+      if (!ringBroken && ringFlight.end === 'vanished') {
+        ringBroken = true
+        const stop = ringFlight.samples[ringFlight.samples.length - 1]
+        if (stop) {
+          const attr = attributeOf(zfieldAt(cast.trajectory, stop.pos))
+          carves.push({ pos: stop.pos, r: 1, arcLen: 0, attr, obstacleId: '' })
+        }
+        log.push({ kind: 'orbit', text: `${nameOf(allies, cast.allyId)}の周回結界は強すぎて失速し、自滅して消えた` })
+      }
+      plans.push({ cast, kind, ring, ringSpeed: meanSpeed(ringFlight), freeFlight: null, carves, ringBroken })
     } else {
       const freeFlight = simulateFlight(cast.trajectory, cast.initialSpeed)
       plans.push({ cast, kind, ring: null, ringSpeed: 0, freeFlight, carves: [], ringBroken: false })
