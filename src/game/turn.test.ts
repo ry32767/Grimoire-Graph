@@ -167,6 +167,22 @@ describe('周回が魔法に負けると霧散する（#34）', () => {
     const orbitShot = res.allyShots.find((s) => s.kind === 'orbit')!
     expect(orbitShot.broken).toBe(false)
   })
+
+  it('反対極のしっかりした結界は通常速度の敵弾を貫通させない（止める・#43）', () => {
+    // 闇の味方を狙う敵弾=光。闇の結界(|z|=zRef)で反対極→通常速度(8)の敵弾を止めきる
+    const res = resolveTurn({
+      allies: [ally('a', { x: 0, y: 0 }, 'dark')],
+      casts: [cast('a', { mode: 'polar', f: () => 6, origin: { x: 0, y: 0 }, z: zDarkMid }, 10)],
+      enemies: [enemy('e', { x: 0, y: 16 }, 'dark', 100, 8)],
+      castingEnemyIds: ['e'],
+      obstacles: [],
+      mechanics: withFire,
+    })
+    const orbitShot = res.allyShots.find((s) => s.kind === 'orbit')!
+    expect(orbitShot.broken).toBe(false) // 結界は存続（勝ち）
+    expect(res.enemyShots.every((s) => !s.reachedTarget)).toBe(true) // 敵弾は味方へ届かない
+    expect(res.allies[0].hp).toBe(100) // 無傷
+  })
 })
 
 describe('防御の重ね掛け（軌道型＋パリィ）', () => {

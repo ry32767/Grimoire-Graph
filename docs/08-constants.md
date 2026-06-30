@@ -41,7 +41,7 @@
 | `carveMaxRadius` | 2 | 1 撃のえぐり最大半径 |
 | `parryLossScale` | 0.25 | パリィ相殺：相手の威力 × これ を自速度から削る |
 | `shieldSpeedLoss` | 3 | シールドが敵弾速度を削る基本量（×相性） |
-| `orbitBlockScale` | 0.16 | 周回が敵弾を相殺する削り係数（反対極のみ） |
+| `orbitBlockScale` | 0.45 | 周回が敵弾を相殺する削り係数（反対極のみ）。しっかり張った結界は通常の敵弾を止めきる |
 | `orbitWallCarveRadius` | 0.5 | 周回が壁に触れて 1 点でえぐる半径 |
 | `orbitHealScale` | 5 | （旧モデル）光の周回回復＝強度 × これ |
 | `orbitHealAmount` | 30 | 光の周回 1 重の毎ターン固定回復量（強度に依らず・重複可） |

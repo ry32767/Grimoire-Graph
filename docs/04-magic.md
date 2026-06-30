@@ -158,7 +158,7 @@ resolveParry(attrA, speedA, powerA, attrB, speedB, powerB):
 敵弾パスがリング境界を横切ると相殺を試みる。**反対極のみ相殺、同極・中立は透過**。
 
 ```ts
-削る速度 = strengthOf(リング横断点の z) × リング速度 × orbitBlockScale(=0.16)
+削る速度 = strengthOf(リング横断点の z) × リング速度 × orbitBlockScale(=0.45)
 ```
 
 - 横断点の敵弾速度 `before` に対し、`before − 削る速度 ≤ 0` なら**敵弾を止めきって結界の勝ち（存続）**。横断点で全速度を削って確実に消す。
