@@ -9,7 +9,15 @@ import {
 } from '../game/functions'
 import { ZFIELD_PRESETS, findZPreset, defaultZCoeffs } from '../game/zfields'
 import { FIELD } from '../data/constants'
-import { type ComposerState, type Preview, findPreset, presetsFor } from './composer'
+import {
+  type ComposerState,
+  type Preview,
+  findPreset,
+  presetsFor,
+  parametricPatch,
+  setCoeffPatch,
+  NO_FIT,
+} from './composer'
 
 interface Props {
   allyName: string
@@ -20,6 +28,12 @@ interface Props {
   onOpenCodex: () => void
   /** z 場の編集中フラグを通知（#37：いじっている間だけ場をプレビュー表示する） */
   onZEditing?: (editing: boolean) => void
+  /** 通過点フィット（#46・射出のみ） */
+  fitPickActive?: boolean
+  fitPointCount?: number
+  onToggleFitPick?: () => void
+  onRunFit?: () => void
+  onClearFitPoints?: () => void
 }
 
 const attrLabel = (a: string) => (a === 'light' ? '光' : a === 'dark' ? '闇' : '中立')
@@ -52,27 +66,33 @@ export default function FunctionPanel(props: Props) {
   const switchMode = (mode: 'rotate' | 'polar') => {
     const first = presetsFor(mode)[0]
     const coeffs = defaultCoeffs(first)
-    onChange({
-      mode,
-      presetId: first.id,
-      coeffs,
-      useFree: false,
-      freeError: null,
-      freeExpr: first.toExpr(coeffs),
-    })
+    if (mode === 'rotate') {
+      // 射出は係数化フロー：式中の数値をスライダー化（#46）
+      onChange({ mode, presetId: first.id, coeffs, ...parametricPatch(first.toExpr(coeffs), 'x') })
+    } else {
+      onChange({ mode, presetId: first.id, coeffs, useFree: false, freeError: null, freeExpr: first.toExpr(coeffs), ...NO_FIT })
+    }
   }
-  // #13：プリセット選択時、自由入力欄にその式を自動転記（回転=x／極座標=t）
+  // #13/#46：プリセット選択で自由入力欄へ式を転記。回転は係数を自動検出してスライダー化
   const selectPreset = (id: string) => {
     const p = findPreset(id)
     if (!p) return
     const coeffs = defaultCoeffs(p)
-    onChange({ presetId: id, coeffs, useFree: false, freeError: null, freeExpr: p.toExpr(coeffs) })
+    if (p.category === 'rotate') {
+      onChange({ presetId: id, coeffs, ...parametricPatch(p.toExpr(coeffs), 'x') })
+    } else {
+      onChange({ presetId: id, coeffs, useFree: false, freeError: null, freeExpr: p.toExpr(coeffs), ...NO_FIT })
+    }
   }
-  // #19：極座標でも自由入力（θ は t）を受け付ける
+  // #19/#46：自由入力を適用。回転は係数を自動検出してスライダー化、極座標は従来どおり
   const applyFree = () => {
-    const f = parseExpression(freeDraft, c.mode === 'polar' ? 't' : 'x')
+    if (c.mode === 'rotate') {
+      onChange(parametricPatch(freeDraft, 'x'))
+      return
+    }
+    const f = parseExpression(freeDraft, 't')
     if (!f) onChange({ freeError: '式が正しくありません' })
-    else onChange({ freeExpr: freeDraft, useFree: true, freeError: null })
+    else onChange({ freeExpr: freeDraft, useFree: true, freeError: null, ...NO_FIT })
   }
 
   // z 場（属性 z=f(x,y)・#30）の操作
@@ -113,7 +133,7 @@ export default function FunctionPanel(props: Props) {
         {presets.map((p) => (
           <button
             key={p.id}
-            className={`btn small${!c.useFree && c.presetId === p.id ? ' selected' : ''}`}
+            className={`btn small${(c.mode === 'rotate' ? c.presetId === p.id : !c.useFree && c.presetId === p.id) ? ' selected' : ''}`}
             onClick={() => selectPreset(p.id)}
           >
             {p.name}
@@ -129,7 +149,30 @@ export default function FunctionPanel(props: Props) {
         )}
       </div>
 
-      {!c.useFree &&
+      {/* 回転（射出）：自由入力式から自動検出した係数のスライダー（#46） */}
+      {c.mode === 'rotate' && c.fitParams.length > 0 && (
+        <>
+          <div className="section-title">係数（式から自動検出）</div>
+          {c.fitParams.map((p) => (
+            <div className="slider-row" key={p.key}>
+              <label title={`初期値 ${p.value}`}>{p.label}</label>
+              <input
+                type="range"
+                min={p.min}
+                max={p.max}
+                step={p.step}
+                value={c.fitValues[p.key] ?? p.value}
+                onChange={(e) => onChange(setCoeffPatch(c, p.key, Number(e.target.value)))}
+              />
+              <span className="val">{(c.fitValues[p.key] ?? p.value).toFixed(2)}</span>
+            </div>
+          ))}
+        </>
+      )}
+
+      {/* 極座標：従来のプリセット係数スライダー */}
+      {c.mode === 'polar' &&
+        !c.useFree &&
         preset?.coeffs.map((cf) => (
           <div className="slider-row" key={cf.key}>
             <label>{cf.label}</label>
@@ -172,6 +215,39 @@ export default function FunctionPanel(props: Props) {
           </button>
         )}
       </div>
+
+      {/* 通過点フィット（最小二乗・射出のみ・#46）：点を選んで係数を自動調整 */}
+      {c.mode === 'rotate' && c.fitParams.length > 0 && preview.kind === 'projectile' && (
+        <div className="fit-section">
+          <div className="section-title">通過点フィット（最小二乗）</div>
+          <div className="hint">
+            「点を選ぶ」を押し、フィールドを<strong>クリックして通したい点</strong>を置く。
+            「フィット」で式の係数を点群に近づける。
+          </div>
+          <div className="action-row">
+            <button
+              className={`btn small${props.fitPickActive ? ' selected' : ''}`}
+              onClick={props.onToggleFitPick}
+            >
+              {props.fitPickActive ? '点ピック中…' : '点を選ぶ'}
+            </button>
+            <button
+              className="btn small"
+              disabled={(props.fitPointCount ?? 0) < 1}
+              onClick={props.onRunFit}
+            >
+              フィット（{props.fitPointCount ?? 0}点）
+            </button>
+            <button
+              className="btn small"
+              disabled={(props.fitPointCount ?? 0) < 1 && !props.fitPickActive}
+              onClick={props.onClearFitPoints}
+            >
+              クリア
+            </button>
+          </div>
+        </div>
+      )}
 
       {c.mode === 'rotate' && (
         <div className="slider-row">

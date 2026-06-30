@@ -10,6 +10,13 @@ import {
   type Preset,
 } from '../game/functions'
 import { findZPreset } from '../game/zfields'
+import {
+  detectParams,
+  initialValues,
+  renderExpr,
+  type DetectedParam,
+  type ParamSpec,
+} from '../game/exprFit'
 import { simulateFlight } from '../game/physics'
 import { detectMisfire } from '../game/misfire'
 import { zfieldAt, attributeOf, strengthOf } from '../game/attribute'
@@ -29,6 +36,13 @@ export interface ComposerState {
   useFree: boolean
   freeExpr: string
   freeError: string | null
+  /**
+   * 自由入力式から自動検出した係数（#46）。射出魔法（回転 y=g(x)）で式中の数値を
+   * スライダー化し、通過点フィットの対象にする。fitTemplate は数値を p0,p1,… に置換した式。
+   */
+  fitTemplate: string
+  fitParams: DetectedParam[]
+  fitValues: Record<string, number>
   /** z 場（属性 z=f(x,y)）の状態（#30/#21） */
   zPresetId: string
   zCoeffs: Record<string, number>
@@ -50,6 +64,42 @@ export function buildZField(c: ComposerState): ZField {
 
 export function findPreset(id: string): Preset | undefined {
   return ALL_PRESETS.find((p) => p.id === id)
+}
+
+/** 係数化フィールドを空にするパッチ（極座標など、係数スライダーを使わない時）。 */
+export const NO_FIT: Pick<ComposerState, 'fitTemplate' | 'fitParams' | 'fitValues'> = {
+  fitTemplate: '',
+  fitParams: [],
+  fitValues: {},
+}
+
+/** 現在の係数化状態から ParamSpec を組み立てる。 */
+export function fitSpecOf(c: ComposerState): ParamSpec {
+  return { template: c.fitTemplate, params: c.fitParams, varName: c.mode === 'polar' ? 't' : 'x' }
+}
+
+/**
+ * 式を係数化（数値リテラル→スライダー）して自由入力モードへ入るパッチを作る（#46）。
+ * 検出に失敗したら freeError のみ返す（直前の状態を維持）。
+ */
+export function parametricPatch(expr: string, varName: 'x' | 't'): Partial<ComposerState> {
+  const spec = detectParams(expr, varName)
+  if (!spec) return { freeError: '式が正しくありません' }
+  const values = initialValues(spec)
+  return {
+    useFree: true,
+    freeError: null,
+    freeExpr: renderExpr(spec, values),
+    fitTemplate: spec.template,
+    fitParams: spec.params,
+    fitValues: values,
+  }
+}
+
+/** 係数1つの値を更新し、自由入力式（freeExpr）を再生成するパッチを作る（#46）。 */
+export function setCoeffPatch(c: ComposerState, key: string, value: number): Partial<ComposerState> {
+  const values = { ...c.fitValues, [key]: value }
+  return { fitValues: values, freeExpr: renderExpr(fitSpecOf(c), values), useFree: true, freeError: null }
 }
 
 export function presetsFor(mode: 'rotate' | 'polar'): Preset[] {

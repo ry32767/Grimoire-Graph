@@ -120,6 +120,7 @@ src/
 │  ├ status.ts              状態異常（ひるみ/継続ダメージ）
 │  ├ enemyAI.ts             敵 AI（系統・ロール・探索・壁よけ）
 │  ├ recommend.ts           おすすめ術式の探索
+│  ├ exprFit.ts             式の係数化（数値→スライダー）・通過点フィット（最小二乗・#46）
 │  ├ turn.ts                ターン解決の中核
 │  └ battle.ts              戦闘ループ・勝敗判定
 ├ data/

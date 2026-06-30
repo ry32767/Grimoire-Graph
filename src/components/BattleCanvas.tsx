@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type MouseEvent as ReactMouseEvent } from 'react'
 import type { Ally, CarveBurst, DamagePopup, Disc, Enemy, Obstacle, Vec2, ZPoint } from '../game/types'
 import { FIELD } from '../data/constants'
-import { toScreen, type Viewport } from '../game/coords'
+import { toScreen, toMath, type Viewport } from '../game/coords'
 import {
   drawScene,
   drawBullet,
@@ -138,6 +138,10 @@ interface Props {
   standingOrbits?: StandingOrbit[]
   animation?: ResolveAnimation | null
   onAnimationDone?: () => void
+  /** 通過点フィットで選んだ点（#46）。作成フェーズで✛として表示する */
+  fitPoints?: Vec2[]
+  /** フィールドをクリックした時の数学座標を返す（#46：点ピック中だけ渡す） */
+  onFieldClick?: (mathPos: Vec2) => void
 }
 
 const MS_PER_GAMESEC = 360
@@ -234,6 +238,8 @@ export default function BattleCanvas(props: Props) {
         for (const o of standing) drawStandingOrbit(ctx, o, trailPhase)
         // 闇の周回は内側を暗くぼかす（プレイヤー視点の視認性低下・#39）
         for (const o of standing) if (ringAverageAttr(o.ring) === 'dark') drawConcealVeil(ctx, o.ring, VP)
+        // 通過点フィットの選択点を✛で表示（#46）
+        drawFitPoints(ctx, props.fitPoints)
       }
       if (standing.length === 0) {
         drawComposeFrame(0)
@@ -593,7 +599,53 @@ export default function BattleCanvas(props: Props) {
     props.zField,
     props.showZField,
     props.standingOrbits,
+    props.fitPoints,
   ])
 
-  return <canvas ref={ref} width={INTERNAL} height={INTERNAL} aria-label="バトルフィールド" />
+  // クリック位置を数学座標へ変換してフィット点に渡す（#46）。内部解像度と表示サイズの差を補正
+  const handleClick = (e: ReactMouseEvent<HTMLCanvasElement>) => {
+    const cb = props.onFieldClick
+    const canvas = ref.current
+    if (!cb || !canvas) return
+    const rect = canvas.getBoundingClientRect()
+    if (rect.width === 0 || rect.height === 0) return
+    const px = ((e.clientX - rect.left) * INTERNAL) / rect.width
+    const py = ((e.clientY - rect.top) * INTERNAL) / rect.height
+    cb(toMath({ x: px, y: py }, VP))
+  }
+
+  return (
+    <canvas
+      ref={ref}
+      width={INTERNAL}
+      height={INTERNAL}
+      aria-label="バトルフィールド"
+      onClick={props.onFieldClick ? handleClick : undefined}
+      style={props.onFieldClick ? { cursor: 'crosshair' } : undefined}
+    />
+  )
+}
+
+/** 通過点フィットで選んだ点を✛＋連番で表示する（#46）。 */
+function drawFitPoints(ctx: CanvasRenderingContext2D, points?: Vec2[]): void {
+  if (!points || points.length === 0) return
+  ctx.save()
+  for (let i = 0; i < points.length; i++) {
+    const s = toScreen(points[i], VP)
+    ctx.strokeStyle = '#5ad1ff'
+    ctx.lineWidth = 2
+    ctx.shadowColor = '#5ad1ff'
+    ctx.shadowBlur = 8
+    ctx.beginPath()
+    ctx.moveTo(s.x - 6, s.y)
+    ctx.lineTo(s.x + 6, s.y)
+    ctx.moveTo(s.x, s.y - 6)
+    ctx.lineTo(s.x, s.y + 6)
+    ctx.stroke()
+    ctx.shadowBlur = 0
+    ctx.fillStyle = '#cdeffd'
+    ctx.font = '11px sans-serif'
+    ctx.fillText(String(i + 1), s.x + 8, s.y - 8)
+  }
+  ctx.restore()
 }

@@ -41,6 +41,8 @@ import {
   tauDependencies,
   parseDependencies,
   compileDependencies,
+  ConstantNodeDependencies,
+  SymbolNodeDependencies,
   type MathNode,
 } from 'mathjs'
 
@@ -80,9 +82,15 @@ const math = create(
     ...tauDependencies,
     ...parseDependencies,
     ...compileDependencies,
+    ...ConstantNodeDependencies,
+    ...SymbolNodeDependencies,
   },
   { number: 'number' },
 )
+
+/** mathjs ノードのコンストラクタ（限定インスタンス由来）。式の係数化に使う。 */
+const ConstantNode = math.ConstantNode
+const SymbolNode = math.SymbolNode
 
 /** 式から参照してよい定数（変数チェックで許可する）。 */
 const CONSTANTS = new Set(['pi', 'e', 'tau'])
@@ -168,4 +176,76 @@ export function varsAllowed(vars: Set<string>, allowedVars: readonly string[]): 
     if (!allowedVars.includes(v) && !CONSTANTS.has(v)) return false
   }
   return true
+}
+
+// ===== 式の係数化（数値リテラル→可変パラメータ・係数スライダー／フィット用） =====
+
+/** OperatorNode の op を安全に取り出す（型のための薄いヘルパー）。 */
+function opOf(node: MathNode): string | undefined {
+  return node.type === 'OperatorNode' ? (node as unknown as { op: string }).op : undefined
+}
+
+/**
+ * 式中の数値リテラルを可変パラメータ `p0,p1,…` に置き換えたテンプレートと、その元の値を返す。
+ * 例: `2*sin(0.6*x)+1` → template `p0 * sin(p1 * x) + p2`、originals `[2, 0.6, 1]`。
+ * べき指数（`x^2` の 2 など）は非整数化で複素数（暴発）になりやすいので係数化しない。
+ * 構文エラー・許可外ノードなら null。数値リテラルが無ければ originals は空。
+ */
+export function parametrizeConstants(expr: string): { template: string; originals: number[] } | null {
+  const trimmed = expr.trim()
+  if (trimmed === '') return null
+  let node: MathNode
+  try {
+    node = math.parse(trimmed)
+  } catch {
+    return null
+  }
+  if (!analyze(node)) return null
+  // べき指数の位置にある定数（`^` の右側）は係数化から除外する
+  const exponentConsts = new Set<MathNode>()
+  node.traverse((n: MathNode, _path: string, parent: MathNode | null) => {
+    if (parent && opOf(parent) === '^') {
+      const args = (parent as unknown as { args: MathNode[] }).args
+      if (args && args[1] === n && n.type === 'ConstantNode') exponentConsts.add(n)
+    }
+  })
+  const originals: number[] = []
+  const template = node.transform((n: MathNode) => {
+    if (
+      n.type === 'ConstantNode' &&
+      typeof (n as unknown as { value: unknown }).value === 'number' &&
+      !exponentConsts.has(n)
+    ) {
+      const idx = originals.length
+      originals.push((n as unknown as { value: number }).value)
+      return new SymbolNode(`p${idx}`)
+    }
+    return n
+  })
+  return { template: template.toString(), originals }
+}
+
+/** テンプレートの `p0,p1,…` を数値に戻して式文字列にする（係数値→自由入力式）。 */
+export function substituteParams(template: string, values: number[]): string | null {
+  let node: MathNode
+  try {
+    node = math.parse(template)
+  } catch {
+    return null
+  }
+  const out = node.transform((n: MathNode) => {
+    if (n.type === 'SymbolNode') {
+      const m = /^p(\d+)$/.exec((n as unknown as { name: string }).name)
+      if (m) {
+        const v = values[Number(m[1])]
+        if (v !== undefined) return new ConstantNode(Number(v.toFixed(4)))
+      }
+    }
+    return n
+  })
+  // 負値の `+ -6` / `- -6` を `- 6` / `+ 6` に整える（見た目だけ・評価は不変）
+  return out
+    .toString()
+    .replace(/\+ -/g, '- ')
+    .replace(/- -/g, '+ ')
 }

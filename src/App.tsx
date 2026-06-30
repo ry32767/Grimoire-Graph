@@ -10,7 +10,16 @@ import { STAGES } from './data/stages'
 import { makeParty } from './data/party'
 import { FIELD } from './data/constants'
 import { PROLOGUE, EPILOGUE, GAMEOVER_TEXT } from './data/story'
-import { type ComposerState, buildComposerTrajectory, buildZField, computePreview } from './components/composer'
+import {
+  type ComposerState,
+  buildComposerTrajectory,
+  buildZField,
+  computePreview,
+  parametricPatch,
+  fitSpecOf,
+  NO_FIT,
+} from './components/composer'
+import { fitToPoints, renderExpr } from './game/exprFit'
 import BattleCanvas, { type ResolveAnimation, type AnimBullet, type AnimOrbit } from './components/BattleCanvas'
 import Hud from './components/Hud'
 import BattleLog from './components/BattleLog'
@@ -49,21 +58,25 @@ function makeComposer(angle: number): ComposerState {
   const coeffs = defaultCoeffs(ROTATE_PRESETS[0])
   const zPreset = ZFIELD_PRESETS[0] // 一定（const）
   const zCoeffs = defaultZCoeffs(zPreset)
-  return {
+  const expr = ROTATE_PRESETS[0].toExpr(coeffs)
+  const base: ComposerState = {
     mode: 'rotate',
     presetId: 'line',
     coeffs,
     angle,
     speed: FIELD.fixedSpeed,
     useFree: false,
-    freeExpr: ROTATE_PRESETS[0].toExpr(coeffs),
+    freeExpr: expr,
     freeError: null,
+    ...NO_FIT,
     zPresetId: zPreset.id,
     zCoeffs,
     zUseFree: false,
     zFreeExpr: zPreset.toExpr(zCoeffs),
     zFreeError: null,
   }
+  // 射出（回転 y=g(x)）は既定で係数化フロー：式中の数値をスライダー化する（#46）
+  return { ...base, ...parametricPatch(expr, 'x') }
 }
 
 /** パーティ各自の初期コンポーザ（敵陣（上方）へ向ける）。 */
@@ -86,6 +99,9 @@ export default function App() {
   const [pendingState, setPendingState] = useState<BattleState | null>(null)
   // #37：z 場をいじっている間だけ、場をプレビュー表示する
   const [zEditing, setZEditing] = useState(false)
+  // #46：通過点フィット。点ピック中フラグと、選んだ通過点（数学座標）
+  const [fitPickActive, setFitPickActive] = useState(false)
+  const [fitPoints, setFitPoints] = useState<Vec2[]>([])
   const [codexOpen, setCodexOpen] = useState(false)
   // #23：図鑑用に「遭遇した敵」を記録（セッション内・永続化しない）
   const [seenEnemies, setSeenEnemies] = useState<Set<string>>(new Set())
@@ -197,16 +213,43 @@ export default function App() {
     const r = recommendCast(ally.pos, target, battle.mechanics.obstacles ? battle.obstacles : [])
     // z 場は敵の反対極を最強で当てる一定値（#21）
     const zPatch = { zPresetId: 'const', zCoeffs: { c: r.zConst }, zUseFree: false }
+    // おすすめ式も係数化フローに乗せる（#46）：数値をスライダー化して微調整できる
+    const expr = r.line ? `${r.line.a}*x` : (r.freeExpr ?? '')
     setComposers((m) => ({
       ...m,
-      [activeAllyId]: r.line
-        ? { ...makeComposer(r.angle), coeffs: { a: r.line.a, b: r.line.b }, freeExpr: `${r.line.a}*x`, ...zPatch }
-        : { ...makeComposer(r.angle), useFree: true, freeExpr: r.freeExpr ?? '', ...zPatch },
+      [activeAllyId]: { ...makeComposer(r.angle), ...parametricPatch(expr, 'x'), ...zPatch },
     }))
+  }
+
+  // #46：通過点フィット
+  const clearFit = () => {
+    setFitPoints([])
+    setFitPickActive(false)
+  }
+  const onFieldClick = (p: Vec2) => {
+    if (!fitPickActive) return
+    setFitPoints((prev) => [...prev, p])
+  }
+  const runFit = () => {
+    const c = composers[activeAllyId]
+    const ally = battle?.allies.find((a) => a.id === activeAllyId)
+    if (!c || !ally || c.mode !== 'rotate' || c.fitParams.length === 0 || fitPoints.length === 0) return
+    const spec = fitSpecOf(c)
+    const values = fitToPoints(spec, c.fitValues, c.angle, ally.pos, fitPoints)
+    onChange({ fitValues: values, freeExpr: renderExpr(spec, values), useFree: true, freeError: null })
+    // 点は残したまま（曲線が点に近づいた結果を確認できる）。ピックは抜ける。クリアは手動。
+    setFitPickActive(false)
+  }
+  // 別の味方に切り替えたらピック状態は破棄する
+  const switchAlly = (id: string) => {
+    clearFit()
+    playSfx('select')
+    setActiveAllyId(id)
   }
 
   const fireAll = () => {
     if (!battle) return
+    clearFit()
     const casts: AllyCast[] = []
     for (const a of battle.allies) {
       if (a.hp <= 0 || impairedIds.includes(a.id)) continue
@@ -456,6 +499,8 @@ export default function App() {
               ghostPaths={ghostPaths}
               animation={animation}
               onAnimationDone={onAnimationDone}
+              fitPoints={composing ? fitPoints : undefined}
+              onFieldClick={composing && fitPickActive ? onFieldClick : undefined}
             />
           </div>
           <Hud allies={battle.allies} enemies={battle.enemies} activeAllyId={activeAllyId} />
@@ -473,10 +518,7 @@ export default function App() {
                       key={a.id}
                       className={`btn small ally-tab${a.id === activeAllyId ? ' selected' : ''}${dead ? ' dead' : ''}`}
                       disabled={dead}
-                      onClick={() => {
-                        playSfx('select')
-                        setActiveAllyId(a.id)
-                      }}
+                      onClick={() => switchAlly(a.id)}
                     >
                       {a.name}
                       {impaired && !dead ? '（ひるみ）' : ''}
@@ -492,6 +534,11 @@ export default function App() {
                 onRecommend={recommend}
                 onOpenCodex={() => setCodexOpen(true)}
                 onZEditing={setZEditing}
+                fitPickActive={fitPickActive}
+                fitPointCount={fitPoints.length}
+                onToggleFitPick={() => setFitPickActive((v) => !v)}
+                onRunFit={runFit}
+                onClearFitPoints={clearFit}
               />
               <div className="action-row">
                 <button className="btn primary fire-all" onClick={fireAll}>
