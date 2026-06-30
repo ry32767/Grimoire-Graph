@@ -4,6 +4,7 @@ import { FIELD } from '../data/constants'
 import { toScreen, scaleOf, visibleBounds, type Viewport } from '../game/coords'
 import { attributeOf, strengthOf } from '../game/attribute'
 import { COLORS } from './theme'
+import { getWallTexture } from './textures'
 
 export type { ZPoint }
 
@@ -451,7 +452,7 @@ function drawObstacleTexture(
   vp: Viewport,
   s: number,
 ): void {
-  if (o.solids.length === 0) return
+  if (o.solids.length === 0 && !(o.rects && o.rects.length)) return
   let minX = Infinity
   let maxX = -Infinity
   let minY = Infinity
@@ -462,6 +463,12 @@ function drawObstacleTexture(
     minY = Math.min(minY, d.y - d.r)
     maxY = Math.max(maxY, d.y + d.r)
   }
+  for (const r of o.rects ?? []) {
+    minX = Math.min(minX, r.x)
+    maxX = Math.max(maxX, r.x + r.w)
+    minY = Math.min(minY, r.y)
+    maxY = Math.max(maxY, r.y + r.h)
+  }
   const tl = toScreen({ x: minX, y: maxY }, vp) // y 反転：maxY が画面上
   const br = toScreen({ x: maxX, y: minY }, vp)
   const x0 = tl.x
@@ -469,6 +476,20 @@ function drawObstacleTexture(
   const x1 = br.x
   const y1 = br.y
   const kind = o.kind ?? 'normal'
+  // ピクセルアートのタイル画像を素材内に敷き詰める（#56）。取得できなければ手続き描画にフォールバック
+  const tex = getWallTexture(kind, o.element)
+  if (tex) {
+    const pat = lx.createPattern(tex, 'repeat')
+    if (pat) {
+      lx.save()
+      lx.globalAlpha = 0.62 // 下地の属性色を活かしつつ質感を重ねる
+      lx.imageSmoothingEnabled = false
+      lx.fillStyle = pat
+      lx.fillRect(x0, y0, x1 - x0, y1 - y0)
+      lx.restore()
+      return
+    }
+  }
   lx.save()
   if (kind === 'unbreakable') {
     lx.strokeStyle = 'rgba(150,162,190,0.5)'
@@ -547,7 +568,7 @@ export function drawObstacles(ctx: CanvasRenderingContext2D, obstacles: Obstacle
   if (!lx) return
 
   for (const o of obstacles) {
-    if (o.solids.length === 0) continue
+    if (o.solids.length === 0 && !(o.rects && o.rects.length)) continue // 円・矩形どちらも無ければ描かない（#56）
     lx.clearRect(0, 0, W, H)
     // ブロブ本体（円の和を塗る）
     lx.globalCompositeOperation = 'source-over'
@@ -558,7 +579,13 @@ export function drawObstacles(ctx: CanvasRenderingContext2D, obstacles: Obstacle
       lx.arc(c.x, c.y, d.r * s, 0, Math.PI * 2)
       lx.fill()
     }
-    // 種別テクスチャを素材内だけに重ねる（source-atop で solids の上にのみ描く・#40）
+    // 四角い素材（#56）：角のシャープな矩形を塗る
+    for (const r of o.rects ?? []) {
+      const tl = toScreen({ x: r.x, y: r.y + r.h }, vp) // y 反転：上辺が画面上
+      const br = toScreen({ x: r.x + r.w, y: r.y }, vp)
+      lx.fillRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y)
+    }
+    // 種別テクスチャを素材内だけに重ねる（source-atop で素材の上にのみ描く・#40/#56）
     lx.globalCompositeOperation = 'source-atop'
     drawObstacleTexture(lx, o, vp, s)
     // えぐり取った穴を抜く（滑らかな円形の削れ）

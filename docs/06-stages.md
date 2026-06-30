@@ -1,17 +1,19 @@
 # 06. ステージ（全 7 面）
 
 定義は `src/data/stages.ts`。スケール 1.5 倍（場 `rField=30`）。敵は上方、味方は下方。
-障害物は `solids`（重なった円の和＝連続ブロブ）。`R=2.4`（円の半径）、`STEP=2.4`（円の間隔）。
+障害物の素材は `solids`（重なった円の和＝連続ブロブ）と `rects`（軸並行の矩形＝四角い壁・#56）で表す。`R=2.4`（円の半径）、`STEP=2.4`（円の間隔）。柱・螺旋は円、壁・ブロックは矩形（角がシャープ）を使う。
 
 ## 障害物のヘルパー
 
 | 関数 | 形 |
 |---|---|
-| `pillar(cx, y0, n, element, kind?)` | 縦の柱（上へ n 個の円） |
-| `block(x0, y0, cols, rows, element, kind?)` | 矩形ブロック（cols×rows の円） |
-| `wall(x0, x1, y0, rows, element, kind?)` | 横一列の連続壁（建物の壁・rows 段重ね） |
+| `pillar(cx, y0, n, element, kind?)` | 縦の柱（上へ n 個の円・丸い） |
+| `block(x0, y0, cols, rows, element, kind?)` | 四角いブロック（cols×rows ぶんを覆う矩形・#56） |
+| `wall(x0, x1, y0, rows, element, kind?)` | 横一列の四角い壁（rows 段ぶんの厚みの矩形・#56） |
 | `colonnade(x0, x1, step, y0, n, elems[])` | 列柱（step 間隔で縦 n 段の柱を並べ、elems を順に割当） |
 | `spiralArm(cx, cy, n, turns, phase, element)` | アルキメデス螺旋の腕 |
+
+> `block`/`wall` は #56 で円敷き詰めから矩形（`obRect`）へ変更（footprint はほぼ同じ／角がシャープ）。当たり判定・削れ（`carves` で円を引く）・暴発 AoE は円・矩形どちらにも対応（`isSolidAt` / `obstacleOverlapsCircle` / `materialCells`）。
 
 `mechanics`：`obstacles`（障害物有効か）・`enemyFire`（敵が撃つか）の段階的解禁。
 

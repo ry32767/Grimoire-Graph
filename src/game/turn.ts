@@ -34,7 +34,7 @@ import {
 } from './physics'
 import { firstHitAmong, type Target } from './collision'
 import { firstCrossing, resolveParry } from './parry'
-import { isSolidAt, carveSpeedLoss, carveRadius } from './obstacle'
+import { isSolidAt, carveSpeedLoss, carveRadius, materialCells, obstacleOverlapsCircle } from './obstacle'
 import { resolveMisfire } from './misfire'
 import { makeStatus, addStatus } from './status'
 import { dist } from './coords'
@@ -671,13 +671,12 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
         let di = 0
         for (const ob of obstacles) {
           if ((ob.kind ?? 'normal') === 'unbreakable') continue
-          // AoE 円に少しでも重なる素材があるか
-          const inRange = ob.solids.some((d) => dist({ x: d.x, y: d.y }, center) <= FIELD.aoeRadius + d.r)
-          if (!inRange) continue
+          // AoE 円に少しでも重なる素材があるか（円・矩形とも・#56）
+          if (!obstacleOverlapsCircle(ob, center, FIELD.aoeRadius)) continue
           // AoE 円ぶんを丸ごとえぐる＝範囲内の素材を全て除去（部分的に重なる壁も範囲内は消える）
           ob.carves.push({ x: center.x, y: center.y, r: FIELD.aoeRadius })
-          // 砕け演出：AoE 内の各 disc 位置で破片バースト（光闇が交互）
-          for (const dsc of ob.solids) {
+          // 砕け演出：AoE 内の各素材セル位置で破片バースト（光闇が交互・#56）
+          for (const dsc of materialCells(ob)) {
             if (dist({ x: dsc.x, y: dsc.y }, center) <= FIELD.aoeRadius) {
               p.carves.push({ pos: { x: dsc.x, y: dsc.y }, r: dsc.r, arcLen: misArc, attr: di % 2 === 0 ? 'light' : 'dark', obstacleId: ob.id })
               di++

@@ -20,7 +20,7 @@
 | `Enemy` / `Ally` | 敵・味方術者（[05](05-enemies.md)/[01](01-overview.md) 参照） |
 | `EnemyFamily` | `line \| arc \| wave \| spiral`（得意関数の系統） |
 | `EnemyRole` | `attacker \| breaker \| guardian` |
-| `Disc` / `Obstacle` / `ObstacleKind` | 障害物（solids − carves・耐久種別） |
+| `Disc` / `Rect` / `Obstacle` / `ObstacleKind` | 障害物（素材＝solids（円）＋rects（四角・#56）− carves・耐久種別） |
 | `CarveBurst` | 削る瞬間の演出データ |
 | `ActiveOrbit` | 永続する周回結界（#39） |
 | `Mechanics` | `{ obstacles, enemyFire }`（段階的解禁） |
