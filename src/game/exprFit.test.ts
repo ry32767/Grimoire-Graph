@@ -88,4 +88,24 @@ describe('通過点フィット（最小二乗・射出魔法）', () => {
     const v = initialValues(spec)
     expect(fitToPoints(spec, v, 0, { x: 0, y: 0 }, [])).toEqual(v)
   })
+
+  it('高次多項式（4次）を5点へ精密フィットできる（LM・係数の桁違いに強い）', () => {
+    // 目標の4次曲線（角度0・原点(-14,-20)）から実際に通る5点をサンプルし、
+    // 別の初期係数からその点群へフィットして「ほぼ通る」ことを確認する。
+    const origin = { x: -14, y: -20 }
+    const target = detectParams('0.0008*x^4 - 0.045*x^3 + 0.7*x^2 - 2*x', 'x')!
+    const gT = buildParamFn(target, initialValues(target))!
+    const pts = [8, 16, 24, 32, 40].map((x) => ({
+      x: origin.x + x,
+      y: origin.y + (gT(x) - gT(0)),
+    }))
+    const spec = detectParams('0.0008*x^4 - 0.02*x^3 + 0.2*x^2 + 0.5*x', 'x')!
+    const fitted = fitToPoints(spec, initialValues(spec), 0, origin, pts)
+    const g = buildParamFn(spec, fitted)!
+    // 各点で g(x)−g(0) が目標の縦オフセットにほぼ一致（残差 < 0.2 ユニット）
+    for (const x of [8, 16, 24, 32, 40]) {
+      const want = gT(x) - gT(0)
+      expect(Math.abs(g(x) - g(0) - want)).toBeLessThan(0.2)
+    }
+  })
 })

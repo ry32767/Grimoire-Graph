@@ -16,7 +16,6 @@ import {
   presetsFor,
   parametricPatch,
   setCoeffPatch,
-  NO_FIT,
 } from './composer'
 
 interface Props {
@@ -63,36 +62,24 @@ export default function FunctionPanel(props: Props) {
     if (f) samples = [0, Math.PI / 2, Math.PI].map((t) => ({ x: t, y: f(t) }))
   }
 
+  // 回転=x／極座標=t。どちらも自由入力式から係数を自動検出してスライダー化する（#46）
+  const varOf = (mode: 'rotate' | 'polar') => (mode === 'polar' ? 't' : 'x')
+
   const switchMode = (mode: 'rotate' | 'polar') => {
     const first = presetsFor(mode)[0]
     const coeffs = defaultCoeffs(first)
-    if (mode === 'rotate') {
-      // 射出は係数化フロー：式中の数値をスライダー化（#46）
-      onChange({ mode, presetId: first.id, coeffs, ...parametricPatch(first.toExpr(coeffs), 'x') })
-    } else {
-      onChange({ mode, presetId: first.id, coeffs, useFree: false, freeError: null, freeExpr: first.toExpr(coeffs), ...NO_FIT })
-    }
+    onChange({ mode, presetId: first.id, coeffs, ...parametricPatch(first.toExpr(coeffs), varOf(mode)) })
   }
-  // #13/#46：プリセット選択で自由入力欄へ式を転記。回転は係数を自動検出してスライダー化
+  // #13/#46：プリセット選択で自由入力欄へ式を転記し、係数を自動検出してスライダー化（回転/極座標とも）
   const selectPreset = (id: string) => {
     const p = findPreset(id)
     if (!p) return
     const coeffs = defaultCoeffs(p)
-    if (p.category === 'rotate') {
-      onChange({ presetId: id, coeffs, ...parametricPatch(p.toExpr(coeffs), 'x') })
-    } else {
-      onChange({ presetId: id, coeffs, useFree: false, freeError: null, freeExpr: p.toExpr(coeffs), ...NO_FIT })
-    }
+    onChange({ presetId: id, coeffs, ...parametricPatch(p.toExpr(coeffs), varOf(p.category)) })
   }
-  // #19/#46：自由入力を適用。回転は係数を自動検出してスライダー化、極座標は従来どおり
+  // #19/#46：自由入力を適用。回転/極座標とも係数を自動検出してスライダー化
   const applyFree = () => {
-    if (c.mode === 'rotate') {
-      onChange(parametricPatch(freeDraft, 'x'))
-      return
-    }
-    const f = parseExpression(freeDraft, 't')
-    if (!f) onChange({ freeError: '式が正しくありません' })
-    else onChange({ freeExpr: freeDraft, useFree: true, freeError: null, ...NO_FIT })
+    onChange(parametricPatch(freeDraft, varOf(c.mode)))
   }
 
   // z 場（属性 z=f(x,y)・#30）の操作
@@ -133,7 +120,7 @@ export default function FunctionPanel(props: Props) {
         {presets.map((p) => (
           <button
             key={p.id}
-            className={`btn small${(c.mode === 'rotate' ? c.presetId === p.id : !c.useFree && c.presetId === p.id) ? ' selected' : ''}`}
+            className={`btn small${c.presetId === p.id ? ' selected' : ''}`}
             onClick={() => selectPreset(p.id)}
           >
             {p.name}
@@ -141,16 +128,16 @@ export default function FunctionPanel(props: Props) {
         ))}
       </div>
       <div className="preset-desc">
-        {c.useFree ? '自由入力式を使用中' : (preset?.description ?? '')}
-        {!c.useFree && preset && (
+        {preset?.description ?? '自由入力式'}
+        {preset && (
           <div className="free-hint">
             自由入力名: <code>{preset.freeName}</code>
           </div>
         )}
       </div>
 
-      {/* 回転（射出）：自由入力式から自動検出した係数のスライダー（#46） */}
-      {c.mode === 'rotate' && c.fitParams.length > 0 && (
+      {/* 自由入力式から自動検出した係数のスライダー（回転=x／極座標=t・#46） */}
+      {c.fitParams.length > 0 && (
         <>
           <div className="section-title">係数（式から自動検出）</div>
           {c.fitParams.map((p) => (
@@ -169,24 +156,6 @@ export default function FunctionPanel(props: Props) {
           ))}
         </>
       )}
-
-      {/* 極座標：従来のプリセット係数スライダー */}
-      {c.mode === 'polar' &&
-        !c.useFree &&
-        preset?.coeffs.map((cf) => (
-          <div className="slider-row" key={cf.key}>
-            <label>{cf.label}</label>
-            <input
-              type="range"
-              min={cf.min}
-              max={cf.max}
-              step={cf.step}
-              value={c.coeffs[cf.key] ?? cf.default}
-              onChange={(e) => onChange({ coeffs: { ...c.coeffs, [cf.key]: Number(e.target.value) } })}
-            />
-            <span className="val">{(c.coeffs[cf.key] ?? cf.default).toFixed(2)}</span>
-          </div>
-        ))}
 
       <div className="free-input-wrap">
         <div className="section-title">

@@ -1,8 +1,7 @@
 // 自由入力式の係数化（数値リテラル→スライダー）と、通過点への最小二乗フィット（射出魔法）。
 // すべて純粋関数。React/Canvas に依存しない（#46）。
-import type { Trajectory, Vec2 } from './types'
+import type { Vec2 } from './types'
 import { compileExpr, parametrizeConstants, substituteParams } from './mathEngine'
-import { sampleTrajectory, validFinitePrefix } from './coords'
 
 /** 自動検出した係数（スライダー1本ぶん）。 */
 export interface DetectedParam {
@@ -101,51 +100,73 @@ function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v
 }
 
-/** 点 p と線分 ab の距離の二乗。 */
-function distSqToSegment(p: Vec2, a: Vec2, b: Vec2): number {
-  const abx = b.x - a.x
-  const aby = b.y - a.y
-  const apx = p.x - a.x
-  const apy = p.y - a.y
-  const denom = abx * abx + aby * aby
-  const t = denom > 0 ? clamp((apx * abx + apy * aby) / denom, 0, 1) : 0
-  const dx = a.x + abx * t - p.x
-  const dy = a.y + aby * t - p.y
-  return dx * dx + dy * dy
+/**
+ * 各通過点を術者基準で **−angle 回転（逆変換）** した局所座標 (lx, ly)。
+ *
+ * 回転軌道は world = origin + Rot(angle)·(x, g(x)−g(0)) なので、点を逆回転すると軌道に乗る条件は
+ * **g(lx) − g(0) = ly**。残差 r = g(lx) − g(0) − ly（局所フレームの縦ずれ＝狙い方向に直交するずれ）を
+ * 最小化する。多項式など係数に線形な式ではこの残差が線形になり、最小二乗が安定して解ける。
+ */
+function localFrame(angle: number, origin: Vec2, points: Vec2[]): { lx: number; ly: number }[] {
+  const cos = Math.cos(angle)
+  const sin = Math.sin(angle)
+  return points.map((p) => {
+    const dx = p.x - origin.x
+    const dy = p.y - origin.y
+    return { lx: cos * dx + sin * dy, ly: -sin * dx + cos * dy }
+  })
 }
 
-/** 点 p と折れ線 poly の最短距離の二乗。 */
-function minDistSq(p: Vec2, poly: Vec2[]): number {
-  let best = Infinity
-  for (let i = 1; i < poly.length; i++) {
-    const d = distSqToSegment(p, poly[i - 1], poly[i])
-    if (d < best) best = d
-  }
-  return best
-}
-
-/** 与えた係数値での「点群と軌道の距離二乗和」。係数が暴発するなら Infinity。 */
-function objectiveAt(
+/** 係数ベクトルでの残差ベクトル（局所フレーム）。評価不能なら null。 */
+function residualsOf(
   spec: ParamSpec,
-  values: ParamValues,
-  angle: number,
-  origin: Vec2,
-  points: Vec2[],
-): number {
-  const g = buildParamFn(spec, values)
-  if (!g) return Infinity
-  const traj: Trajectory = { mode: 'rotate', g, angle, origin }
-  const poly = validFinitePrefix(sampleTrajectory(traj)).map((s) => s.pos)
-  if (poly.length < 2) return Infinity
-  let sum = 0
-  for (const pt of points) sum += minDistSq(pt, poly)
-  return sum
+  keys: string[],
+  c: number[],
+  frame: { lx: number; ly: number }[],
+): number[] | null {
+  const vals: ParamValues = {}
+  for (let i = 0; i < keys.length; i++) vals[keys[i]] = c[i]
+  const g = buildParamFn(spec, vals)
+  if (!g) return null
+  const g0 = g(0)
+  if (!Number.isFinite(g0)) return null
+  const r: number[] = []
+  for (const f of frame) {
+    const gy = g(f.lx) - g0
+    if (!Number.isFinite(gy)) return null
+    r.push(gy - f.ly)
+  }
+  return r
+}
+
+function sumSq(v: number[]): number {
+  let s = 0
+  for (const x of v) s += x * x
+  return s
+}
+
+/** 連立一次方程式 A x = b を部分ピボット付きガウス消去で解く（n は小さい・係数 ≤ 8 個）。 */
+function solveLinear(A: number[][], b: number[]): number[] | null {
+  const n = b.length
+  const m = A.map((row, i) => [...row, b[i]])
+  for (let col = 0; col < n; col++) {
+    let piv = col
+    for (let r = col + 1; r < n; r++) if (Math.abs(m[r][col]) > Math.abs(m[piv][col])) piv = r
+    if (Math.abs(m[piv][col]) < 1e-12) return null
+    ;[m[col], m[piv]] = [m[piv], m[col]]
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue
+      const f = m[r][col] / m[col][col]
+      for (let k = col; k <= n; k++) m[r][k] -= f * m[col][k]
+    }
+  }
+  return m.map((row, i) => row[n] / row[i])
 }
 
 /**
- * 通過したい点群に近づくよう係数を最小二乗（距離二乗和）で最適化する（射出魔法のみ）。
- * パターン探索（Hooke–Jeeves）で決定的に解く（乱数なし）。角度・原点は固定。
- * 改善できなければ元の値を返す。
+ * 通過したい点群に近づくよう係数を**最小二乗（レーベンバーグ・マーカート法）**で最適化する（射出魔法のみ）。
+ * 局所フレーム残差の数値ヤコビアンを用い、多項式の桁違いな係数感度（x⁴ と x など）にも収束する。
+ * 角度・術者位置は固定。係数はスライダー範囲でクランプ。改善できなければ元の値を返す（決定的・乱数なし）。
  */
 export function fitToPoints(
   spec: ParamSpec,
@@ -154,38 +175,67 @@ export function fitToPoints(
   origin: Vec2,
   points: Vec2[],
 ): ParamValues {
-  if (spec.params.length === 0 || points.length === 0) return values
-  const bounds: Record<string, [number, number]> = {}
-  const steps: Record<string, number> = {}
-  let best: ParamValues = {}
-  for (const p of spec.params) {
-    best[p.key] = clamp(values[p.key] ?? p.value, p.min, p.max)
-    bounds[p.key] = [p.min, p.max]
-    steps[p.key] = (p.max - p.min) / 8
-  }
-  let bestObj = objectiveAt(spec, best, angle, origin, points)
-  for (let iter = 0; iter < 240; iter++) {
-    let improved = false
-    for (const p of spec.params) {
-      const k = p.key
-      for (const dir of [1, -1]) {
-        const trial: ParamValues = { ...best, [k]: clamp(best[k] + dir * steps[k], bounds[k][0], bounds[k][1]) }
-        const o = objectiveAt(spec, trial, angle, origin, points)
-        if (o < bestObj - 1e-9) {
-          best = trial
-          bestObj = o
-          improved = true
-        }
-      }
+  const keys = spec.params.map((p) => p.key)
+  const n = keys.length
+  if (n === 0 || points.length === 0) return values
+  const lo = spec.params.map((p) => p.min)
+  const hi = spec.params.map((p) => p.max)
+  const frame = localFrame(angle, origin, points)
+  let c = spec.params.map((p) => clamp(values[p.key] ?? p.value, p.min, p.max))
+  let r = residualsOf(spec, keys, c, frame)
+  if (!r) return values
+  let cost = sumSq(r)
+  let lambda = 1e-3
+  for (let iter = 0; iter < 80; iter++) {
+    // 数値ヤコビアン J（m×n）を前進差分で作る
+    const J: number[][] = r.map(() => new Array(n).fill(0))
+    for (let k = 0; k < n; k++) {
+      const h = 1e-6 * Math.max(1, Math.abs(c[k]))
+      const cc = [...c]
+      cc[k] += h
+      const r2 = residualsOf(spec, keys, cc, frame)
+      if (!r2) continue
+      for (let i = 0; i < r.length; i++) J[i][k] = (r2[i] - r[i]) / h
     }
-    if (!improved) {
-      let allSmall = true
-      for (const p of spec.params) {
-        steps[p.key] *= 0.5
-        if (steps[p.key] > 1e-4) allSmall = false
+    // 正規方程式 (JᵀJ + λ·diag) δ = −Jᵀr
+    const JtJ: number[][] = Array.from({ length: n }, () => new Array(n).fill(0))
+    const Jtr = new Array(n).fill(0)
+    for (let a = 0; a < n; a++) {
+      for (let b = 0; b < n; b++) {
+        let s = 0
+        for (let i = 0; i < r.length; i++) s += J[i][a] * J[i][b]
+        JtJ[a][b] = s
       }
-      if (allSmall) break
+      let s = 0
+      for (let i = 0; i < r.length; i++) s += J[i][a] * r[i]
+      Jtr[a] = s
+    }
+    const damped = JtJ.map((row, a) => row.map((v, b) => (a === b ? v + lambda * (v + 1e-9) : v)))
+    const delta = solveLinear(
+      damped,
+      Jtr.map((v) => -v),
+    )
+    if (!delta) {
+      lambda *= 4
+      if (lambda > 1e8) break
+      continue
+    }
+    const cNew = c.map((v, k) => clamp(v + delta[k], lo[k], hi[k]))
+    const rNew = residualsOf(spec, keys, cNew, frame)
+    const costNew = rNew ? sumSq(rNew) : Infinity
+    if (rNew && costNew < cost) {
+      c = cNew
+      r = rNew
+      const improved = cost - costNew
+      cost = costNew
+      lambda = Math.max(1e-9, lambda * 0.5)
+      if (improved < 1e-10) break // 収束
+    } else {
+      lambda *= 4
+      if (lambda > 1e8) break // これ以上下がらない
     }
   }
-  return best
+  const out: ParamValues = {}
+  for (let i = 0; i < n; i++) out[keys[i]] = c[i]
+  return out
 }
