@@ -116,4 +116,5 @@ title（タイトル）
 - **発射すると stage ビューへ戻る**（`fireAll`／`onAnimationDone` で `view='stage'`）。次ターンも盤面から始まる。
 - 関数パネルは**基本フィットのみで完結**：形はプルダウン、発射方向は盤面ドラッグ（`aimAt`）、係数・自由式・z 場・θ は「詳細設定」に格納。`✨おまかせ`＝`recommend`。
 - **#49 強化**：このターン設定済みの味方は HP 横に ✓（`touchedAllies`）。`✨全員おまかせ`＝`recommendAll`。点ピックは**ルーペ**（`pickMode`→`drawPickLoupe`）。編集は**ボトムシート**（横向きは左右並列）。未設定で発射時は確認（`confirmFire`）。選択/発射等で `navigator.vibrate`。
+- **#54 盤面で調整（スマホをスムーズに）**：編集ビューの「点を選ぶ」を押すと**自動で盤面ビューへ移動**（`toggleFitPick`→`view='stage'`）し、全画面の盤面に直接点を打って**そのままフィット**できる。盤面下部に文脈バー（`.stage-bar`）が出る：点選択は `フィット／クリア／やめる`、z 場は `盤面で属性を調整`（`adjustZOnStage`）で**場のオーバーレイを全画面で見ながら** z をいじり `調整を終える` で編集へ戻る。文脈モード中は通常の盤面アクション（`.stage-normal`）を隠す（`data-mode='fit'|'z'`）。z 操作 UI は `ZFieldControls`（関数パネルと盤面バーで共用）。
 </content>

@@ -6,7 +6,6 @@ import {
   parseExpression,
   defaultCoeffs,
 } from '../game/functions'
-import { ZFIELD_PRESETS, findZPreset, defaultZCoeffs } from '../game/zfields'
 import { FIELD } from '../data/constants'
 import {
   type ComposerState,
@@ -15,9 +14,8 @@ import {
   presetsFor,
   parametricPatch,
   setCoeffPatch,
-  zParametricPatch,
-  setZCoeffPatch,
 } from './composer'
+import ZFieldControls from './ZFieldControls'
 
 interface Props {
   allyName: string
@@ -26,14 +24,14 @@ interface Props {
   preview: Preview
   onRecommend: () => void
   onOpenCodex: () => void
-  /** z 場の編集中フラグを通知（#37：いじっている間だけ場をプレビュー表示する） */
-  onZEditing?: (editing: boolean) => void
   /** 通過点フィット（#46・射出のみ） */
   fitPickActive?: boolean
   fitPointCount?: number
   onToggleFitPick?: () => void
   onRunFit?: () => void
   onClearFitPoints?: () => void
+  /** スマホ：盤面（全画面）で属性 z 場を調整するモードへ入る（#54） */
+  onAdjustZOnStage?: () => void
 }
 
 const attrLabel = (a: string) => (a === 'light' ? '光' : a === 'dark' ? '闇' : '中立')
@@ -41,14 +39,11 @@ const attrLabel = (a: string) => (a === 'light' ? '光' : a === 'dark' ? '闇' :
 export default function FunctionPanel(props: Props) {
   const { composer: c, onChange, preview } = props
   const [freeDraft, setFreeDraft] = useState(c.freeExpr)
-  const [zFreeDraft, setZFreeDraft] = useState(c.zFreeExpr)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const preset = findPreset(c.presetId)
-  const zPreset = findZPreset(c.zPresetId)
 
   // 味方を切り替えたら自由入力欄も同期
   useEffect(() => setFreeDraft(c.freeExpr), [c.freeExpr])
-  useEffect(() => setZFreeDraft(c.zFreeExpr), [c.zFreeExpr])
 
   // 現在の関数のサンプル出力
   let samples: { x: number; y: number }[] = []
@@ -82,17 +77,6 @@ export default function FunctionPanel(props: Props) {
   // #19/#46：自由入力を適用。回転/極座標とも係数を自動検出してスライダー化
   const applyFree = () => {
     onChange(parametricPatch(freeDraft, varOf(c.mode)))
-  }
-
-  // z 場（属性 z=f(x,y)・#30）の操作。式中の数値を自動検出してスライダー化（#52）
-  const selectZPreset = (id: string) => {
-    const p = findZPreset(id)
-    if (!p) return
-    const zCoeffs = defaultZCoeffs(p)
-    onChange({ zPresetId: id, zCoeffs, ...zParametricPatch(p.toExpr(zCoeffs)) })
-  }
-  const applyZFree = () => {
-    onChange(zParametricPatch(zFreeDraft))
   }
 
   const canFit = c.mode === 'rotate' && preview.kind === 'projectile' && c.fitParams.length > 0
@@ -242,53 +226,15 @@ export default function FunctionPanel(props: Props) {
             </>
           )}
 
-          {/* 属性の z 場 z=f(x,y)（#30/#21）。いじっている間だけ場をプレビュー（#37） */}
-          <div
-            className="zfield-section"
-            onMouseEnter={() => props.onZEditing?.(true)}
-            onMouseLeave={() => props.onZEditing?.(false)}
-            onFocusCapture={() => props.onZEditing?.(true)}
-            onBlurCapture={() => props.onZEditing?.(false)}
-          >
+          {/* 属性の z 場 z=f(x,y)（#30/#21）。編集中は常に場をプレビュー表示（#55） */}
+          <div className="zfield-section">
             <div className="section-title">属性の高さ z = f(x,y)（光⇔闇）</div>
-            <div className="form-row">
-              <label className="form-label">場</label>
-              <select className="select" value={c.zPresetId} onChange={(e) => selectZPreset(e.target.value)}>
-                {ZFIELD_PRESETS.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="preset-desc">{zPreset?.description ?? '自由入力の z 場'}</div>
-            {/* z 式から自動検出した係数のスライダー（#52） */}
-            {c.zFitParams.map((p) => (
-              <div className="slider-row" key={p.key}>
-                <label title={`初期値 ${p.value}`}>{p.label}</label>
-                <input
-                  type="range"
-                  min={p.min}
-                  max={p.max}
-                  step={p.step}
-                  value={c.zFitValues[p.key] ?? p.value}
-                  onChange={(e) => onChange(setZCoeffPatch(c, p.key, Number(e.target.value)))}
-                />
-                <span className="val">{(c.zFitValues[p.key] ?? p.value).toFixed(2)}</span>
-              </div>
-            ))}
-            <div className="free-input">
-              <input
-                type="text"
-                value={zFreeDraft}
-                placeholder="例: 5  /  0.3*y  /  5*cos(0.2*x)"
-                onChange={(e) => setZFreeDraft(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && applyZFree()}
-              />
-              <button className="btn small" onClick={applyZFree}>適用</button>
-            </div>
-            {c.zFreeError && <div className="field-error">{c.zFreeError}</div>}
-            <div className="hint">
-              変数 <code>x, y</code> は<strong>術者位置が原点</strong>（#52）。 <code>|z|={FIELD.zPeak}</code> に近いほど強い。 z&gt;0=光・z&lt;0=闇。
-            </div>
+            {props.onAdjustZOnStage && (
+              <button className="btn small show-mobile adjust-z-stage" onClick={props.onAdjustZOnStage}>
+                🎨 盤面で属性を調整（場を見ながら）
+              </button>
+            )}
+            <ZFieldControls composer={c} onChange={onChange} />
           </div>
 
           <div className="section-title">計算補助</div>

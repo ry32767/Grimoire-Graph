@@ -25,6 +25,7 @@ import BattleCanvas, { type ResolveAnimation, type AnimBullet, type AnimOrbit } 
 import Hud from './components/Hud'
 import BattleLog from './components/BattleLog'
 import FunctionPanel from './components/FunctionPanel'
+import ZFieldControls from './components/ZFieldControls'
 import Codex from './components/Codex'
 import Guide from './components/Guide'
 import { TitleScreen, StoryScreen, ResultScreen } from './components/screens'
@@ -111,11 +112,11 @@ export default function App() {
   const [activeAllyId, setActiveAllyId] = useState<string>('')
   const [animation, setAnimation] = useState<ResolveAnimation | null>(null)
   const [pendingState, setPendingState] = useState<BattleState | null>(null)
-  // #37：z 場をいじっている間だけ、場をプレビュー表示する
-  const [zEditing, setZEditing] = useState(false)
   // #46：通過点フィット。点ピック中フラグと、選んだ通過点（数学座標）
   const [fitPickActive, setFitPickActive] = useState(false)
   const [fitPoints, setFitPoints] = useState<Vec2[]>([])
+  // #54：スマホで属性 z 場を盤面（全画面）を見ながら調整するモード
+  const [zAdjustMode, setZAdjustMode] = useState(false)
   // #48：スマホ向けの画面切替（盤面 ⇄ キャラ関数編集）。PC は CSS で常に両方表示
   const [view, setView] = useState<'stage' | 'edit'>('stage')
   // #48：ボタンを減らすためのメニュー（遊び方/図鑑/音）開閉
@@ -286,10 +287,35 @@ export default function App() {
     setFitPoints([])
     setFitPickActive(false)
   }
+  // #54：点ピックの開始/終了。開始時はスマホでも盤面（全画面）へ移動してそのまま点を打てるようにする
+  const toggleFitPick = () => {
+    setFitPickActive((v) => {
+      const next = !v
+      if (next) {
+        setZAdjustMode(false)
+        setView('stage') // 盤面へ移動して、そのまま点を選択→フィットできる（#54）
+        vibrate(8)
+      }
+      return next
+    })
+  }
+  // #54：点だけクリア（ピックは続ける）。盤面のフィットバー用
+  const clearFitPoints = () => setFitPoints([])
   const onFieldClick = (p: Vec2) => {
     if (!fitPickActive) return
     setFitPoints((prev) => [...prev, p])
     vibrate(8)
+  }
+  // #54：スマホで盤面（全画面）を見ながら z 場を調整するモードへ入る
+  const adjustZOnStage = () => {
+    setFitPickActive(false)
+    setZAdjustMode(true)
+    setView('stage')
+    vibrate(8)
+  }
+  const endZAdjust = () => {
+    setZAdjustMode(false)
+    setView('edit') // 調整を終えたら関数編集へ戻る
   }
   // #47：フィールドのクリック／ドラッグで発射方向（θ）を決める（射出＝回転のみ）
   const aimAt = (p: Vec2) => {
@@ -315,6 +341,7 @@ export default function App() {
   // 別の味方に切り替えたらピック状態は破棄する。スマホではそのキャラの編集画面へ（#48）
   const switchAlly = (id: string) => {
     clearFit()
+    setZAdjustMode(false)
     playSfx('select')
     vibrate(8)
     setActiveAllyId(id)
@@ -332,6 +359,7 @@ export default function App() {
     }
     setConfirmFire(false)
     clearFit()
+    setZAdjustMode(false)
     setView('stage') // 発射＝盤面（ステージ）画面へ（#48）
     setMenuOpen(false)
     vibrate([18, 40, 18])
@@ -581,7 +609,7 @@ export default function App() {
               playerPaths={composing ? playerPaths : undefined}
               misfirePoints={composing ? misfirePoints : undefined}
               zField={composing ? activeZField ?? undefined : undefined}
-              showZField={composing && zEditing}
+              showZField={composing}
               standingOrbits={composing ? standingOrbits : undefined}
               ghostPaths={ghostPaths}
               animation={animation}
@@ -595,7 +623,10 @@ export default function App() {
           </div>
 
           {/* 盤面（ステージ）側：HP・キャラ選択・発射・メニュー（スマホは view=stage で表示） */}
-          <div className="stage-pane show-stage">
+          <div
+            className="stage-pane show-stage"
+            data-mode={composing && fitPickActive ? 'fit' : composing && zAdjustMode ? 'z' : 'normal'}
+          >
             <Hud
               allies={battle.allies}
               enemies={battle.enemies}
@@ -604,16 +635,49 @@ export default function App() {
               impairedIds={impairedIds}
               touchedIds={[...touchedAllies]}
             />
-            {composing && anyCastable && (
-              <button className="btn おまかせ batch-recommend" onClick={recommendAll}>
-                ✨ 全員おまかせ（当たる術式を自動設定）
-              </button>
+
+            {/* スマホ：盤面で点を選んでそのままフィット（#54） */}
+            {composing && fitPickActive && (
+              <div className="stage-bar fit-bar show-mobile">
+                <div className="hint">
+                  通したい点を<strong>盤面にタップ</strong> → フィットで曲線を合わせる。
+                </div>
+                <div className="action-row">
+                  <button className="btn primary" disabled={fitPoints.length < 1} onClick={runFit}>
+                    フィット（{fitPoints.length}）
+                  </button>
+                  <button className="btn" disabled={fitPoints.length < 1} onClick={clearFitPoints}>
+                    クリア
+                  </button>
+                  <button className="btn" onClick={() => setFitPickActive(false)}>
+                    やめる
+                  </button>
+                </div>
+              </div>
             )}
-            <div className="stage-actions">
-              <button className="btn primary fire-all" onClick={() => fireAll()}>
-                {anyCastable ? '全員発射' : '次のターンへ'}
-              </button>
-              <div className="menu-wrap">
+
+            {/* スマホ：盤面の属性場を見ながら z を調整（#54） */}
+            {composing && zAdjustMode && activeComposer && (
+              <div className="stage-bar z-bar show-mobile">
+                <div className="section-title">属性の高さ z = f(x,y)（場を見ながら調整）</div>
+                <ZFieldControls composer={activeComposer} onChange={onChange} />
+                <button className="btn primary" onClick={endZAdjust}>
+                  ✓ 調整を終える
+                </button>
+              </div>
+            )}
+
+            <div className="stage-normal">
+              {composing && anyCastable && (
+                <button className="btn おまかせ batch-recommend" onClick={recommendAll}>
+                  ✨ 全員おまかせ（当たる術式を自動設定）
+                </button>
+              )}
+              <div className="stage-actions">
+                <button className="btn primary fire-all" onClick={() => fireAll()}>
+                  {anyCastable ? '全員発射' : '次のターンへ'}
+                </button>
+                <div className="menu-wrap">
                 <button
                   className="btn small menu-toggle"
                   aria-haspopup="true"
@@ -637,6 +701,7 @@ export default function App() {
                     </div>
                   </>
                 )}
+              </div>
               </div>
             </div>
             <BattleLog log={battle.log} />
@@ -674,12 +739,12 @@ export default function App() {
                 preview={activePreview}
                 onRecommend={recommend}
                 onOpenCodex={() => setCodexOpen(true)}
-                onZEditing={setZEditing}
                 fitPickActive={fitPickActive}
                 fitPointCount={fitPoints.length}
-                onToggleFitPick={() => setFitPickActive((v) => !v)}
+                onToggleFitPick={toggleFitPick}
                 onRunFit={runFit}
                 onClearFitPoints={clearFit}
+                onAdjustZOnStage={adjustZOnStage}
               />
               <div className="action-row show-mobile">
                 <button className="btn primary fire-all" onClick={() => fireAll()}>

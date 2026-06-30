@@ -130,9 +130,9 @@ interface Props {
   /** 各味方の暴発（関数エラー）点。プレビューで赤い✕として可視化する（#30） */
   misfirePoints?: (Vec2 | null)[]
   ghostPaths?: Vec2[][]
-  /** 編集中の z 場（#37）。showZField の間だけ薄い場として表示する */
+  /** 編集中の z 場（#37）。showZField が真の間（作成フェーズは常時・#55）薄い場として表示する */
   zField?: (x: number, y: number) => number
-  /** z 場をいじっている間だけ true（#37） */
+  /** z 場を薄く表示するか（#37）。作成フェーズ中は常に true（#55） */
   showZField?: boolean
   /** 持続中の周回結界（#39）。作成フェーズで常時描画＋闇は視認性低下の幕をかける */
   standingOrbits?: StandingOrbit[]
