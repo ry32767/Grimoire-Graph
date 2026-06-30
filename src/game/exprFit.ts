@@ -2,6 +2,7 @@
 // すべて純粋関数。React/Canvas に依存しない（#46）。
 import type { Vec2 } from './types'
 import { compileExpr, parametrizeConstants, substituteParams } from './mathEngine'
+import { FIELD } from '../data/constants'
 
 /** 自動検出した係数（スライダー1本ぶん）。 */
 export interface DetectedParam {
@@ -169,6 +170,30 @@ function costOf(spec: ParamSpec, keys: string[], c: number[], frame: { lx: numbe
 }
 
 /**
+ * 発射経路 x∈[0, maxLx+余白] に「極（発散）」があるか（#50）。1/x 型で極が前方にあると弾は
+ * そこで暴発してしまうため、そういう係数はフィットで避ける。非有限、または隣接サンプルで
+ * 符号反転かつ両側とも大きい（±∞ を跨いだ）点を極とみなす（coords の判定と同趣旨）。
+ */
+function pathHasPole(spec: ParamSpec, keys: string[], c: number[], maxLx: number, N = 96): boolean {
+  const vals: ParamValues = {}
+  for (let i = 0; i < keys.length; i++) vals[keys[i]] = c[i]
+  const g = buildParamFn(spec, vals)
+  if (!g) return true
+  const hi = maxLx + 6
+  let prev = g(0)
+  if (!Number.isFinite(prev)) return true
+  for (let k = 1; k <= N; k++) {
+    const v = g((hi * k) / N)
+    if (!Number.isFinite(v)) return true
+    if (Math.sign(v) !== Math.sign(prev) && Math.min(Math.abs(v), Math.abs(prev)) > FIELD.rField) {
+      return true
+    }
+    prev = v
+  }
+  return false
+}
+
+/**
  * 滑らかさの正則化残差（#50）：局所 x=0..maxLx 上の曲率（2階差分）を小さく保つ。
  * 「点は通るが激しく振動する」高周波な過適合を抑え、なめらかな解へ寄せる。
  */
@@ -206,6 +231,8 @@ function lmRun(
 ): { c: number[] } {
   const n = keys.length
   const resid = (cc: number[]): number[] | null => {
+    // 前方に極がある係数は弾が暴発する。LM が極へ踏み込まないよう、ここで無効化して避ける
+    if (pathHasPole(spec, keys, cc, maxLx, 36)) return null
     const rd = residualsOf(spec, keys, cc, frame)
     if (!rd) return null
     const rs = smoothResiduals(spec, keys, cc, maxLx, smoothW)
@@ -309,10 +336,12 @@ function multiStartLM(spec: ParamSpec, current: ParamValues, frame: { lx: number
   }
   const maxLx = Math.max(1, ...frame.map((f) => f.lx))
   const smoothW = 0.04 // 滑らかさ正則化の重み（データ適合を主、振動を従に）
-  // 各スタートを LM（データ＋滑らかさ）で最適化し、選別はデータ適合コストで行う
+  // 各スタートを LM（データ＋滑らかさ）で最適化し、選別はデータ適合コストで行う。
+  // ただし前方に極（発散）がある係数は弾が暴発するので除外（cost=∞）。
   const results = starts.map((st) => {
     const c = lmRun(spec, keys, st, lo, hi, frame, maxLx, smoothW).c
-    return { c, cost: costOf(spec, keys, c, frame) }
+    const cost = pathHasPole(spec, keys, c, maxLx) ? Infinity : costOf(spec, keys, c, frame)
+    return { c, cost }
   })
   let bestCost = Infinity
   for (const r of results) if (r.cost < bestCost) bestCost = r.cost
