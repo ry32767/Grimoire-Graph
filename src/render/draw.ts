@@ -887,14 +887,15 @@ export function drawBullet(
   const color = bulletColorOf(z)
   const strength = strengthOf(z) // 0..sMax
   const sFrac = Math.min(1, strength / FIELD.sMax) // 0..1
-  // 威力 = 速度 × 強度。威力が大きいほど弾も大きくなる（#11/#21）
+  // 弾の大きさは威力（=速度×強度）で決まる（#21/#45）。速度0や弱属性なら小さく、最大威力で最大。
+  // 以前は強属性に下駄（sFrac×0.4）を履かせ基準サイズも大きかったため、常に大玉に見えていた。
   const powerFrac = powerSizeFrac(speed, z)
-  const sizeFrac = Math.max(sFrac * 0.4, powerFrac) // 強属性は最低限の存在感、威力が高いほど大きく
+  const sizeFrac = Math.max(0.06, powerFrac) // 最低限見える大きさだけ確保し、あとは威力に比例
   const pulse = 1 + Math.sin(phase * 1.7) * 0.25
   // 威力が大きいほど大きく・強いほど棘が多い（#21：形が z で変わる）
-  const glowR = (9 + sizeFrac * 18) * pulse
+  const glowR = (4 + sizeFrac * 22) * pulse
   const spikes = 4 + Math.round(sFrac * 4)
-  const coreR = (2.0 + sizeFrac * 3.4) * pulse
+  const coreR = (1.3 + sizeFrac * 4.2) * pulse
   ctx.save()
   const glow = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, glowR)
   glow.addColorStop(0, color)

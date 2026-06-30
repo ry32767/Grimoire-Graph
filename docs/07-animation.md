@@ -38,7 +38,7 @@ flightMs = min(MAX_MS, max(floorMs, maxTotal × MS_PER_GAMESEC(360)))
 | イベント | 発火条件 | 長さ | 主な描画関数 |
 |---|---|---|---|
 | 弾の飛行 | サンプルあり | flightMs | `drawBullet` + `drawWaveTrail` |
-| 障害物えぐり | 弾が `carve.arcLen` を通過 | `BURST_ARC=9`（弧長窓） | `drawCarveBurst`（岩片飛散・赤橙） |
+| 障害物えぐり | 弾が `carve.arcLen` を通過 | `CARVE_BURST_MS=480`（到達時刻から実時間） | `drawCarveBurst`（岩片飛散・赤橙） |
 | 命中フラッシュ | `arcLen ≥ impact.arcLen` | `FLASH_MS=420` | 赤フラッシュ＋画面揺れ |
 | クラッシュ火花 | 2 弾が `CLASH_DIST=1.6` 以内 | `CLASH_MS=460` | `drawClashSpark`（青白い火花） |
 | 結界の霧散 | 壁/弾に負ける | `DISSIPATE_MS=520` | `drawOrbitDissipation`（リング消失・粒拡散） |
@@ -99,12 +99,15 @@ intensity = 1 − (elapsed − flashStart)/FLASH_MS    // 1→0 に減衰
 ```ts
 bulletColorOf(z):  光→#f4c430 / 闇→#7b5cc4 / 中立→#d9d4ea
 powerSizeFrac(speed, z) = min(1, strengthOf(z)×max(0,speed) / (sMax×maxFlightSpeed))
-                        = min(1, 威力 / (5×24))
+                        = min(1, 威力 / (5×24))           // 威力 = 速度 × 属性強度
+sizeFrac = max(0.06, powerSizeFrac)                   // 最低限見える小ささだけ確保し、あとは威力に比例
 pulse = 1 + sin(phase×1.7)×0.25                       // 0.75〜1.25 で脈動
-glowR = (9 + sizeFrac×18) × pulse,  coreR = (2.0 + sizeFrac×3.4) × pulse
+glowR = (4 + sizeFrac×22) × pulse,  coreR = (1.3 + sizeFrac×4.2) × pulse
 ```
 
-威力が高いほど弾・グロー・スパイク・トレイル粒が大きく派手になる。
+弾の大きさは**威力（=その点の速度×属性強度）にそのまま比例**する（#45）。速度0や弱属性なら小さく、最大威力で最大。
+以前は強属性へ下駄（`sFrac×0.4`）を履かせ基準サイズも大きかったため、威力が低くても常に大玉に見えていた。
+スパイクの本数だけは属性強度 `sFrac` 由来（強属性ほど棘が多い）。
 
 ### 波トレイル定数
 

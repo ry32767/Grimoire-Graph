@@ -62,8 +62,8 @@ export interface AnimBullet {
   vanished?: boolean
 }
 
-/** 削る瞬間のパーティクルが残る弧長の窓（この距離だけ弾が進む間 破片が舞う） */
-const BURST_ARC = 9
+/** 壁を削った破片が散って消えるまでの時間（ms・#45）。弾が壁で止まっても必ずこの時間で消える */
+const CARVE_BURST_MS = 480
 
 /** 暴発の大爆発を見せる余韻（弾の到達後にこの時間だけ爆発を展開・#9/#29） */
 const MISFIRE_TAIL_MS = 1000
@@ -283,6 +283,9 @@ export default function BattleCanvas(props: Props) {
     const clashStartByIdx: Record<number, number> = {}
     // 霧散：負けた周回ごとに「接触の実時刻」を記録し、その瞬間から散らせる（#34）
     const dissipateStartByIdx: Record<number, number> = {}
+    // 壁を削った破片：carve ごとに「弾が到達した実時刻」を記録し、一定時間で散って消す（#45）。
+    // 弧長だけで判定すると弾が壁で止まった地点に破片が永久に残る不具合があった。
+    const carveStartByKey: Record<string, number> = {}
 
     // ダメージ／回復の数値（#42）：同じ対象・契機のポップは縦に積む（重なり防止）
     const popups = anim.popups ?? []
@@ -507,13 +510,18 @@ export default function BattleCanvas(props: Props) {
         }
       })
 
-      // 障害物を削る瞬間のパーティクル（弾が通り過ぎた直後だけ破片が舞う・#11）
+      // 障害物を削る瞬間のパーティクル（弾が到達した瞬間から一定時間だけ破片が舞い、必ず消える・#11/#45）。
+      // 弧長差で判定すると弾が壁で停止した地点に破片が残り続けるため、到達時刻から実時間で散らす。
       anim.bullets.forEach((b, i) => {
         const st = states[i]
         if (!st) return
-        for (const cv of b.carves) {
-          const d = st.arcLen - cv.arcLen
-          if (d >= 0 && d < BURST_ARC) drawCarveBurst(ctx, cv.pos, cv.r, cv.attr, d / BURST_ARC, VP)
+        for (let j = 0; j < b.carves.length; j++) {
+          const cv = b.carves[j]
+          if (st.arcLen < cv.arcLen) continue // まだ弾が届いていない
+          const key = `${i}-${j}`
+          if (carveStartByKey[key] === undefined) carveStartByKey[key] = elapsed
+          const cp = (elapsed - carveStartByKey[key]) / CARVE_BURST_MS
+          if (cp >= 0 && cp < 1) drawCarveBurst(ctx, cv.pos, cv.r, cv.attr, cp, VP)
         }
       })
 
