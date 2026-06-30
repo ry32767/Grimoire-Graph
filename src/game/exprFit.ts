@@ -42,17 +42,40 @@ function rangeFor(v: number): { min: number; max: number; step: number } {
 }
 
 /**
- * 式から係数（数値リテラル）を検出する。検出できなければ（不正式）null。
- * 数値が無い式（例 `x` のみ）は params 空で返す（テンプレート＝元式）。
+ * 式から係数（数値リテラル）を検出し、テンプレートとスライダー定義を返す（変数非依存・#52）。
+ * 1 変数（軌道）にも 2 変数（z 場 x,y）にも使える。検出できなければ（不正式）null。
  */
-export function detectParams(expr: string, varName: 'x' | 't' = 'x'): ParamSpec | null {
+export function detectCoeffs(expr: string): { template: string; params: DetectedParam[] } | null {
   const pc = parametrizeConstants(expr)
   if (!pc) return null
   const params: DetectedParam[] = pc.originals.map((v, i) => {
     const r = rangeFor(v)
     return { key: `p${i}`, label: `c${i + 1}`, value: v, ...r }
   })
-  return { template: pc.template, params, varName }
+  return { template: pc.template, params }
+}
+
+/** テンプレート＋係数定義＋値から式文字列を作る（表示・評価用・#52）。 */
+export function renderWithParams(template: string, params: DetectedParam[], values: ParamValues): string {
+  if (params.length === 0) return template
+  const arr = params.map((p) => values[p.key] ?? p.value)
+  return substituteParams(template, arr) ?? template
+}
+
+/** 係数定義の初期値マップ（#52）。 */
+export function paramDefaults(params: DetectedParam[]): ParamValues {
+  const m: ParamValues = {}
+  for (const p of params) m[p.key] = p.value
+  return m
+}
+
+/**
+ * 式から係数（数値リテラル）を検出する。検出できなければ（不正式）null。
+ * 数値が無い式（例 `x` のみ）は params 空で返す（テンプレート＝元式）。
+ */
+export function detectParams(expr: string, varName: 'x' | 't' = 'x'): ParamSpec | null {
+  const d = detectCoeffs(expr)
+  return d ? { template: d.template, params: d.params, varName } : null
 }
 
 /** 係数値マップ（key→値）。未指定は初期値を使う。 */
