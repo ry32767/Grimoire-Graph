@@ -183,6 +183,24 @@ describe('周回が魔法に負けると霧散する（#34）', () => {
     expect(res.enemyShots.every((s) => !s.reachedTarget)).toBe(true) // 敵弾は味方へ届かない
     expect(res.allies[0].hp).toBe(100) // 無傷
   })
+
+  it('強属性(|z|>zRef)の結界も失速で消えず、敵弾を止める（#43：自滅で穴が開かない）', () => {
+    // z=zPeak(=5)>zRef の光リング。以前は「失速して霧散」して結界が消え、敵弾がすり抜けていた。
+    // 今はゆっくり回る弱い結界として残り、反対極の敵弾(闇)を相殺する。
+    const res = resolveTurn({
+      allies: [ally('a', { x: 0, y: -8 }, 'light')],
+      casts: [cast('a', { mode: 'polar', f: () => 7, origin: { x: 0, y: -8 }, z: zLight }, 10)],
+      enemies: [enemy('e', { x: 0, y: 14 }, 'dark', 100, 8)],
+      castingEnemyIds: ['e'],
+      obstacles: [],
+      mechanics: withFire,
+    })
+    const orbitShot = res.allyShots.find((s) => s.kind === 'orbit')!
+    expect(orbitShot.broken).toBe(false) // 失速で消えない
+    expect(res.log.some((l) => l.text.includes('失速'))).toBe(false) // 「失速して霧散」が出ない
+    expect(res.enemyShots.every((s) => !s.reachedTarget)).toBe(true) // 敵弾を止める
+    expect(res.allies[0].hp).toBe(100) // 無傷
+  })
 })
 
 describe('防御の重ね掛け（軌道型＋パリィ）', () => {
