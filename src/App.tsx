@@ -172,9 +172,10 @@ export default function App() {
     if (!ally) return raw
     return (x: number, y: number) => raw(x - ally.pos.x, y - ally.pos.y)
   }, [composers, activeAllyId, battle])
-  // 持続中の周回結界（#39：作成フェーズでも常時表示し、闇は内側を暗くぼかす）
+  // 持続中の周回結界（#39：作成フェーズでも常時表示し、闇は内側を暗くぼかす）。
+  // owner を渡し、敵の闇結界は作成フェーズで視認阻害（ぼかし＋z場/予測経路を隠す・#61）する。
   const standingOrbits = useMemo(
-    () => (battle?.orbits ?? []).map((o) => ({ ring: o.ring, speed: o.ringSpeed })),
+    () => (battle?.orbits ?? []).map((o) => ({ ring: o.ring, speed: o.ringSpeed, owner: o.owner })),
     [battle],
   )
 

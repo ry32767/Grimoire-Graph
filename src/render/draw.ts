@@ -632,6 +632,32 @@ export function drawConcealVeil(ctx: CanvasRenderingContext2D, ring: ZPoint[], v
   ctx.restore()
 }
 
+/**
+ * 敵の闇結界による視認阻害（#61）：作成フェーズで内側を強くぼかし、**z 場・予測経路を隠す**。
+ * リング内をぼかして描き直し、濃い幕を重ねる（drawConcealVeil より強め）。薄塗りの z 場・細線の
+ * 予測経路はぼかし＋暗化で見えなくなる。敵の姿はぼんやり残る。最後に阻害ゾーンの輪郭を薄く示す。
+ */
+export function drawComposeConceal(ctx: CanvasRenderingContext2D, ring: ZPoint[], vp: Viewport): void {
+  if (ring.length < 3) return
+  ctx.save()
+  ringScreenPath(ctx, ring, vp)
+  ctx.clip()
+  ctx.filter = 'blur(6px)'
+  ctx.drawImage(ctx.canvas, 0, 0)
+  ctx.filter = 'none'
+  ctx.fillStyle = 'rgba(10,7,20,0.66)' // z 場・予測経路が見えなくなる濃さ
+  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height)
+  ctx.restore()
+  // 視認阻害ゾーンの境界を薄い破線で示す（プレイヤーがどこが見えないか分かるように）
+  ctx.save()
+  ringScreenPath(ctx, ring, vp)
+  ctx.strokeStyle = 'rgba(150,110,210,0.55)'
+  ctx.lineWidth = 1.5
+  ctx.setLineDash([5, 4])
+  ctx.stroke()
+  ctx.restore()
+}
+
 /** z（属性）で色分けして軌道を描く。中立は淡く、光=金・闇=紫。 */
 export function strokeZPath(ctx: CanvasRenderingContext2D, pts: ZPoint[], vp: Viewport): void {
   ctx.lineWidth = 3

@@ -788,6 +788,29 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     }
   }
 
+  // 敵 guardian の結界も内側の敵へ効果を及ぼす（#61）：光=毎ターン固定回復。
+  // 闇=視認阻害はゲーム数値でなく作成フェーズの描画（ぼかし＋z場/予測経路を隠す）で表現する。
+  const enemyAuras = enemyRings
+    .filter((r) => !r.broken && r.ring.length >= 3)
+    .map((r) => ({ ring: r.ring, attr: ringAverageAttr(r.ring), radius: ringRadius(r.ring) }))
+  if (enemyAuras.length > 0) {
+    for (let i = 0; i < enemies.length; i++) {
+      if (enemies[i].hp <= 0) continue
+      const enclosing = enemyAuras
+        .filter((a) => ringEncloses(a.ring, enemies[i].pos))
+        .sort((x, y) => x.radius - y.radius)
+        .slice(0, 2)
+      let heal = 0
+      for (const a of enclosing) if (a.attr === 'light') heal += COMBAT.orbitHealAmount
+      if (heal <= 0) continue
+      const newHp = Math.min(enemies[i].maxHp, enemies[i].hp + heal)
+      const gained = newHp - enemies[i].hp
+      enemies[i] = { ...enemies[i], hp: newHp }
+      if (gained > 0) popups.push({ pos: enemies[i].pos, amount: gained, kind: 'heal', targetId: enemies[i].id, trigger: 'heal' })
+      log.push({ kind: 'orbit', text: `${enemies[i].name}は光の結界で ${heal.toFixed(0)} 回復した` })
+    }
+  }
+
   // === 6. 敵弾が味方へ命中（パス上で最初に当たった味方。逸れれば回避） ===
   for (const shot of enemyShots) {
     if (shot.blocked) continue
@@ -833,10 +856,23 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       ring: p.ring as ZPoint[],
       ringSpeed: p.ringSpeed,
     }))
+  // 敵 guardian の防御結界も持続結界として残す（#61：作成フェーズで見え、効果＝光=回復/闇=視認阻害）。
+  // 生存する敵が今ターン張った（壊れていない）結界を owner='enemy' で持ち越す。
+  const aliveEnemyIds = new Set(enemies.filter((e) => e.hp > 0).map((e) => e.id))
+  const newEnemyOrbits: ActiveOrbit[] = enemyRings
+    .filter((r) => !r.broken && r.ring.length >= 3 && aliveEnemyIds.has(r.enemyId))
+    .map((r) => ({
+      id: orbitId(r.enemyId, r.ring as ZPoint[]),
+      ownerId: r.enemyId,
+      owner: 'enemy' as const,
+      ring: r.ring as ZPoint[],
+      ringSpeed: r.ringSpeed,
+    }))
   // 同IDの再展開は新しい方を優先（同じ場所の張り直し）
   const orbitMap = new Map<string, ActiveOrbit>()
   for (const o of survivingPersistent) orbitMap.set(o.id, o)
   for (const o of newOrbits) orbitMap.set(o.id, o)
+  for (const o of newEnemyOrbits) orbitMap.set(o.id, o)
 
   return {
     allies,
