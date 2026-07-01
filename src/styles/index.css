@@ -305,9 +305,14 @@ h3 {
   .show-mobile {
     display: flex !important;
   }
-  /* 文脈モード（点選択／z 調整）中は通常の盤面アクションを隠し、バーに集中させる（#54） */
+  /* 文脈モード（点選択／z 調整）中は通常の盤面アクション・HP・ログを隠し、
+     盤面の直下にバーだけ出して「場を見ながら」操作に集中させる（#54/#58） */
   .stage-pane[data-mode='fit'] .stage-normal,
-  .stage-pane[data-mode='z'] .stage-normal {
+  .stage-pane[data-mode='z'] .stage-normal,
+  .stage-pane[data-mode='fit'] .hud,
+  .stage-pane[data-mode='z'] .hud,
+  .stage-pane[data-mode='fit'] > .panel,
+  .stage-pane[data-mode='z'] > .panel {
     display: none;
   }
   /* 表示中の view に合わせて片方だけ見せる（盤面の canvas は常時） */

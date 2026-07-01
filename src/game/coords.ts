@@ -87,16 +87,15 @@ export interface Sample {
  * または隣り合うサンプルで符号が反転しつつ両側の |z| が大きい点（=極を跨いだ＝1/x 型の発散）を
  * 無効点としてマークする。以後 validPrefix / pathTermination が暴発点として扱う。
  */
-function applyZValidity(samples: Sample[], zf?: ZField, origin?: Vec2): void {
+function applyZValidity(samples: Sample[], zf?: ZField): void {
   if (!zf) return
-  const o = origin ?? { x: 0, y: 0 } // z 場は術者位置を原点に評価する（#52）
   let prevZ: number | null = null
   for (const s of samples) {
     if (!s.valid) {
       prevZ = null
       continue
     }
-    const z = zf(s.pos.x - o.x, s.pos.y - o.y)
+    const z = zf(s.pos.x, s.pos.y) // z 場はステージ中央(0,0)を原点に評価する（#58）
     const finite = Number.isFinite(z)
     const pole =
       finite &&
@@ -140,8 +139,8 @@ export function sampleTrajectory(traj: Trajectory): Sample[] {
     }
   }
   // z 場のエラー点（暴発）を反映：軌道は有効でも z がエラーになる点で打ち切る（#30）。
-  // z 場は術者位置 origin を原点に評価する（#52）
-  applyZValidity(out, traj.z, traj.origin)
+  // z 場はステージ中央(0,0)を原点に評価する（#58）
+  applyZValidity(out, traj.z)
   return out
 }
 

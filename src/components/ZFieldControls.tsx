@@ -64,7 +64,7 @@ export default function ZFieldControls({ z: c, onChange }: Props) {
       </div>
       {c.zFreeError && <div className="field-error">{c.zFreeError}</div>}
       <div className="hint">
-        変数 <code>x, y</code> は<strong>術者位置が原点</strong>（#52）。 <code>|z|={FIELD.zPeak}</code> に近いほど強い。 z&gt;0=光・z&lt;0=闇。
+        変数 <code>x, y</code> は<strong>ステージ中央が原点</strong>（#58・全員共通）。 <code>|z|={FIELD.zPeak}</code> に近いほど強い。 z&gt;0=光・z&lt;0=闇。
       </div>
     </>
   )

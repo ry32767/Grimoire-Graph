@@ -7,12 +7,12 @@ import { FIELD, AFFINITY } from '../data/constants'
 
 /**
  * 軌道に紐づく z 場を位置 (x,y) で評価する（#30）。z 場未指定なら中立(0)。
- * z 場は**術者位置 origin を原点**として評価する（軌道関数と座標系を合わせる・#52）。
+ * z 場は**ステージ中央 (0,0) を原点**に絶対座標で評価する（#58：全員共通なので原点も共通。
+ * 味方も敵も同じ場を見る。旧 #52 の術者位置基準は共通化に伴い廃止）。
  */
 export function zfieldAt(traj: Trajectory, pos: Vec2): number {
   if (!traj.z) return 0
-  const o = traj.origin ?? { x: 0, y: 0 }
-  const z = traj.z(pos.x - o.x, pos.y - o.y)
+  const z = traj.z(pos.x, pos.y)
   return Number.isFinite(z) ? z : 0
 }
 

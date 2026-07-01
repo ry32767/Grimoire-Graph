@@ -154,14 +154,9 @@ export default function App() {
     () => aliveAllies.map((a) => previews[a.id]?.misfirePos ?? null),
     [aliveAllies, previews],
   )
-  // 編集中の z 場（#37）。全員共通の z 場（#57）をアクティブ術者を原点にして薄く表示する。
-  // z 場は術者位置を原点に評価するため、プレビューも術者位置ぶんずらして描く（#52）
-  const activeZField = useMemo(() => {
-    const raw = buildZField(zField)
-    const ally = battle?.allies.find((a) => a.id === activeAllyId)
-    if (!ally) return raw
-    return (x: number, y: number) => raw(x - ally.pos.x, y - ally.pos.y)
-  }, [zField, activeAllyId, battle])
+  // 編集中の z 場（#37）。全員共通の z 場（#57）を**ステージ中央(0,0)原点**で薄く表示する（#58）。
+  // z 場は絶対座標で評価するので、プレビューもずらさずそのまま描く。
+  const activeZField = useMemo(() => buildZField(zField), [zField])
   // 持続中の周回結界（#39：作成フェーズでも常時表示し、闇は内側を暗くぼかす）
   const standingOrbits = useMemo(
     () => (battle?.orbits ?? []).map((o) => ({ ring: o.ring, speed: o.ringSpeed })),
@@ -628,16 +623,7 @@ export default function App() {
             className="stage-pane show-stage"
             data-mode={composing && fitPickActive ? 'fit' : composing && zAdjustMode ? 'z' : 'normal'}
           >
-            <Hud
-              allies={battle.allies}
-              enemies={battle.enemies}
-              activeAllyId={activeAllyId}
-              onSelectAlly={composing ? switchAlly : undefined}
-              impairedIds={impairedIds}
-              touchedIds={[...touchedAllies]}
-            />
-
-            {/* スマホ：盤面で点を選んでそのままフィット（#54） */}
+            {/* スマホ：盤面で点を選んでそのままフィット（#54）。盤面直下に置いて場を見ながら操作（#58） */}
             {composing && fitPickActive && (
               <div className="stage-bar fit-bar show-mobile">
                 <div className="hint">
@@ -657,7 +643,7 @@ export default function App() {
               </div>
             )}
 
-            {/* スマホ：盤面の属性場を見ながら z を調整（#54）。z は全員共通（#57） */}
+            {/* スマホ：盤面の属性場を見ながら z を調整（#54）。z は全員共通（#57）・盤面直下（#58） */}
             {composing && zAdjustMode && (
               <div className="stage-bar z-bar show-mobile">
                 <div className="section-title">属性の高さ z = f(x,y)（全員共通・場を見ながら調整）</div>
@@ -668,7 +654,21 @@ export default function App() {
               </div>
             )}
 
+            <Hud
+              allies={battle.allies}
+              enemies={battle.enemies}
+              activeAllyId={activeAllyId}
+              onSelectAlly={composing ? switchAlly : undefined}
+              impairedIds={impairedIds}
+              touchedIds={[...touchedAllies]}
+            />
+
             <div className="stage-normal">
+              {composing && (
+                <button className="btn show-mobile adjust-z-stage" onClick={adjustZOnStage}>
+                  🎨 属性場（全員共通）を調整
+                </button>
+              )}
               {composing && anyCastable && (
                 <button className="btn おまかせ batch-recommend" onClick={recommendAll}>
                   ✨ 全員おまかせ（当たる術式を自動設定）
