@@ -151,22 +151,6 @@ export interface RingInterception {
   enemyIndex?: number
 }
 
-/**
- * リングが敵弾を迎撃（防御・#34）するときに削る速度。
- * - 同極・中立 → 透過（0）。リングを素通りして継続する。
- * - 反対極 → 相殺。削る速度 = リング威力(強度×リング速度) × orbitBlockScale。
- * 発射型（敵弾）が削り切られず残れば、残速度のまま元の軌道で進み続ける（呼び出し側で再計算）。
- */
-export function orbitBlockLoss(ringZ: number, bulletAttr: Attribute, ringSpeed: number): number {
-  const ringAttr = attributeOf(ringZ)
-  const opposite =
-    (ringAttr === 'light' && bulletAttr === 'dark') ||
-    (ringAttr === 'dark' && bulletAttr === 'light')
-  if (!opposite) return 0 // 同属性・中立は透過
-  const ringPower = strengthOf(ringZ) * Math.max(0, ringSpeed)
-  return ringPower * COMBAT.orbitBlockScale
-}
-
 /** 周回軌道が壁（障害物の素材）に触れて削れた1点（#34：少しだけ削って散る）。 */
 export interface OrbitWallHit {
   /** えぐった点（数学座標） */

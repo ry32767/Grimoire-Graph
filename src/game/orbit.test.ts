@@ -3,7 +3,6 @@ import {
   buildRing,
   orbitSweep,
   ringInterception,
-  orbitBlockLoss,
   orbitWallBreak,
   ringEncloses,
   ringDominant,
@@ -59,22 +58,6 @@ describe('迎撃（防御・#4）', () => {
       { x: 0, y: 0 },
     ]
     expect(ringInterception(buildRing(circle), inside).crossed).toBe(false)
-  })
-})
-
-describe('相殺の透過/削り（#34）', () => {
-  it('同極リングは敵弾を透過する（削り 0）', () => {
-    // 光リング(z=+zPeak) × 光弾 → 同極 → 透過
-    expect(orbitBlockLoss(FIELD.zPeak, 'light', 8)).toBe(0)
-    // 中立弾も透過
-    expect(orbitBlockLoss(FIELD.zPeak, 'neutral', 8)).toBe(0)
-  })
-  it('反対極リングは威力(強度×速度)に応じて削る', () => {
-    // 光リング × 闇弾 → 相殺。速度が速いほど大きく削る
-    const slow = orbitBlockLoss(FIELD.zPeak, 'dark', 4)
-    const fast = orbitBlockLoss(FIELD.zPeak, 'dark', 10)
-    expect(slow).toBeGreaterThan(0)
-    expect(fast).toBeGreaterThan(slow)
   })
 })
 
