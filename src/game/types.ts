@@ -144,6 +144,14 @@ export interface Disc {
   r: number
 }
 
+/** 軸並行の矩形（四角い壁の素材・#56）。左下 (x,y)・幅 w・高さ h（数学座標）。 */
+export interface Rect {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
 /**
  * 壁の耐久種別（#40）。削れやすさ（えぐり半径・速度損）が変わる。
  * - normal：従来の属性付き壁（element=light/dark で相性が効く）。
@@ -164,7 +172,9 @@ export interface Obstacle {
   element: Attribute
   /** 基本形：重なった円の和（壁・柱の素材） */
   solids: Disc[]
-  /** 魔法に削り取られた円（穴）。solids から引く */
+  /** 四角い素材（#56）。solids と合わせて「素材」を構成する。円・矩形は混在可。 */
+  rects?: Rect[]
+  /** 魔法に削り取られた円（穴）。solids/rects から引く */
   carves: Disc[]
   /** 耐久種別（#40）。未指定は normal。 */
   kind?: ObstacleKind

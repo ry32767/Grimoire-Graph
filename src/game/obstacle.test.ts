@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isSolidAt, carveSpeedLoss, carveRadius } from './obstacle'
+import { isSolidAt, carveSpeedLoss, carveRadius, obstacleOverlapsCircle, materialCells } from './obstacle'
 import { COMBAT } from '../data/constants'
 import type { Obstacle } from './types'
 
@@ -23,6 +23,42 @@ describe('障害物の素材判定（solids − carves）', () => {
     const ob: Obstacle = { ...blob(), carves: [{ x: 0, y: 0, r: 1.5 }] }
     expect(isSolidAt(ob, { x: 0, y: 0 })).toBe(false) // 穴の中
     expect(isSolidAt(ob, { x: 2.5, y: 0 })).toBe(true) // 穴の外だが solid 内
+  })
+})
+
+describe('四角い壁（矩形素材・#56）', () => {
+  // 左下 (0,0)・幅10・高さ4 の四角い壁
+  const rectWall = (): Obstacle => ({ id: 'r1', element: 'neutral', solids: [], rects: [{ x: 0, y: 0, w: 10, h: 4 }], carves: [] })
+
+  it('矩形の内側は素材、外側は素材でない（角もシャープ）', () => {
+    expect(isSolidAt(rectWall(), { x: 5, y: 2 })).toBe(true)
+    expect(isSolidAt(rectWall(), { x: 0, y: 0 })).toBe(true) // 角
+    expect(isSolidAt(rectWall(), { x: 10, y: 4 })).toBe(true) // 対角
+    expect(isSolidAt(rectWall(), { x: -0.01, y: 2 })).toBe(false) // 左外
+    expect(isSolidAt(rectWall(), { x: 5, y: 4.01 })).toBe(false) // 上外
+  })
+
+  it('矩形でも carve（穴）でくり抜ける', () => {
+    const ob: Obstacle = { ...rectWall(), carves: [{ x: 5, y: 2, r: 1 }] }
+    expect(isSolidAt(ob, { x: 5, y: 2 })).toBe(false) // 穴の中
+    expect(isSolidAt(ob, { x: 8, y: 2 })).toBe(true) // 穴の外だが矩形内
+  })
+
+  it('obstacleOverlapsCircle：矩形に重なる円だけ true（最近接点で判定）', () => {
+    expect(obstacleOverlapsCircle(rectWall(), { x: 5, y: 2 }, 1)).toBe(true) // 内側
+    expect(obstacleOverlapsCircle(rectWall(), { x: 12, y: 2 }, 2.5)).toBe(true) // 右に2だけ離れ、半径2.5で接触
+    expect(obstacleOverlapsCircle(rectWall(), { x: 20, y: 2 }, 2)).toBe(false) // 遠い
+  })
+
+  it('materialCells：矩形は格子状の代表点に展開される（破片演出用）', () => {
+    const cells = materialCells(rectWall())
+    expect(cells.length).toBeGreaterThan(0)
+    for (const c of cells) {
+      expect(c.x).toBeGreaterThanOrEqual(0)
+      expect(c.x).toBeLessThanOrEqual(10)
+      expect(c.y).toBeGreaterThanOrEqual(0)
+      expect(c.y).toBeLessThanOrEqual(4)
+    }
   })
 })
 

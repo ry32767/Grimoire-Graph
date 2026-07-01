@@ -40,11 +40,20 @@ describe('ステージ定義（機能14・#15）', () => {
         expect(e.hp).toBeGreaterThan(0)
       }
       for (const o of s.obstacles) {
-        expect(o.solids.length).toBeGreaterThan(0)
+        const rects = o.rects ?? []
+        // 素材は円（solids）か矩形（rects・#56）のどちらかで構成される
+        expect(o.solids.length + rects.length).toBeGreaterThan(0)
         expect(o.carves).toEqual([])
         for (const d of o.solids) {
           expect(dist({ x: d.x, y: d.y })).toBeLessThan(FIELD.rField)
           expect(d.r).toBeGreaterThan(0)
+        }
+        for (const r of rects) {
+          expect(r.w).toBeGreaterThan(0)
+          expect(r.h).toBeGreaterThan(0)
+          // 四隅とも場内
+          expect(dist({ x: r.x, y: r.y })).toBeLessThan(FIELD.rField)
+          expect(dist({ x: r.x + r.w, y: r.y + r.h })).toBeLessThan(FIELD.rField)
         }
       }
     }

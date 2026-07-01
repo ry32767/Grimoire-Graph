@@ -85,7 +85,7 @@ intensity = 1 − (elapsed − flashStart)/FLASH_MS    // 1→0 に減衰
 | 1 | z 場オーバーレイ（作成フェーズは常時・#55） | 光=金の薄塗り（不透明度 0.04〜0.20）、闇=紫の薄塗り（0.05〜0.23）。強度に比例。**セルは方眼と同じ1ユニット**で、整数境界の各マスを中心 (x+0.5, y+0.5) の z で塗る（格子に整列・#53） |
 | 1b | z 場エラー overlay（編集時・#30） | 場がエラーになる地点を全て赤 `rgba(255,60,60,0.5)`（`drawZFieldErrors`）。極=赤い線（二分法 `isPoleBetween` で検出）、定義域外=赤い領域 |
 | 2 | 敵ゴースト軌道（予告） | `COLORS.ghost` の破線 `[5,4]` |
-| 3 | 障害物 | solids を描き carves を `destination-out` で打ち抜き、種別ごとのテクスチャを `source-atop`（石積み目地/亀裂/鋲/シェブロン） |
+| 3 | 障害物 | solids（円）＋rects（四角・#56）を描き carves を `destination-out` で打ち抜き、種別ごとのピクセルアート・タイルを `source-atop` で敷き詰める（石積み/亀裂/鋲/鋼板） |
 | 4 | 味方の予測軌道（編集時） | z で色分けした線（光=金/闇=紫/中立=淡）、強度で線幅 |
 | 4b | 暴発点マーカー（編集時・#30） | 関数（軌道 or z 場）がエラーで暴発する点に**赤い ✕**（`drawMisfireMarker`・`#ff4b4b`・最前面）。`Preview.misfirePos` 由来 |
 | 5 | 敵 | オーラ→暗い下地→属性枠→ロール印（guardian=二重破線/breaker=棘）→ドット絵スプライト（16×16）→系統 glyph→名前ラベル→被弾フラッシュ |
@@ -156,14 +156,18 @@ glowR = (4 + sizeFrac×22) × pulse,  coreR = (1.3 + sizeFrac×4.2) × pulse
 
 `attrColor(attr)`：光→light1 / 闇→dark1 / 中立→neutral。
 
-### 障害物のテクスチャ（種別ごと）
+### 障害物のテクスチャ（種別ごと・#56）
 
-| 種別 | 下地色 | テクスチャ |
+壁の質感は**ピクセルアートのタイル画像**を素材内（`source-atop`）に `createPattern(tile,'repeat')` で敷き詰める（`src/render/textures.ts` の `getWallTexture(kind, element)`。小タイルを生成してキャッシュ。`imageSmoothingEnabled=false`、下地の属性色を活かすため `globalAlpha≈0.62` で重ねる）。画像が取得できない環境では下の手続き描画にフォールバック。将来は `getWallTexture` を `new Image()` の実 PNG 読み込みに差し替え可能。
+
+| 種別 | 下地色 | タイル（ピクセルアート） |
 |---|---|---|
-| normal/属性 | light=茶 `rgba(120,98,46,.94)` / dark=紫 `rgba(62,52,104,.94)` / 中立=灰 | 石積みの目地（横線） |
-| fragile | 薄灰 `rgba(110,106,122,.9)` | ジグザグの亀裂 |
-| tough | 濃灰 `rgba(56,56,70,.96)` | 鋲打ちグリッド |
-| unbreakable | 黒 `rgba(24,24,32,.98)` | シェブロン斜線 |
+| normal/属性 | light=茶 `rgba(120,98,46,.94)` / dark=紫 `rgba(62,52,104,.94)` / 中立=灰 | 石積みレンガ（属性で色味・段ごとに半個ずらし） |
+| fragile | 薄灰 `rgba(110,106,122,.9)` | レンガ＋ジグザグの亀裂 |
+| tough | 濃灰 `rgba(56,56,70,.96)` | レンガ＋鋲（各レンガ中央の点） |
+| unbreakable | 黒 `rgba(24,24,32,.98)` | 鋼板（斜めシェブロン＋四隅と中央の鋲） |
+
+> 形は円（`solids`）と矩形（`rects`・#56）。矩形は角のシャープな四角い壁として `fillRect` で塗り、テクスチャ・削れ穴（`destination-out`）も同じ仕組みで機能する。レイヤー3の `solids を描き` は `solids＋rects を描き` に拡張。
 
 ---
 
