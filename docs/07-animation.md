@@ -93,7 +93,7 @@ intensity = 1 − (elapsed − flashStart)/FLASH_MS    // 1→0 に減衰
 | 7 | HP バー | 敵/味方の上 |
 | 8 | 弾の波トレイル | `drawWaveTrail`：2 本の正弦波（180°位相差）＋トレイル粒 |
 | 9 | 飛行する弾 | `drawBullet`：外周グロー→shadowBlur→回転スパイク→白いコアの多層グロー |
-| 10 | 結界リングの粒 | 18 粒がリングを 1.1 周。各粒に 5 点の尾。`zColor` で属性色 |
+| 10 | 結界リングの粒 | 18 粒がリングを 1.1 周。各粒に 5 点の尾。`zColor` で属性色。**進み方は点ごとの速度に連動**（#60：`ringTimeline`＝Σ ds/speed の累積時間で phase→index を写像。速い区間は素早く抜け、遅い区間で粒が密集）。粒サイズも触れた点の速度×強度（`ptSpeed`） |
 | 11 | 結界の霧散 | `drawOrbitDissipation` |
 | 12 | えぐりバースト | `drawCarveBurst`（岩片） |
 | 13 | クラッシュ火花 | `drawClashSpark` |

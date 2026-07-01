@@ -191,6 +191,33 @@ function posAtTime(
   }
 }
 
+/**
+ * リング各点までの累積「通過時間」(Σ ds/speed) と総時間（#60）。
+ * 速度が速い区間ほど通過時間が短い＝粒がそこを素早く抜ける（点ごとの速度を演出に反映）。
+ * 速度が未付与/一定なら従来どおり等速で回る。
+ */
+function ringTimeline(ring: ZPoint[]): { cum: number[]; total: number } {
+  const cum = [0]
+  for (let i = 1; i < ring.length; i++) {
+    const ds = Math.hypot(ring[i].pos.x - ring[i - 1].pos.x, ring[i].pos.y - ring[i - 1].pos.y)
+    const v = Math.max(0.2, ((ring[i].speed ?? 0) + (ring[i - 1].speed ?? 0)) / 2)
+    cum.push(cum[i - 1] + ds / v)
+  }
+  return { cum, total: cum[cum.length - 1] || 1 }
+}
+
+/** phase∈[0,1) を累積時間で index へ写す（速い区間は素早く通過・#60）。 */
+function phaseToIndex(tl: { cum: number[]; total: number }, phase: number): number {
+  const target = (((phase % 1) + 1) % 1) * tl.total
+  for (let i = 1; i < tl.cum.length; i++) if (tl.cum[i] >= target) return i - 1
+  return tl.cum.length - 1
+}
+
+/** 粒の大きさに使う速度：その点の速度（#60）。無ければリング代表速度にフォールバック。 */
+function ptSpeed(pt: ZPoint, fallback: number): number {
+  return pt.speed ?? fallback
+}
+
 /** 持続中の周回（#39）：薄いリング＋ゆっくり周回する粒で常時表示する。 */
 function drawStandingOrbit(ctx: CanvasRenderingContext2D, o: StandingOrbit, trailPhase: number): void {
   const ring = o.ring
@@ -200,15 +227,13 @@ function drawStandingOrbit(ctx: CanvasRenderingContext2D, o: StandingOrbit, trai
   ctx.globalAlpha = 0.26
   strokeZPath(ctx, ring, VP)
   ctx.restore()
+  const tl = ringTimeline(ring) // #60：点ごとの速度で粒の進みを変える
   const N = 16
   for (let n = 0; n < N; n++) {
-    const frac = (n / N + trailPhase * 0.03) % 1
-    let idx = Math.floor(frac * (len - 1))
-    if (!Number.isFinite(idx)) idx = 0
-    idx = Math.max(0, Math.min(len - 1, idx))
+    const idx = phaseToIndex(tl, n / N + trailPhase * 0.03)
     const pt = ring[idx]
     if (!pt) continue
-    drawParticle(ctx, pt.pos, zColor(pt.z), VP, trailPhase * 2 + n, powerSizeFrac(o.speed, pt.z))
+    drawParticle(ctx, pt.pos, zColor(pt.z), VP, trailPhase * 2 + n, powerSizeFrac(ptSpeed(pt, o.speed), pt.z))
   }
 }
 
@@ -479,16 +504,13 @@ export default function BattleCanvas(props: Props) {
         ctx.globalAlpha = 0.28
         strokeZPath(ctx, ring, VP)
         ctx.restore()
-        // 複数パーティクルを等間隔に並べ、ゆっくり周回する（速いとチカチカするため・#11）
+        // 複数パーティクルを並べて周回する。点ごとの速度で進みを変える（#60：速い区間は素早く抜ける）
         const N = 18
         const revs = 1.1
         const eClamped = Number.isFinite(e) ? Math.max(0, Math.min(1, e)) : 0
+        const tl = ringTimeline(ring)
         for (let n = 0; n < N; n++) {
-          const frac = (n / N + eClamped * revs) % 1
-          // idx は必ず 0..len-1 に収める（NaN/範囲外でも安全・凍結防止）
-          let idx = Math.floor(frac * (len - 1))
-          if (!Number.isFinite(idx)) idx = 0
-          idx = Math.max(0, Math.min(len - 1, idx))
+          const idx = phaseToIndex(tl, n / N + eClamped * revs)
           const pt = ring[idx]
           if (!pt) continue
           const col = zColor(pt.z)
@@ -501,8 +523,8 @@ export default function BattleCanvas(props: Props) {
           ctx.globalAlpha = 0.5
           drawTrail(ctx, trail, col, VP)
           ctx.globalAlpha = 1
-          // 威力（=リング速度×その点の強度）で粒の大きさを変える（#21）
-          const sizeScale = powerSizeFrac(o.speed ?? 0, pt.z)
+          // 威力（=その点のリング速度×強度）で粒の大きさを変える（#21/#60）
+          const sizeScale = powerSizeFrac(ptSpeed(pt, o.speed ?? 0), pt.z)
           drawParticle(ctx, pt.pos, col, VP, trailPhase * 2 + n, sizeScale)
         }
       }

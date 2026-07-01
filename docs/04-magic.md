@@ -144,12 +144,19 @@ resolveParry(attrA, speedA, powerA, attrB, speedB, powerB):
 
 `validFinitePrefix`（場外でも切らない）で 1 周分（θ ≤ 2π）の点列＋各点の z を作る。2 周分にしないのは演出が倍速・粒子重複になるため（#22）。
 
+### リング速度は点ごと（#60）
+
+リングの速度は**平均（代表スカラー）ではなく点ごと**に持つ。`buildRing` で幾何＋z を作り、
+`attachRingSpeeds(ring, initialSpeed)` が初速からリング経路を物理シミュレート（場の加速度で加減速）して
+**各点の速度 `RingPoint.speed`／`ZPoint.speed` を付与**する。中立帯は速く、強属性(|z|>zRef)の点は失速する。
+迎撃・掃射・演出はすべて「その点の速度」を使う。速度0まで失速した点以降は0。
+
 ### 掃射（攻撃・`orbitSweep`）
 
 リング上で対象に最も近い点との距離が `半径 + thickness(=0.7)` 以下なら命中。
 
 ```ts
-ダメージ = リング代表速度 × strengthOf(その点の z) × 相性
+ダメージ = 触れた点のリング速度(ring[idx].speed) × strengthOf(その点の z) × 相性   // #60：平均でなく点ごと
 ```
 
 命中時、対象に属性に応じた状態異常も付与。
@@ -160,17 +167,19 @@ resolveParry(attrA, speedA, powerA, attrB, speedB, powerB):
 発射魔法のパリィ（§4.5 `resolveParry`）と**同じ相互相殺**で解く。**反対極のみ相殺、同極・中立は透過**。
 
 ```ts
-inter = ringInterception(ring, enemyPath)   // 横断点・その点のリング z
-parry = resolveParry(ringAttr, ringSpeed, ringSpeed×strengthOf(ringZ),
-                     enemyAttr, before,     before×strengthOf(enemyZ))
+inter = ringInterception(ring, enemyPath)   // 横断点・その点のリング z・その点の速度(#60)
+vCross = inter.ringSpeed                     // 横断点でのリング速度（平均でない・#60）
+parry = resolveParry(ringAttr, vCross, vCross×strengthOf(ringZ),
+                     enemyAttr, before, before×strengthOf(enemyZ))
 敵弾: 横断点で before − parry.speedB を削る（0 で消滅）
-結界: 残れば parry.speedA へ減速して回り続ける／0 なら破れて霧散
+結界: 残れば横断点の減速率 factor=parry.speedA/vCross で全体を失速して回り続ける／0 なら破れて霧散
 ```
 
-- **結界も減速する（#59）**：魔法を当てられた結界は敵弾威力ぶん失速し、**残った速度で上書きして軌道を回り続ける**（`ringSpeed` を更新。新規リングは `p.ringSpeed`、永続結界は `ao.ringSpeed`、次ターンへも減速したまま持ち越す）。速度が 0 になったときだけ**丸ごと霧散**（#34）。以前の「止めきれなければ即霧散」という二択は廃止。
+- **横断点の速度で相殺（#60）**：迎撃は平均速度でなく**横断した一点の速度 `vCross`** をリング弾の速度に使う。
+- **結界も減速する（#59/#60）**：魔法を当てられた結界は失速し、**横断点の減速率 `factor` で結界全体を `scaleRingSpeeds` して**（各点の speed を factor 倍）残った速度で回り続ける。代表 `ringSpeed` も同率で更新し、次ターンへ減速したまま持ち越す。`vCross` が 0（=横断点の速度が 0）まで落ちたときだけ**丸ごと霧散**（#34）。以前の「止めきれなければ即霧散」という二択は廃止。
 - 味方弾が敵 guardian の防御結界を横切る場合も同じ相互相殺で、**敵結界が減速**し自弾も削られる（`turn.ts` §5 の発射型命中前処理）。
 - スケールはパリィと共通（`parryLossScale=0.25`）。旧 `orbitBlockLoss`／`orbitBlockScale(0.45)` は廃止。
-- クラッシュ威力＝リング威力(強度×速度)＋敵弾威力(速度×強度)（#38）。
+- クラッシュ威力＝リング威力(強度×横断点速度)＋敵弾威力(速度×強度)（#38）。
 
 ### 壁との接触（`orbitWallBreak`）
 

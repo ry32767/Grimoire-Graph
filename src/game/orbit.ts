@@ -6,21 +6,41 @@ import { sampleTrajectory, validFinitePrefix, dist } from './coords'
 import { zfieldAt, attributeOf, strengthOf, affinityMultiplier } from './attribute'
 import { isSolidAt } from './obstacle'
 import { firstCrossing } from './parry'
+import { simulatePath } from './physics'
 
-/** リング上の1点（位置＋属性 z） */
+/** リング上の1点（位置＋属性 z＋その点でのリング速度・#60） */
 export interface RingPoint {
   pos: Vec2
   z: number
+  /** その点を通過する時のリング速度（#60：平均でなく点ごと。未計算/未付与は undefined→0 扱い） */
+  speed?: number
 }
 
 /**
  * ループ軌道からリング（有限点列＋各点の z）を作る。場外でも切らない＝結界は一周する（#22/#25）。
  * θ は 1周分（≤2π）に制限する：閉曲線は1周で形が完結し、2周分だと周回演出が倍速・粒子が重複するため（#22 演出修正）。
+ * speed は 0（幾何のみ）。実速度は attachRingSpeeds で付与する（#60）。
  */
 export function buildRing(traj: Trajectory): RingPoint[] {
   return validFinitePrefix(sampleTrajectory(traj))
     .filter((s) => s.param <= 2 * Math.PI + 1e-6)
-    .map((s) => ({ pos: s.pos, z: zfieldAt(traj, s.pos) }))
+    .map((s) => ({ pos: s.pos, z: zfieldAt(traj, s.pos), speed: 0 }))
+}
+
+/**
+ * リングの各点に「その点でのリング速度」を付与する（#60）。初速からリング経路を物理シミュレート
+ * （場の加速度で加減速）した各点の速度を使う＝平均ではなく点ごとの速度。速度0まで失速した点以降は0。
+ */
+export function attachRingSpeeds(ring: RingPoint[], initialSpeed: number): RingPoint[] {
+  if (ring.length === 0) return ring
+  const flight = simulatePath(ring.map((p) => p.pos), initialSpeed, (i) => ring[Math.min(i, ring.length - 1)].z)
+  return ring.map((p, i) => ({ ...p, speed: flight.samples[i]?.speed ?? 0 }))
+}
+
+/** リング全体の速度を factor 倍に減速する（#60：迎撃で失速。0で全停止＝霧散）。 */
+export function scaleRingSpeeds(ring: RingPoint[], factor: number): RingPoint[] {
+  const f = Math.max(0, factor)
+  return ring.map((p) => ({ ...p, speed: (p.speed ?? 0) * f }))
 }
 
 /**
@@ -117,12 +137,11 @@ export interface OrbitHit {
 }
 
 /**
- * リングが触れる対象へのダメージ＝代表速度 × 強度(|z|) × 相性。
- * thickness はリングの当たり厚み（ユニット）。
+ * リングが触れる対象へのダメージ＝**触れた点のリング速度** × 強度(|z|) × 相性（#60）。
+ * 平均速度ではなく、対象に最も近いリング点の速度を使う。thickness は当たり厚み（ユニット）。
  */
 export function orbitSweep(
   ring: RingPoint[],
-  speed: number,
   targets: OrbitTarget[],
   thickness = 0.7,
 ): OrbitHit[] {
@@ -134,7 +153,7 @@ export function orbitSweep(
       const z = ring[n.idx].z
       const attr = attributeOf(z)
       const strength = strengthOf(z)
-      const damage = speed * strength * affinityMultiplier(attr, t.element)
+      const damage = (ring[n.idx].speed ?? 0) * strength * affinityMultiplier(attr, t.element)
       if (damage > 0) hits.push({ id: t.id, damage, attr, strength })
     }
   }
@@ -147,6 +166,8 @@ export interface RingInterception {
   pos?: Vec2
   /** 横断点付近のリング属性 z（迎撃の相性判定に使う） */
   ringZ?: number
+  /** 横断点でのリング速度（#60：平均でなくその点の速度で相殺する） */
+  ringSpeed?: number
   /** 敵弾パス上の横断 index */
   enemyIndex?: number
 }
@@ -188,6 +209,6 @@ export function ringInterception(ring: RingPoint[], enemyPath: Vec2[]): RingInte
   const ringPath = ring.map((r) => r.pos)
   const cross = firstCrossing(enemyPath, ringPath)
   if (!cross) return { crossed: false }
-  const z = ring[Math.min(cross.indexB, ring.length - 1)].z
-  return { crossed: true, pos: cross.pos, ringZ: z, enemyIndex: cross.indexA }
+  const rp = ring[Math.min(cross.indexB, ring.length - 1)]
+  return { crossed: true, pos: cross.pos, ringZ: rp.z, ringSpeed: rp.speed, enemyIndex: cross.indexA }
 }
