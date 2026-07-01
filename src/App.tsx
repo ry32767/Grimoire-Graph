@@ -5,15 +5,16 @@ import { planEnemyShot, enemyFlight } from './game/enemyAI'
 import { zfieldAt } from './game/attribute'
 import { recommendCast } from './game/recommend'
 import { ROTATE_PRESETS, defaultCoeffs } from './game/functions'
-import { ZFIELD_PRESETS, defaultZCoeffs } from './game/zfields'
 import { STAGES } from './data/stages'
 import { makeParty } from './data/party'
 import { FIELD } from './data/constants'
 import { PROLOGUE, EPILOGUE, GAMEOVER_TEXT } from './data/story'
 import {
   type ComposerState,
+  type ZFieldState,
   buildComposerTrajectory,
   buildZField,
+  makeZField,
   computePreview,
   parametricPatch,
   zParametricPatch,
@@ -67,10 +68,7 @@ function formatTime(ms: number): string {
 
 function makeComposer(angle: number): ComposerState {
   const coeffs = defaultCoeffs(ROTATE_PRESETS[0])
-  const zPreset = ZFIELD_PRESETS[0] // 一定（const）
-  const zCoeffs = defaultZCoeffs(zPreset)
   const expr = ROTATE_PRESETS[0].toExpr(coeffs)
-  const zExpr = zPreset.toExpr(zCoeffs)
   const base: ComposerState = {
     mode: 'rotate',
     presetId: 'line',
@@ -81,17 +79,9 @@ function makeComposer(angle: number): ComposerState {
     freeExpr: expr,
     freeError: null,
     ...NO_FIT,
-    zPresetId: zPreset.id,
-    zCoeffs,
-    zUseFree: false,
-    zFreeExpr: zExpr,
-    zFreeError: null,
-    zFitTemplate: '',
-    zFitParams: [],
-    zFitValues: {},
   }
-  // 射出（回転）も z 場も、既定で係数化フロー：式中の数値をスライダー化する（#46/#52）
-  return { ...base, ...parametricPatch(expr, 'x'), ...zParametricPatch(zExpr) }
+  // 射出（回転）は既定で係数化フロー：式中の数値をスライダー化する（#46）。z 場は全員共通の別状態（#57）
+  return { ...base, ...parametricPatch(expr, 'x') }
 }
 
 /** パーティ各自の初期コンポーザ（敵陣（上方）へ向ける）。 */
@@ -109,6 +99,8 @@ export default function App() {
   const [castingIds, setCastingIds] = useState<string[]>([])
   const [impairedIds, setImpairedIds] = useState<string[]>([])
   const [composers, setComposers] = useState<Record<string, ComposerState>>({})
+  // #57：属性 z 場は3人で共通の単一状態（キャラごとに持たない＝操作を減らす）
+  const [zField, setZField] = useState<ZFieldState>(makeZField)
   const [activeAllyId, setActiveAllyId] = useState<string>('')
   const [animation, setAnimation] = useState<ResolveAnimation | null>(null)
   const [pendingState, setPendingState] = useState<BattleState | null>(null)
@@ -147,11 +139,11 @@ export default function App() {
       if (a.hp <= 0) continue
       const c = composers[a.id]
       if (!c) continue
-      const traj = buildComposerTrajectory(c, a.pos)
+      const traj = buildComposerTrajectory(c, zField, a.pos)
       out[a.id] = computePreview(traj, c.speed, battle.mechanics.obstacles ? battle.obstacles : [])
     }
     return out
-  }, [battle, composers])
+  }, [battle, composers, zField])
 
   const playerPaths = useMemo(
     () => aliveAllies.map((a) => previews[a.id]?.path ?? null),
@@ -162,16 +154,14 @@ export default function App() {
     () => aliveAllies.map((a) => previews[a.id]?.misfirePos ?? null),
     [aliveAllies, previews],
   )
-  // 編集中の z 場（#37）。アクティブな術者の z 場を場として薄く表示する。
+  // 編集中の z 場（#37）。全員共通の z 場（#57）をアクティブ術者を原点にして薄く表示する。
   // z 場は術者位置を原点に評価するため、プレビューも術者位置ぶんずらして描く（#52）
   const activeZField = useMemo(() => {
-    const c = composers[activeAllyId]
-    if (!c) return null
-    const raw = buildZField(c)
+    const raw = buildZField(zField)
     const ally = battle?.allies.find((a) => a.id === activeAllyId)
     if (!ally) return raw
     return (x: number, y: number) => raw(x - ally.pos.x, y - ally.pos.y)
-  }, [composers, activeAllyId, battle])
+  }, [zField, activeAllyId, battle])
   // 持続中の周回結界（#39：作成フェーズでも常時表示し、闇は内側を暗くぼかす）
   const standingOrbits = useMemo(
     () => (battle?.orbits ?? []).map((o) => ({ ring: o.ring, speed: o.ringSpeed })),
@@ -197,6 +187,8 @@ export default function App() {
     setComposers((m) => ({ ...m, [activeAllyId]: { ...m[activeAllyId], ...patch } }))
     markTouched(activeAllyId)
   }
+  // #57：属性 z 場は全員共通。ここを変えると全味方の弾に反映される（特定キャラを touched にしない）
+  const onZChange = (patch: Partial<ZFieldState>) => setZField((z) => ({ ...z, ...patch }))
 
   // 開発ジャンプ時はクリアタイム計測の起点を初期化（#33）
   useEffect(() => {
@@ -238,8 +230,14 @@ export default function App() {
     }
   }
 
-  // 1人ぶんのおすすめ術式を作る（#46）。対象は最も近い生存敵。組めなければ null。
-  const recommendFor = (ally: Ally): ComposerState | null => {
+  // 定数 z（敵の反対極を最強で当てる一定値・#21）を共通 z 場のパッチにする（係数化フロー・#52/#57）
+  const zFromConst = (zConst: number): Partial<ZFieldState> => ({
+    zPresetId: 'const',
+    zCoeffs: { c: zConst },
+    ...zParametricPatch(`${zConst}`),
+  })
+  // 1人ぶんのおすすめ術式（軌道）と、共通 z 場の推奨値を作る（#46/#57）。組めなければ null。
+  const recommendFor = (ally: Ally): { composer: ComposerState; zConst: number } | null => {
     const enemiesAlive = battle?.enemies.filter((e) => e.hp > 0) ?? []
     if (enemiesAlive.length === 0) return null
     const target = enemiesAlive.reduce((best, e) =>
@@ -249,35 +247,38 @@ export default function App() {
         : best,
     )
     const r = recommendCast(ally.pos, target, battle?.mechanics.obstacles ? battle.obstacles : [])
-    // z 場は敵の反対極を最強で当てる一定値（#21）。係数化フローに乗せる（#52）
-    const zPatch = { zPresetId: 'const', zCoeffs: { c: r.zConst }, ...zParametricPatch(`${r.zConst}`) }
     const expr = r.line ? `${r.line.a}*x` : (r.freeExpr ?? '')
-    return { ...makeComposer(r.angle), ...parametricPatch(expr, 'x'), ...zPatch } as ComposerState
+    const composer = { ...makeComposer(r.angle), ...parametricPatch(expr, 'x') } as ComposerState
+    return { composer, zConst: r.zConst }
   }
   const recommend = () => {
     if (!battle || !activeAllyId) return
     const ally = battle.allies.find((a) => a.id === activeAllyId)
     if (!ally) return
-    const c = recommendFor(ally)
-    if (!c) return
-    setComposers((m) => ({ ...m, [activeAllyId]: c }))
+    const rec = recommendFor(ally)
+    if (!rec) return
+    setComposers((m) => ({ ...m, [activeAllyId]: rec.composer }))
+    setZField((z) => ({ ...z, ...zFromConst(rec.zConst) })) // z は全員共通（#57）
     markTouched(activeAllyId)
     vibrate(12)
   }
-  // #49：一括おまかせ。生存・非ひるみの全味方へ当たる術式を自動設定
+  // #49：一括おまかせ。生存・非ひるみの全味方へ当たる軌道を自動設定（z は共通・#57）
   const recommendAll = () => {
     if (!battle) return
     const next: Record<string, ComposerState> = {}
     const touched = new Set(touchedAllies)
+    let zConst: number | null = null
     for (const a of battle.allies) {
       if (a.hp <= 0 || impairedIds.includes(a.id)) continue
-      const c = recommendFor(a)
-      if (c) {
-        next[a.id] = c
+      const rec = recommendFor(a)
+      if (rec) {
+        next[a.id] = rec.composer
+        if (zConst === null) zConst = rec.zConst // 共通 z は最初の推奨値を採用
         touched.add(a.id)
       }
     }
     setComposers((m) => ({ ...m, ...next }))
+    if (zConst !== null) setZField((z) => ({ ...z, ...zFromConst(zConst as number) }))
     setTouchedAllies(touched)
     vibrate(18)
   }
@@ -368,7 +369,7 @@ export default function App() {
       if (a.hp <= 0 || impairedIds.includes(a.id)) continue
       const c = composers[a.id]
       if (!c) continue
-      const traj = buildComposerTrajectory(c, a.pos)
+      const traj = buildComposerTrajectory(c, zField, a.pos)
       if (!traj) continue
       casts.push({ allyId: a.id, trajectory: traj, initialSpeed: c.speed })
     }
@@ -656,11 +657,11 @@ export default function App() {
               </div>
             )}
 
-            {/* スマホ：盤面の属性場を見ながら z を調整（#54） */}
-            {composing && zAdjustMode && activeComposer && (
+            {/* スマホ：盤面の属性場を見ながら z を調整（#54）。z は全員共通（#57） */}
+            {composing && zAdjustMode && (
               <div className="stage-bar z-bar show-mobile">
-                <div className="section-title">属性の高さ z = f(x,y)（場を見ながら調整）</div>
-                <ZFieldControls composer={activeComposer} onChange={onChange} />
+                <div className="section-title">属性の高さ z = f(x,y)（全員共通・場を見ながら調整）</div>
+                <ZFieldControls z={zField} onChange={onZChange} />
                 <button className="btn primary" onClick={endZAdjust}>
                   ✓ 調整を終える
                 </button>
@@ -736,6 +737,8 @@ export default function App() {
                 allyName={battle.allies.find((a) => a.id === activeAllyId)?.name ?? ''}
                 composer={activeComposer}
                 onChange={onChange}
+                zField={zField}
+                onZChange={onZChange}
                 preview={activePreview}
                 onRecommend={recommend}
                 onOpenCodex={() => setCodexOpen(true)}

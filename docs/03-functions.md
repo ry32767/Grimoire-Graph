@@ -46,6 +46,7 @@ polar:  { mode:'polar',  f: preset.buildF(coeffs), origin }
 
 属性の高さ `z = f(x,y)`。符号で属性、|z| が `zPeak`(=5) に近いほど強い。V=5 を最強に合わせやすい範囲設定。
 
+> **全員共通（#57）**：z 場は**パーティ3人で共通の単一状態**（`composer.ts` の `ZFieldState`、App の `zField` state）。キャラごとに持たず、ここを変えると全味方の弾に反映される（操作を減らすため）。各弾は自分の術者位置を原点に同じ z を評価する（#52）。UI は「属性の高さ（全員共通）」と明示し、`FunctionPanel` と盤面ボトムバーの両方が同じ `zField`／`onZChange` を編集する。
 > **座標系（#52）**：z 場は**術者位置を原点**として評価する（軌道関数と座標系を合わせる）。`zfieldAt(traj,pos)` は `traj.z(pos.x−origin.x, pos.y−origin.y)`。例：`z=0.3·y` は術者の高さで中立、放射 `√(x²+y²)` は術者を中心とした同心の場になる。プレビュー（`activeZField`）も術者位置ぶんずらして描く。
 > **係数スライダー（#52）**：z 式中の数値リテラルも軌道と同じく自動検出してスライダー化する（`zParametricPatch`／`zFitParams`）。べき指数は除外（例 `√(x²+y²)` の 2 は固定）。
 

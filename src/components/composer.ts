@@ -9,7 +9,7 @@ import {
   buildTrajectory,
   type Preset,
 } from '../game/functions'
-import { findZPreset } from '../game/zfields'
+import { ZFIELD_PRESETS, findZPreset, defaultZCoeffs } from '../game/zfields'
 import {
   detectParams,
   detectCoeffs,
@@ -29,7 +29,10 @@ import { traverseObstacles } from '../game/turn'
 import { dist } from '../game/coords'
 import { FIELD } from '../data/constants'
 
-/** 関数パネルの状態（#4：攻防は分けず関数を撃つだけ。z 場は軌道と別入力・#30/#21） */
+/**
+ * 関数パネルの状態（#4：攻防は分けず関数を撃つだけ）。
+ * z 場は #57 で全員共通の別状態 ZFieldState に切り出したため、ここには含まない（軌道のみ）。
+ */
 export interface ComposerState {
   mode: 'rotate' | 'polar'
   presetId: string
@@ -46,26 +49,49 @@ export interface ComposerState {
   fitTemplate: string
   fitParams: DetectedParam[]
   fitValues: Record<string, number>
-  /** z 場（属性 z=f(x,y)）の状態（#30/#21） */
+}
+
+/**
+ * 属性 z 場 z=f(x,y) の状態（#30/#21/#52）。#57 で**3人の術者に共通**の単一状態にした
+ * （キャラごとに持たず、party 全体で1つ。操作を減らすため）。各弾は術者位置を原点に評価する（#52）。
+ */
+export interface ZFieldState {
   zPresetId: string
   zCoeffs: Record<string, number>
   zUseFree: boolean
   zFreeExpr: string
   zFreeError: string | null
-  /** z 場の自動検出係数（#52）：z 式中の数値もスライダー化する（軌道と同じ仕組み） */
+  /** z 式の自動検出係数（#52）：z 式中の数値もスライダー化する（軌道と同じ仕組み） */
   zFitTemplate: string
   zFitParams: DetectedParam[]
   zFitValues: Record<string, number>
 }
 
+/** 共通 z 場の初期状態を作る（#57）。先頭プリセットを係数化フローに乗せる。 */
+export function makeZField(): ZFieldState {
+  const preset = ZFIELD_PRESETS[0] // 一定（const）
+  const zCoeffs = defaultZCoeffs(preset)
+  const base: ZFieldState = {
+    zPresetId: preset.id,
+    zCoeffs,
+    zUseFree: false,
+    zFreeExpr: preset.toExpr(zCoeffs),
+    zFreeError: null,
+    zFitTemplate: '',
+    zFitParams: [],
+    zFitValues: {},
+  }
+  return { ...base, ...zParametricPatch(preset.toExpr(zCoeffs)) }
+}
+
 /** 状態から z 場（属性 z=f(x,y)）を組み立てる（#30）。組み立てられなければ中立(0)。 */
-export function buildZField(c: ComposerState): ZField {
-  if (c.zUseFree) {
-    const f = parseZExpression(c.zFreeExpr)
+export function buildZField(z: ZFieldState): ZField {
+  if (z.zUseFree) {
+    const f = parseZExpression(z.zFreeExpr)
     if (f) return f
   }
-  const preset = findZPreset(c.zPresetId)
-  if (preset) return preset.build(c.zCoeffs)
+  const preset = findZPreset(z.zPresetId)
+  if (preset) return preset.build(z.zCoeffs)
   return () => 0
 }
 
@@ -113,7 +139,7 @@ export function setCoeffPatch(c: ComposerState, key: string, value: number): Par
  * z 場の式を係数化（数値リテラル→スライダー）して自由入力 z 場へ入るパッチを作る（#52）。
  * 軌道と同じ仕組みを z 式（x,y の 2 変数）にも適用する。検出/評価不能なら zFreeError のみ返す。
  */
-export function zParametricPatch(expr: string): Partial<ComposerState> {
+export function zParametricPatch(expr: string): Partial<ZFieldState> {
   const d = detectCoeffs(expr)
   if (!d) return { zFreeError: '式が正しくありません' }
   const values = paramDefaults(d.params)
@@ -129,12 +155,12 @@ export function zParametricPatch(expr: string): Partial<ComposerState> {
   }
 }
 
-/** z 場の係数1つを更新し、z 自由入力式（zFreeExpr）を再生成するパッチを作る（#52）。 */
-export function setZCoeffPatch(c: ComposerState, key: string, value: number): Partial<ComposerState> {
-  const values = { ...c.zFitValues, [key]: value }
+/** z 場の係数1つを更新し、z 自由入力式（zFreeExpr）を再生成するパッチを作る（#52・共通 z=#57）。 */
+export function setZCoeffPatch(z: ZFieldState, key: string, value: number): Partial<ZFieldState> {
+  const values = { ...z.zFitValues, [key]: value }
   return {
     zFitValues: values,
-    zFreeExpr: renderWithParams(c.zFitTemplate, c.zFitParams, values),
+    zFreeExpr: renderWithParams(z.zFitTemplate, z.zFitParams, values),
     zUseFree: true,
     zFreeError: null,
   }
@@ -144,9 +170,16 @@ export function presetsFor(mode: 'rotate' | 'polar'): Preset[] {
   return mode === 'rotate' ? ROTATE_PRESETS : POLAR_PRESETS
 }
 
-/** 状態から軌道を組み立てる（origin=術者位置・z 場つき・#14/#30）。組み立てられなければ null。 */
-export function buildComposerTrajectory(c: ComposerState, origin?: Vec2): Trajectory | null {
-  const z = buildZField(c)
+/**
+ * 状態から軌道を組み立てる（origin=術者位置・z 場つき・#14/#30）。組み立てられなければ null。
+ * z 場は全員共通の zState から作る（#57）。各弾は origin を原点に z を評価する（#52）。
+ */
+export function buildComposerTrajectory(
+  c: ComposerState,
+  zState: ZFieldState,
+  origin?: Vec2,
+): Trajectory | null {
+  const z = buildZField(zState)
   if (c.mode === 'rotate') {
     if (c.useFree) {
       const g = parseExpression(c.freeExpr)

@@ -9,6 +9,7 @@ import {
 import { FIELD } from '../data/constants'
 import {
   type ComposerState,
+  type ZFieldState,
   type Preview,
   findPreset,
   presetsFor,
@@ -21,6 +22,9 @@ interface Props {
   allyName: string
   composer: ComposerState
   onChange: (next: Partial<ComposerState>) => void
+  /** 全員共通の属性 z 場（#57）と、その更新 */
+  zField: ZFieldState
+  onZChange: (next: Partial<ZFieldState>) => void
   preview: Preview
   onRecommend: () => void
   onOpenCodex: () => void
@@ -226,15 +230,16 @@ export default function FunctionPanel(props: Props) {
             </>
           )}
 
-          {/* 属性の z 場 z=f(x,y)（#30/#21）。編集中は常に場をプレビュー表示（#55） */}
+          {/* 属性の z 場 z=f(x,y)（#30/#21）。編集中は常に場をプレビュー（#55）。z は全員共通（#57） */}
           <div className="zfield-section">
-            <div className="section-title">属性の高さ z = f(x,y)（光⇔闇）</div>
+            <div className="section-title">属性の高さ z = f(x,y)（光⇔闇・<strong>全員共通</strong>）</div>
+            <div className="hint">この属性場は<strong>3人で共通</strong>。ここを変えると全員の弾に反映される（#57）。</div>
             {props.onAdjustZOnStage && (
               <button className="btn small show-mobile adjust-z-stage" onClick={props.onAdjustZOnStage}>
                 🎨 盤面で属性を調整（場を見ながら）
               </button>
             )}
-            <ZFieldControls composer={c} onChange={onChange} />
+            <ZFieldControls z={props.zField} onChange={props.onZChange} />
           </div>
 
           <div className="section-title">計算補助</div>

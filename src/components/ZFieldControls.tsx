@@ -1,18 +1,18 @@
 import { useEffect, useState } from 'react'
 import { ZFIELD_PRESETS, findZPreset, defaultZCoeffs } from '../game/zfields'
 import { FIELD } from '../data/constants'
-import { type ComposerState, zParametricPatch, setZCoeffPatch } from './composer'
+import { type ZFieldState, zParametricPatch, setZCoeffPatch } from './composer'
 
 interface Props {
-  composer: ComposerState
-  onChange: (next: Partial<ComposerState>) => void
+  z: ZFieldState
+  onChange: (next: Partial<ZFieldState>) => void
 }
 
 /**
  * 属性の z 場 z=f(x,y) の操作 UI（#54）。プリセット選択・自動係数スライダー・自由入力。
- * FunctionPanel（詳細設定）と、スマホの盤面ボトムバー（盤面で属性を調整）の両方で使い回す。
+ * z は全員共通（#57）。FunctionPanel（詳細設定）と、スマホの盤面ボトムバーの両方で使い回す。
  */
-export default function ZFieldControls({ composer: c, onChange }: Props) {
+export default function ZFieldControls({ z: c, onChange }: Props) {
   const [zFreeDraft, setZFreeDraft] = useState(c.zFreeExpr)
   useEffect(() => setZFreeDraft(c.zFreeExpr), [c.zFreeExpr])
   const zPreset = findZPreset(c.zPresetId)
