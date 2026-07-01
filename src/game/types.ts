@@ -13,6 +13,8 @@ export type Attribute = 'light' | 'dark' | 'neutral'
 export interface ZPoint {
   pos: Vec2
   z: number
+  /** その点でのリング速度（#60：結界の速度は平均でなく点ごと。迎撃・掃射・演出に使う） */
+  speed?: number
 }
 
 /** 発射方式：回転（y=g(x) をθ回転）／極座標（r=f(θ)） */

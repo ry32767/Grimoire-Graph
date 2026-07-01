@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildRing,
+  attachRingSpeeds,
   orbitSweep,
   ringInterception,
-  orbitBlockLoss,
   orbitWallBreak,
   ringEncloses,
   ringDominant,
@@ -32,8 +32,9 @@ describe('掃射（攻撃・#4/#12）', () => {
     { id: 'on', pos: { x: 6, y: 0 }, radius: 1, element: 'dark' }, // リング上
     { id: 'off', pos: { x: 15, y: 0 }, radius: 1, element: 'dark' }, // 遠い
   ]
-  it('リングに触れた敵だけにダメージ（反対極は×1.5）', () => {
-    const hits = orbitSweep(buildRing(circle), 5, targets)
+  it('リングに触れた敵だけにダメージ（反対極は×1.5・触れた点の速度で・#60）', () => {
+    // 対象 on は θ=0 のリング始点(6,0)＝速度は初速5のまま。掃射は「触れた点の速度」を使う
+    const hits = orbitSweep(attachRingSpeeds(buildRing(circle), 5), targets)
     const ids = hits.map((h) => h.id)
     expect(ids).toContain('on')
     expect(ids).not.toContain('off')
@@ -62,19 +63,42 @@ describe('迎撃（防御・#4）', () => {
   })
 })
 
-describe('相殺の透過/削り（#34）', () => {
-  it('同極リングは敵弾を透過する（削り 0）', () => {
-    // 光リング(z=+zPeak) × 光弾 → 同極 → 透過
-    expect(orbitBlockLoss(FIELD.zPeak, 'light', 8)).toBe(0)
-    // 中立弾も透過
-    expect(orbitBlockLoss(FIELD.zPeak, 'neutral', 8)).toBe(0)
+describe('リング速度は平均でなく点ごと（#60）', () => {
+  it('attachRingSpeeds：始点は初速、強属性(|z|>zRef)で先の点ほど失速する', () => {
+    const ring = attachRingSpeeds(buildRing(circle), 10) // z=zPeak(|z|>zRef)→周回で減速
+    expect(ring[0].speed).toBeCloseTo(10, 6) // 始点は初速
+    const mid = ring[Math.floor(ring.length / 2)]
+    expect(mid.speed ?? 0).toBeLessThan(10) // 進むほど失速
+    const speeds = ring.map((p) => p.speed ?? 0)
+    expect(Math.max(...speeds)).toBeGreaterThan(Math.min(...speeds)) // 点ごとに速度が違う
   })
-  it('反対極リングは威力(強度×速度)に応じて削る', () => {
-    // 光リング × 闇弾 → 相殺。速度が速いほど大きく削る
-    const slow = orbitBlockLoss(FIELD.zPeak, 'dark', 4)
-    const fast = orbitBlockLoss(FIELD.zPeak, 'dark', 10)
-    expect(slow).toBeGreaterThan(0)
-    expect(fast).toBeGreaterThan(slow)
+
+  it('ringInterception は横断点のリング速度（実在点の値）を返す＝平均ではない', () => {
+    const ring = attachRingSpeeds(buildRing(circle), 10)
+    const enemyPath = [
+      { x: 6, y: -3 },
+      { x: 6, y: 3 },
+    ]
+    const inter = ringInterception(ring, enemyPath)
+    expect(inter.crossed).toBe(true)
+    expect(inter.ringSpeed).toBeDefined()
+    // 返る速度はリング上の実在点の速度（＝点ごと。平均を返しているのではない）
+    const speeds = ring.map((p) => p.speed ?? 0)
+    expect(speeds).toContain(inter.ringSpeed)
+  })
+
+  it('掃射ダメージは触れた点の速度を使う（減速した点は威力が下がる）', () => {
+    // 強属性で失速する円。始点(6,0)＝速い点と、失速した（0 でない）点で威力が変わる
+    const ring = attachRingSpeeds(buildRing(circle), 10)
+    const fastPt = ring[0].pos // 初速のまま速い
+    // 速度が正で最も遅い点（0 まで失速した点は掃射で当たらないため除外）
+    const positive = ring.map((p, i) => ({ i, s: p.speed ?? 0 })).filter((x) => x.s > 0)
+    const slow = positive.reduce((m, x) => (x.s < m.s ? x : m), positive[0])
+    const slowPt = ring[slow.i].pos
+    expect(slow.s).toBeLessThan(ring[0].speed ?? 0) // 確かに始点より遅い点
+    const dmgFast = orbitSweep(ring, [{ id: 'f', pos: fastPt, radius: 0.5, element: 'dark' }])
+    const dmgSlow = orbitSweep(ring, [{ id: 's', pos: slowPt, radius: 0.5, element: 'dark' }])
+    expect(dmgFast[0].damage).toBeGreaterThan(dmgSlow[0].damage) // 速い点ほど威力大
   })
 })
 
