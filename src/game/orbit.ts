@@ -74,6 +74,7 @@ export function ringDominant(ring: RingPoint[]): { attr: Attribute; strength: nu
 /**
  * リングの平均属性（#39）：軌道上の符号付き強度（光=+, 闇=−）の平均で属性を決める。
  * 効果（回復・隠蔽）は強度の大小を見ない＝属性（符号）だけが意味を持つ。
+ * 中立の判定は attributeOf と同じ ε（FIELD.epsilon）を平均値に適用する（意図的な共有しきい値）。
  */
 export function ringAverageAttr(ring: RingPoint[]): Attribute {
   if (ring.length === 0) return 'neutral'

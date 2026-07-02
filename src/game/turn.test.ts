@@ -507,6 +507,64 @@ describe('敵 guardian の結界効果（#61）', () => {
     expect(e.hp).toBe(50) // 闇は回復しない
     expect(res.orbits.some((o) => o.owner === 'enemy' && o.ownerId === 'g')).toBe(true) // 闇結界も持続（視認阻害用）
   })
+
+  it('敵結界は張り直さなくても次ターンへ持続し、毎ターン内側の敵を回復する（#61）', () => {
+    const g: Enemy = { ...enemy('g', { x: 0, y: 12 }, 'light', 200, 6), role: 'guardian', hp: 50 }
+    const t1 = resolveTurn({
+      allies: [ally('a', { x: 0, y: -12 }, 'dark')],
+      casts: [],
+      enemies: [g],
+      castingEnemyIds: ['g'],
+      obstacles: [],
+      mechanics: withFire,
+    })
+    const hp1 = t1.enemies.find((e) => e.id === 'g')!.hp
+    expect(hp1).toBeGreaterThan(50)
+    // 次ターン：guardian は発射しない（ひるみ等）が、持続結界が残って回復し続ける
+    const t2 = resolveTurn({
+      allies: t1.allies,
+      casts: [],
+      enemies: t1.enemies,
+      castingEnemyIds: [],
+      obstacles: [],
+      mechanics: withFire,
+      activeOrbits: t1.orbits,
+    })
+    expect(t2.orbits.some((o) => o.owner === 'enemy' && o.ownerId === 'g')).toBe(true) // 破壊されるまで残る
+    expect(t2.enemies.find((e) => e.id === 'g')!.hp).toBeGreaterThan(hp1) // 持続結界でも回復
+  })
+
+  it('持続中の敵結界は反対極の味方弾で相殺・破壊できる（#59/#61）', () => {
+    const g: Enemy = { ...enemy('g', { x: 12, y: 0 }, 'light', 200, 6), role: 'guardian' }
+    const t1 = resolveTurn({
+      allies: [ally('a', { x: -12, y: 0 }, 'dark')],
+      casts: [],
+      enemies: [g],
+      castingEnemyIds: ['g'],
+      obstacles: [],
+      mechanics: withFire,
+    })
+    expect(t1.orbits.some((o) => o.owner === 'enemy')).toBe(true)
+    // 次ターン：闇（反対極）の強い弾を結界へ撃ち込む → 相互相殺で結界が減速 or 破壊される
+    const darkShot: Trajectory = {
+      mode: 'rotate',
+      g: (x) => x,
+      angle: -Math.PI / 4,
+      origin: { x: -12, y: 0 },
+      z: zDarkMid,
+    }
+    const t2 = resolveTurn({
+      allies: t1.allies,
+      casts: [cast('a', darkShot, 14)],
+      enemies: t1.enemies,
+      castingEnemyIds: [],
+      obstacles: [],
+      mechanics: withFire,
+      activeOrbits: t1.orbits,
+    })
+    // 相互相殺の衝突が発生し、弾側にも減速が及ぶ（クラッシュ点が記録される）
+    expect(t2.clashes.length).toBeGreaterThan(0)
+  })
 })
 
 describe('敵弾が味方へ命中（#15）', () => {

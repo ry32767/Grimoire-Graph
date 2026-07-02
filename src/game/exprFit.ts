@@ -184,7 +184,9 @@ function solveLinear(A: number[][], b: number[]): number[] | null {
       for (let k = col; k <= n; k++) m[r][k] -= f * m[col][k]
     }
   }
-  return m.map((row, i) => row[n] / row[i])
+  const x = m.map((row, i) => row[n] / row[i])
+  // 消去の丸めで非有限成分が出た場合は解なし扱い（呼び出し側が lambda を上げて再試行する）
+  return x.every((v) => Number.isFinite(v)) ? x : null
 }
 
 function costOf(spec: ParamSpec, keys: string[], c: number[], frame: { lx: number; ly: number }[]): number {
