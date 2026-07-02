@@ -53,7 +53,7 @@ import {
   type RingPoint,
   type OrbitTarget,
 } from './orbit'
-import { planEnemyShot, enemyFlight } from './enemyAI'
+import { planEnemyShots, enemyFlight } from './enemyAI'
 import { COMBAT, FIELD, GAME } from '../data/constants'
 
 /** 敵弾の描画・解決用データ */
@@ -365,39 +365,41 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
 
   // === 1. 敵弾を構築（敵AIが得意関数で最大ダメージへ最適化・#2/#17。z は castZ 一定） ===
   // guardian の閉軌道は飛ばさず、味方弾を迎撃する防御リングとして分離する（#28）。
+  // 多重詠唱（#44）：castCount>1 の敵は複数の弾を独立に計画してまとめて同時発射する。
+  // 発射可否（hp>0・ひるみ・頻度・断末魔の特例）は castingEnemyIds を作る側（battle.prepareTurn）が決める。
   const enemyShots: EnemyShot[] = []
   const enemyRings: { enemyId: string; ring: RingPoint[]; ringSpeed: number; broken: boolean }[] = []
   for (const e of enemies) {
-    if (!input.castingEnemyIds.includes(e.id) || e.hp <= 0) continue
-    const plan = planEnemyShot(e, allies, obstacles)
-    if (!plan) continue
-    if (classifyTrajectory(plan.trajectory) === 'orbit') {
-      // 敵の周回結界も壁/失速で丸ごと霧散する（#34/#31：敵が使った場合も同様）。形状は霧散演出のため残す
-      const ring = buildRing(plan.trajectory)
-      const ringFlight = simulateFlight(plan.trajectory, e.castInitialSpeed)
-      const broken =
-        (mechanics.obstacles && orbitWallBreak(ring, obstacles) !== null) ||
-        ringFlight.end === 'vanished'
-      enemyRings.push({ enemyId: e.id, ring, ringSpeed: e.castInitialSpeed, broken })
-      continue
+    if (!input.castingEnemyIds.includes(e.id)) continue
+    for (const plan of planEnemyShots(e, allies, obstacles)) {
+      if (classifyTrajectory(plan.trajectory) === 'orbit') {
+        // 敵の周回結界も壁/失速で丸ごと霧散する（#34/#31：敵が使った場合も同様）。形状は霧散演出のため残す
+        const ring = buildRing(plan.trajectory)
+        const ringFlight = simulateFlight(plan.trajectory, e.castInitialSpeed)
+        const broken =
+          (mechanics.obstacles && orbitWallBreak(ring, obstacles) !== null) ||
+          ringFlight.end === 'vanished'
+        enemyRings.push({ enemyId: e.id, ring, ringSpeed: e.castInitialSpeed, broken })
+        continue
+      }
+      const { path, flight } = enemyFlight(plan.trajectory, e.castInitialSpeed)
+      enemyShots.push({
+        enemyId: e.id,
+        targetAllyId: plan.targetId,
+        path,
+        flight,
+        castZ: e.castZ,
+        traj: plan.trajectory,
+        blocked: false,
+        reachedTarget: false,
+        damage: 0,
+        carves: [],
+        hitAllyId: null,
+        hitArcLen: 0,
+        misfirePos: plan.misfirePos ?? null,
+        misfired: false,
+      })
     }
-    const { path, flight } = enemyFlight(plan.trajectory, e.castInitialSpeed)
-    enemyShots.push({
-      enemyId: e.id,
-      targetAllyId: plan.targetId,
-      path,
-      flight,
-      castZ: e.castZ,
-      traj: plan.trajectory,
-      blocked: false,
-      reachedTarget: false,
-      damage: 0,
-      carves: [],
-      hitAllyId: null,
-      hitArcLen: 0,
-      misfirePos: plan.misfirePos ?? null,
-      misfired: false,
-    })
   }
 
   // === 2. 味方発射を分類・構築 ===

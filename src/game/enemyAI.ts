@@ -1,7 +1,7 @@
 // 敵AI（#2・#17）：敵ごとの「得意関数（系統）」で攻撃を最適化する。純粋関数。
 // 各敵は family（直線/弧/波/渦）を持ち、AI は狙い角と形状係数の候補から、
 // 狙う味方へ最大ダメージを与える軌道を選ぶ（軌跡型は陣営有利＝強属性で展開）。
-import type { Ally, Enemy, EnemyFamily, Flight, Obstacle, Trajectory, Vec2, ZField } from './types'
+import type { Ally, Enemy, EnemyFamily, EnemyRole, Flight, Obstacle, Trajectory, Vec2, ZField } from './types'
 import { sampleTrajectory, validPrefix, pathTermination, dist } from './coords'
 import { simulatePath } from './physics'
 import { firstHit } from './collision'
@@ -339,6 +339,43 @@ export function planRuptorShot(
     expectedDamage: 0,
     misfirePos: chosen.ruptured ? chosen.end : null,
   }
+}
+
+/**
+ * ボスの断末魔の変異体（#45・06b §6 第7面）：HP0 直後の「最後の一手」＝暴発型3連・固定。
+ * 物理・干渉ルールは通常の崩し手と完全に同一（特例なし）。
+ */
+export function finaleVariant(e: Enemy): Enemy {
+  return { ...e, role: 'ruptor', castCount: 3, patternPool: undefined, ruptorTarget: 'allies' }
+}
+
+/**
+ * 多重詠唱（#44・05b §5.5）：castCount 本の弾を「独立に」計画して同時発射する。
+ * 1つの弾に複数のAIロジックは混ぜない。弾ごとに patternPool からパターン（role）を順繰りに選び、
+ * 既存の単一パターン計画関数を1回ずつ呼ぶだけ。狙いは基本「まだ狙っていない味方」へ1発ずつ
+ * 分散し、全員に行き渡ったら通常の優先度（低HP者へ集中）に戻る。
+ */
+export function planEnemyShots(enemy: Enemy, allies: Ally[], obstacles: Obstacle[] = []): EnemyPlan[] {
+  const count = Math.max(1, enemy.castCount ?? 1)
+  if (count === 1) {
+    const p = planEnemyShot(enemy, allies, obstacles)
+    return p ? [p] : []
+  }
+  const pool: EnemyRole[] =
+    enemy.patternPool && enemy.patternPool.length > 0 ? enemy.patternPool : [enemy.role ?? 'attacker']
+  const alive = allies.filter((a) => a.hp > 0)
+  const taken = new Set<string>()
+  const plans: EnemyPlan[] = []
+  for (let i = 0; i < count; i++) {
+    const variant: Enemy = { ...enemy, role: pool[i % pool.length], castCount: 1 }
+    const remaining = alive.filter((a) => !taken.has(a.id))
+    const pickFrom = remaining.length > 0 ? remaining : alive
+    const plan = planEnemyShot(variant, pickFrom, obstacles)
+    if (!plan) continue
+    if (plan.targetId) taken.add(plan.targetId)
+    plans.push(plan)
+  }
+  return plans
 }
 
 /**

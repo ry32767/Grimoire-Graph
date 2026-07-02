@@ -141,6 +141,22 @@ export interface Enemy {
    * （第4面の暴発デモ個体用：岩壁を吹き飛ばして見せる）。未指定は 'allies'。
    */
   ruptorTarget?: 'allies' | 'obstacles'
+  /**
+   * 多重詠唱（#44・05b §5.5）：このターンに独立に計画して同時発射する弾数。未指定は 1。
+   * 各弾は patternPool からパターンを選び、既存の単一パターン計画関数を1回ずつ呼ぶだけ。
+   */
+  castCount?: number
+  /** 多重詠唱のパターン許可プール（#44）。弾ごとに順繰りに使う。未指定は自身の role */
+  patternPool?: EnemyRole[]
+  /**
+   * 発射頻度（06b §2）：この間隔（ターン）ごとに発射する。未指定は 1（毎ターン）。
+   * 暴発型は 2（低頻度）が既定の使い方。fireOffset で個体ごとにずらす。
+   */
+  fireEvery?: number
+  /** 発射頻度の位相（06b：複数の崩し手を少しずつずらして撃たせる）。未指定は 0 */
+  fireOffset?: number
+  /** ボス個体か（#45：HPフェーズ・断末魔の対象） */
+  boss?: boolean
 }
 
 /** 円（障害物の基本形・削り穴の両方に使う）。中心 (x,y)・半径 r。 */
@@ -219,6 +235,21 @@ export interface Mechanics {
   enemyFire: boolean
 }
 
+/**
+ * ボス戦の HP フェーズ（#45・06b §6 第7面）：HP 割合がしきいを下回ると床が崩れ、
+ * アリーナ（障害物）が入れ替わり、同時発射数が変わる。
+ */
+export interface BossPhase {
+  /** この HP 割合以下で移行（例 0.66） */
+  hpBelow: number
+  /** 移行後のボスの同時発射数（多重詠唱・#44） */
+  castCount: number
+  /** 崩落後のアリーナ（障害物を丸ごと差し替える） */
+  obstacles: Obstacle[]
+  /** 眷属を間引く（最下層＝ボス単独・#45） */
+  cullMinions?: boolean
+}
+
 /** ステージ定義（§5・機能14）。データは src/data/ に分離 */
 export interface Stage {
   id: string
@@ -232,6 +263,8 @@ export interface Stage {
   mechanics: Mechanics
   /** ボス戦か（#6） */
   boss?: boolean
+  /** ボスの HP フェーズ（#45：床崩落・同時発射数の変化）。hpBelow 降順で定義する */
+  bossPhases?: BossPhase[]
 }
 
 /**
@@ -306,4 +339,13 @@ export interface BattleState {
   outcome: 'ongoing' | 'cleared' | 'gameover'
   /** 持続中の周回結界（#39：破壊されるまでターンをまたいで残る）。未指定は空。 */
   orbits?: ActiveOrbit[]
+  /** ボスの HP フェーズ定義（#45：createBattleState でステージから複製） */
+  bossPhases?: BossPhase[]
+  /** 現在のフェーズ（0=最初のアリーナ。しきいを跨ぐと +1 して床が崩れる・#45） */
+  bossPhase?: number
+  /**
+   * 断末魔（#45）：ボス HP0 の直後に一度だけ、暴発型3連の「最後の一手」を挟む。
+   * pending=次ターンで発動 → cast=発動中 → done=解決済み（勝敗判定へ進める）。
+   */
+  finale?: 'pending' | 'cast' | 'done'
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Ally, AllyCast, BattleState, Vec2 } from './game/types'
 import { createBattleState, prepareTurn, resolveAllyCasts } from './game/battle'
-import { planEnemyShot, enemyFlight } from './game/enemyAI'
+import { planEnemyShots, enemyFlight } from './game/enemyAI'
 import { zfieldAt } from './game/attribute'
 import { recommendCast } from './game/recommend'
 import { ROTATE_PRESETS, defaultCoeffs } from './game/functions'
@@ -16,6 +16,8 @@ import {
   GAMEOVER_COLLAPSE,
   RUPTOR_DEMO,
   COLLAPSE_FIRST,
+  COLLAPSE_PHASE,
+  COLLAPSE_FINAL,
   CODEX_MISFIRE_HINT,
   INSCRIPTIONS,
   SCENERIES,
@@ -170,18 +172,19 @@ export default function App() {
     [battle],
   )
 
-  // 敵の先出し術式を公開（#17：得意関数の形を見せる）。崩し手は暴発予告点も添える（#42）
+  // 敵の先出し術式を公開（#17：得意関数の形を見せる）。崩し手は暴発予告点も添え（#42）、
+  // 多重詠唱（#44）は弾ごとにゴーストを並べる。断末魔のボス（HP0）も castingIds に入っていれば晒す（#45）
   const ghostPlans = useMemo(() => {
     if (!battle) return [] as { path: Vec2[]; misfire: Vec2 | null }[]
     return castingIds
       .map((id) => battle.enemies.find((e) => e.id === id))
-      .filter((e): e is NonNullable<typeof e> => !!e && e.hp > 0)
-      .map((e) => {
-        const plan = planEnemyShot(e, battle.allies, battle.obstacles)
-        return plan
-          ? { path: enemyFlight(plan.trajectory, e.castInitialSpeed).path, misfire: plan.misfirePos ?? null }
-          : { path: [] as Vec2[], misfire: null }
-      })
+      .filter((e): e is NonNullable<typeof e> => !!e)
+      .flatMap((e) =>
+        planEnemyShots(e, battle.allies, battle.obstacles).map((plan) => ({
+          path: enemyFlight(plan.trajectory, e.castInitialSpeed).path,
+          misfire: plan.misfirePos ?? null,
+        })),
+      )
       .filter((g) => g.path.length > 0)
   }, [battle, castingIds])
   const ghostPaths = useMemo(() => ghostPlans.map((g) => g.path), [ghostPlans])
@@ -378,6 +381,7 @@ export default function App() {
     const ev = pendingEventsRef.current
     pendingEventsRef.current = null
     let count = instability
+    let overlay: { title: string; lines: string[] } | null = null
     if (ev) {
       count = instability + ev.gained
       setInstability(count)
@@ -394,12 +398,20 @@ export default function App() {
       // 初回崩壊（閾値到達 or 保証面・一度きり）：グリモワールの介入で救済し、以後メーターを開示
       if (shouldFirstCollapse(count, after.stageIndex + 1, after.turn, collapseSeen)) {
         setCollapseSeen(true)
-        setStoryOverlay({ title: '崩壊 ― 頁の気配', lines: COLLAPSE_FIRST })
+        overlay = { title: '崩壊 ― 頁の気配', lines: COLLAPSE_FIRST }
       } else if (ev.enemyMisfired && !demoSeen) {
         // 敵の暴発を初めて見た（RUPTOR_DEMO・図鑑補足つき・一度きり）
-        setStoryOverlay({ title: '暴発 ― 式の破れ', lines: [...RUPTOR_DEMO, CODEX_MISFIRE_HINT] })
+        overlay = { title: '暴発 ― 式の破れ', lines: [...RUPTOR_DEMO, CODEX_MISFIRE_HINT] }
       }
     }
+    // ボス戦の演出（#45）：断末魔の予告 ＞ 床崩落（初回崩壊が同時なら初回崩壊を優先）
+    if (!overlay && after.finale === 'pending' && battle?.finale === undefined) {
+      overlay = { title: '断末魔 ― 三つの綻び', lines: COLLAPSE_FINAL }
+    }
+    if (!overlay && (after.bossPhase ?? 0) > (battle?.bossPhase ?? 0)) {
+      overlay = { title: '崩落 ― 下の階層へ', lines: COLLAPSE_PHASE }
+    }
+    if (overlay) setStoryOverlay(overlay)
 
     if (after.outcome === 'cleared') {
       // 暴発ゼロでクリアしたら膜がわずかに落ち着く（04b §4b.1・任意の緩和）
