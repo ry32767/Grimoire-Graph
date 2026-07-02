@@ -32,6 +32,27 @@ export function toMath(px: Vec2, vp: Viewport): Vec2 {
   return { x: (px.x - vp.width / 2) / s, y: (vp.height / 2 - px.y) / s }
 }
 
+/**
+ * 画面に実際に映る数学座標の範囲（四隅を逆変換）。
+ * グリッドや z 場の描画範囲をこの範囲から決めることで、ステージのスケール
+ * （unitsRadius）やアスペクト比を変えても方眼が画面全体を覆い、崩れない（#53）。
+ */
+export function visibleBounds(vp: Viewport): {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+} {
+  const tl = toMath({ x: 0, y: 0 }, vp)
+  const br = toMath({ x: vp.width, y: vp.height }, vp)
+  return {
+    minX: Math.min(tl.x, br.x),
+    maxX: Math.max(tl.x, br.x),
+    minY: Math.min(tl.y, br.y),
+    maxY: Math.max(tl.y, br.y),
+  }
+}
+
 // ===== 幾何ユーティリティ =====
 
 /** 原点まわりに angle[rad] 回転 */
@@ -66,15 +87,16 @@ export interface Sample {
  * または隣り合うサンプルで符号が反転しつつ両側の |z| が大きい点（=極を跨いだ＝1/x 型の発散）を
  * 無効点としてマークする。以後 validPrefix / pathTermination が暴発点として扱う。
  */
-function applyZValidity(samples: Sample[], zf?: ZField): void {
+function applyZValidity(samples: Sample[], zf?: ZField, origin?: Vec2): void {
   if (!zf) return
+  const o = origin ?? { x: 0, y: 0 } // z 場は術者位置を原点に評価する（#52）
   let prevZ: number | null = null
   for (const s of samples) {
     if (!s.valid) {
       prevZ = null
       continue
     }
-    const z = zf(s.pos.x, s.pos.y)
+    const z = zf(s.pos.x - o.x, s.pos.y - o.y)
     const finite = Number.isFinite(z)
     const pole =
       finite &&
@@ -117,8 +139,9 @@ export function sampleTrajectory(traj: Trajectory): Sample[] {
       out.push({ param: t, pos, valid, inField: valid && dist(pos) <= FIELD.rField })
     }
   }
-  // z 場のエラー点（暴発）を反映：軌道は有効でも z がエラーになる点で打ち切る（#30）
-  applyZValidity(out, traj.z)
+  // z 場のエラー点（暴発）を反映：軌道は有効でも z がエラーになる点で打ち切る（#30）。
+  // z 場は術者位置 origin を原点に評価する（#52）
+  applyZValidity(out, traj.z, traj.origin)
   return out
 }
 

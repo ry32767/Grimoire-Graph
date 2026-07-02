@@ -10,6 +10,16 @@ import {
   type Preset,
 } from '../game/functions'
 import { findZPreset } from '../game/zfields'
+import {
+  detectParams,
+  detectCoeffs,
+  initialValues,
+  renderExpr,
+  renderWithParams,
+  paramDefaults,
+  type DetectedParam,
+  type ParamSpec,
+} from '../game/exprFit'
 import { simulateFlight } from '../game/physics'
 import { detectMisfire } from '../game/misfire'
 import { zfieldAt, attributeOf, strengthOf } from '../game/attribute'
@@ -29,12 +39,23 @@ export interface ComposerState {
   useFree: boolean
   freeExpr: string
   freeError: string | null
+  /**
+   * 自由入力式から自動検出した係数（#46）。射出魔法（回転 y=g(x)）で式中の数値を
+   * スライダー化し、通過点フィットの対象にする。fitTemplate は数値を p0,p1,… に置換した式。
+   */
+  fitTemplate: string
+  fitParams: DetectedParam[]
+  fitValues: Record<string, number>
   /** z 場（属性 z=f(x,y)）の状態（#30/#21） */
   zPresetId: string
   zCoeffs: Record<string, number>
   zUseFree: boolean
   zFreeExpr: string
   zFreeError: string | null
+  /** z 場の自動検出係数（#52）：z 式中の数値もスライダー化する（軌道と同じ仕組み） */
+  zFitTemplate: string
+  zFitParams: DetectedParam[]
+  zFitValues: Record<string, number>
 }
 
 /** 状態から z 場（属性 z=f(x,y)）を組み立てる（#30）。組み立てられなければ中立(0)。 */
@@ -50,6 +71,73 @@ export function buildZField(c: ComposerState): ZField {
 
 export function findPreset(id: string): Preset | undefined {
   return ALL_PRESETS.find((p) => p.id === id)
+}
+
+/** 係数化フィールドを空にするパッチ（極座標など、係数スライダーを使わない時）。 */
+export const NO_FIT: Pick<ComposerState, 'fitTemplate' | 'fitParams' | 'fitValues'> = {
+  fitTemplate: '',
+  fitParams: [],
+  fitValues: {},
+}
+
+/** 現在の係数化状態から ParamSpec を組み立てる。 */
+export function fitSpecOf(c: ComposerState): ParamSpec {
+  return { template: c.fitTemplate, params: c.fitParams, varName: c.mode === 'polar' ? 't' : 'x' }
+}
+
+/**
+ * 式を係数化（数値リテラル→スライダー）して自由入力モードへ入るパッチを作る（#46）。
+ * 検出に失敗したら freeError のみ返す（直前の状態を維持）。
+ */
+export function parametricPatch(expr: string, varName: 'x' | 't'): Partial<ComposerState> {
+  const spec = detectParams(expr, varName)
+  if (!spec) return { freeError: '式が正しくありません' }
+  const values = initialValues(spec)
+  return {
+    useFree: true,
+    freeError: null,
+    freeExpr: renderExpr(spec, values),
+    fitTemplate: spec.template,
+    fitParams: spec.params,
+    fitValues: values,
+  }
+}
+
+/** 係数1つの値を更新し、自由入力式（freeExpr）を再生成するパッチを作る（#46）。 */
+export function setCoeffPatch(c: ComposerState, key: string, value: number): Partial<ComposerState> {
+  const values = { ...c.fitValues, [key]: value }
+  return { fitValues: values, freeExpr: renderExpr(fitSpecOf(c), values), useFree: true, freeError: null }
+}
+
+/**
+ * z 場の式を係数化（数値リテラル→スライダー）して自由入力 z 場へ入るパッチを作る（#52）。
+ * 軌道と同じ仕組みを z 式（x,y の 2 変数）にも適用する。検出/評価不能なら zFreeError のみ返す。
+ */
+export function zParametricPatch(expr: string): Partial<ComposerState> {
+  const d = detectCoeffs(expr)
+  if (!d) return { zFreeError: '式が正しくありません' }
+  const values = paramDefaults(d.params)
+  const rendered = renderWithParams(d.template, d.params, values)
+  if (!parseZExpression(rendered)) return { zFreeError: '式が正しくありません' }
+  return {
+    zUseFree: true,
+    zFreeError: null,
+    zFreeExpr: rendered,
+    zFitTemplate: d.template,
+    zFitParams: d.params,
+    zFitValues: values,
+  }
+}
+
+/** z 場の係数1つを更新し、z 自由入力式（zFreeExpr）を再生成するパッチを作る（#52）。 */
+export function setZCoeffPatch(c: ComposerState, key: string, value: number): Partial<ComposerState> {
+  const values = { ...c.zFitValues, [key]: value }
+  return {
+    zFitValues: values,
+    zFreeExpr: renderWithParams(c.zFitTemplate, c.zFitParams, values),
+    zUseFree: true,
+    zFreeError: null,
+  }
 }
 
 export function presetsFor(mode: 'rotate' | 'polar'): Preset[] {

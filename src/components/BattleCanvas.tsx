@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import type { Ally, CarveBurst, DamagePopup, Disc, Enemy, Obstacle, Vec2, ZPoint } from '../game/types'
 import { FIELD } from '../data/constants'
-import { toScreen, type Viewport } from '../game/coords'
+import { toScreen, toMath, type Viewport } from '../game/coords'
 import {
   drawScene,
   drawBullet,
@@ -16,6 +16,7 @@ import {
   drawOrbitDissipation,
   drawBulletDissipation,
   drawConcealVeil,
+  drawEnemyConceal,
   strokeZPath,
   powerSizeFrac,
   type SceneParams,
@@ -62,8 +63,8 @@ export interface AnimBullet {
   vanished?: boolean
 }
 
-/** 削る瞬間のパーティクルが残る弧長の窓（この距離だけ弾が進む間 破片が舞う） */
-const BURST_ARC = 9
+/** 壁を削った破片が散って消えるまでの時間（ms・#45）。弾が壁で止まっても必ずこの時間で消える */
+const CARVE_BURST_MS = 480
 
 /** 暴発の大爆発を見せる余韻（弾の到達後にこの時間だけ爆発を展開・#9/#29） */
 const MISFIRE_TAIL_MS = 1000
@@ -119,6 +120,8 @@ const POPUP_MS = 950
 export interface StandingOrbit {
   ring: ZPoint[]
   speed: number
+  /** 所有者（#61）。敵の闇結界は作成フェーズで視認阻害を強める（z場/予測経路を隠す）。 */
+  owner?: 'player' | 'enemy'
 }
 
 interface Props {
@@ -136,14 +139,24 @@ interface Props {
   anomaly?: number
   /** 暴発半径のブレ帯（04b §4b.3）。プレビューの✕の周りにぼやけた二重リングを描く */
   misfireBand?: { min: number; max: number }
-  /** 編集中の z 場（#37）。showZField の間だけ薄い場として表示する */
+  /** 編集中の z 場（#37）。showZField が真の間（作成フェーズは常時・#55）薄い場として表示する */
   zField?: (x: number, y: number) => number
-  /** z 場をいじっている間だけ true（#37） */
+  /** z 場を薄く表示するか（#37）。作成フェーズ中は常に true（#55） */
   showZField?: boolean
   /** 持続中の周回結界（#39）。作成フェーズで常時描画＋闇は視認性低下の幕をかける */
   standingOrbits?: StandingOrbit[]
   animation?: ResolveAnimation | null
   onAnimationDone?: () => void
+  /** 通過点フィットで選んだ点（#46）。作成フェーズで✛として表示する */
+  fitPoints?: Vec2[]
+  /** フィールドをクリックした時の数学座標を返す（#46：点ピック中だけ渡す） */
+  onFieldClick?: (mathPos: Vec2) => void
+  /** フィールドをクリック／ドラッグして発射方向を決める（#47：点ピック中でない時だけ渡す） */
+  onAim?: (mathPos: Vec2) => void
+  /** 発射方向インジケータ用の角度（#47・回転のみ）。active ally から伸ばす矢印を描く */
+  aimAngle?: number
+  /** 通過点ピック中か（#49）。true の間はドラッグでルーペを出し、離した位置を点にする */
+  pickMode?: boolean
 }
 
 const MS_PER_GAMESEC = 360
@@ -187,6 +200,33 @@ function posAtTime(
   }
 }
 
+/**
+ * リング各点までの累積「通過時間」(Σ ds/speed) と総時間（#60）。
+ * 速度が速い区間ほど通過時間が短い＝粒がそこを素早く抜ける（点ごとの速度を演出に反映）。
+ * 速度が未付与/一定なら従来どおり等速で回る。
+ */
+function ringTimeline(ring: ZPoint[]): { cum: number[]; total: number } {
+  const cum = [0]
+  for (let i = 1; i < ring.length; i++) {
+    const ds = Math.hypot(ring[i].pos.x - ring[i - 1].pos.x, ring[i].pos.y - ring[i - 1].pos.y)
+    const v = Math.max(0.2, ((ring[i].speed ?? 0) + (ring[i - 1].speed ?? 0)) / 2)
+    cum.push(cum[i - 1] + ds / v)
+  }
+  return { cum, total: cum[cum.length - 1] || 1 }
+}
+
+/** phase∈[0,1) を累積時間で index へ写す（速い区間は素早く通過・#60）。 */
+function phaseToIndex(tl: { cum: number[]; total: number }, phase: number): number {
+  const target = (((phase % 1) + 1) % 1) * tl.total
+  for (let i = 1; i < tl.cum.length; i++) if (tl.cum[i] >= target) return i - 1
+  return tl.cum.length - 1
+}
+
+/** 粒の大きさに使う速度：その点の速度（#60）。無ければリング代表速度にフォールバック。 */
+function ptSpeed(pt: ZPoint, fallback: number): number {
+  return pt.speed ?? fallback
+}
+
 /** 持続中の周回（#39）：薄いリング＋ゆっくり周回する粒で常時表示する。 */
 function drawStandingOrbit(ctx: CanvasRenderingContext2D, o: StandingOrbit, trailPhase: number): void {
   const ring = o.ring
@@ -196,20 +236,23 @@ function drawStandingOrbit(ctx: CanvasRenderingContext2D, o: StandingOrbit, trai
   ctx.globalAlpha = 0.26
   strokeZPath(ctx, ring, VP)
   ctx.restore()
+  const tl = ringTimeline(ring) // #60：点ごとの速度で粒の進みを変える
   const N = 16
   for (let n = 0; n < N; n++) {
-    const frac = (n / N + trailPhase * 0.03) % 1
-    let idx = Math.floor(frac * (len - 1))
-    if (!Number.isFinite(idx)) idx = 0
-    idx = Math.max(0, Math.min(len - 1, idx))
+    const idx = phaseToIndex(tl, n / N + trailPhase * 0.03)
     const pt = ring[idx]
     if (!pt) continue
-    drawParticle(ctx, pt.pos, zColor(pt.z), VP, trailPhase * 2 + n, powerSizeFrac(o.speed, pt.z))
+    drawParticle(ctx, pt.pos, zColor(pt.z), VP, trailPhase * 2 + n, powerSizeFrac(ptSpeed(pt, o.speed), pt.z))
   }
 }
 
 export default function BattleCanvas(props: Props) {
   const ref = useRef<HTMLCanvasElement>(null)
+  const aimingRef = useRef(false)
+  // #49：点ピックのルーペ。現在の指位置（数学座標）と、作成フェーズの再描画関数
+  const pickPosRef = useRef<Vec2 | null>(null)
+  const composeDrawRef = useRef<(() => void) | null>(null)
+  const lastTrailRef = useRef(0)
   const doneRef = useRef(props.onAnimationDone)
   doneRef.current = props.onAnimationDone
 
@@ -239,17 +282,38 @@ export default function BattleCanvas(props: Props) {
       // 作成フェーズ：持続周回があれば粒を回し続ける（#39）。無ければ1回だけ描画（z場プレビュー含む・#37）。
       const standing = props.standingOrbits ?? []
       const drawComposeFrame = (trailPhase: number) => {
+        lastTrailRef.current = trailPhase
         drawScene(ctx, { ...staticParams, trailPhase })
         for (const o of standing) drawStandingOrbit(ctx, o, trailPhase)
-        // 闇の周回は内側を暗くぼかす（プレイヤー視点の視認性低下・#39）
-        for (const o of standing) if (ringAverageAttr(o.ring) === 'dark') drawConcealVeil(ctx, o.ring, VP)
+        // 自陣の闇結界は内側を暗くぼかす（自己視認低下・#39）
+        for (const o of standing) {
+          if (o.owner !== 'enemy' && ringAverageAttr(o.ring) === 'dark') drawConcealVeil(ctx, o.ring, VP)
+        }
+        // 敵の闇結界の視認阻害（#61/#62）：1枚=ギリギリ見える／2枚重なり=全く見えない黒。まとめて処理
+        const enemyDarkRings = standing
+          .filter((o) => o.owner === 'enemy' && ringAverageAttr(o.ring) === 'dark')
+          .map((o) => o.ring)
+        drawEnemyConceal(ctx, enemyDarkRings, VP)
+        // 発射方向インジケータ（#47）：active ally から θ 方向へ矢印
+        if (props.aimAngle !== undefined && props.activeAllyId) {
+          const a = props.allies.find((al) => al.id === props.activeAllyId)
+          if (a && a.hp > 0) drawAimArrow(ctx, a.pos, props.aimAngle)
+        }
+        // 通過点フィットの選択点を✛で表示（#46）
+        drawFitPoints(ctx, props.fitPoints)
+        // 点ピック中は指の上に拡大鏡（ルーペ）を出す（#49：指で点が隠れない）
+        if (pickPosRef.current) drawPickLoupe(ctx, pickPosRef.current)
       }
+      // ポインタ移動時に手動で再描画できるよう関数を保持
+      composeDrawRef.current = () => drawComposeFrame(lastTrailRef.current)
       // 崩し手の予告円（#42）と異変（04b）は揺れ続けるので、ある間はアニメーションループを回す
       const hasRuptureWarning = (props.ghostMisfires ?? []).some(Boolean)
       const hasAnomaly = (props.anomaly ?? 0) > 0
       if (standing.length === 0 && !hasRuptureWarning && !hasAnomaly) {
         drawComposeFrame(0)
-        return
+        return () => {
+          composeDrawRef.current = null
+        }
       }
       let raf = 0
       const start = performance.now()
@@ -258,7 +322,10 @@ export default function BattleCanvas(props: Props) {
         raf = requestAnimationFrame(loop)
       }
       raf = requestAnimationFrame(loop)
-      return () => cancelAnimationFrame(raf)
+      return () => {
+        composeDrawRef.current = null
+        cancelAnimationFrame(raf)
+      }
     }
 
     const anim = props.animation
@@ -295,6 +362,9 @@ export default function BattleCanvas(props: Props) {
     const clashStartByIdx: Record<number, number> = {}
     // 霧散：負けた周回ごとに「接触の実時刻」を記録し、その瞬間から散らせる（#34）
     const dissipateStartByIdx: Record<number, number> = {}
+    // 壁を削った破片：carve ごとに「弾が到達した実時刻」を記録し、一定時間で散って消す（#45）。
+    // 弧長だけで判定すると弾が壁で止まった地点に破片が永久に残る不具合があった。
+    const carveStartByKey: Record<string, number> = {}
 
     // ダメージ／回復の数値（#42）：同じ対象・契機のポップは縦に積む（重なり防止）
     const popups = anim.popups ?? []
@@ -456,16 +526,21 @@ export default function BattleCanvas(props: Props) {
         ctx.globalAlpha = 0.28
         strokeZPath(ctx, ring, VP)
         ctx.restore()
-        // 複数パーティクルを等間隔に並べ、ゆっくり周回する（速いとチカチカするため・#11）
+        // 複数パーティクルを並べて周回する。点ごとの速度で進みを変える（#60：速い区間は素早く抜ける）
         const N = 18
         const revs = 1.1
         const eClamped = Number.isFinite(e) ? Math.max(0, Math.min(1, e)) : 0
+        const tl = ringTimeline(ring)
+        // #63：同じターン内で速度を累積する。1周ぶんの正味エネルギー変化 dSq（>0=加速する場）で、
+        // 進行 e が進むほど回転が速く/遅く、粒も大きく/小さくなる（速度＝アニメーションと連動）。
+        const spd = ring.map((p) => p.speed ?? 0)
+        const v0sq = Math.max(1, (spd[0] || o.speed || 1) ** 2)
+        const dSq = spd.length > 1 ? spd[spd.length - 1] ** 2 - spd[0] ** 2 : 0
+        const accum = Math.max(-0.85, Math.min(2.5, (dSq / v0sq) * revs)) // 窓全体での累積率
+        const spin = eClamped + accum * eClamped * eClamped * 0.5 // 累積で回転が加速/減速（位相は二次）
+        const mult = Math.max(0.15, Math.min(3, 1 + accum * eClamped)) // 現在の速度倍率（粒サイズに反映）
         for (let n = 0; n < N; n++) {
-          const frac = (n / N + eClamped * revs) % 1
-          // idx は必ず 0..len-1 に収める（NaN/範囲外でも安全・凍結防止）
-          let idx = Math.floor(frac * (len - 1))
-          if (!Number.isFinite(idx)) idx = 0
-          idx = Math.max(0, Math.min(len - 1, idx))
+          const idx = phaseToIndex(tl, n / N + spin * revs)
           const pt = ring[idx]
           if (!pt) continue
           const col = zColor(pt.z)
@@ -478,8 +553,8 @@ export default function BattleCanvas(props: Props) {
           ctx.globalAlpha = 0.5
           drawTrail(ctx, trail, col, VP)
           ctx.globalAlpha = 1
-          // 威力（=リング速度×その点の強度）で粒の大きさを変える（#21）
-          const sizeScale = powerSizeFrac(o.speed ?? 0, pt.z)
+          // 威力（=その点のリング速度×強度×累積倍率）で粒の大きさを変える（#21/#60/#63）
+          const sizeScale = powerSizeFrac(ptSpeed(pt, o.speed ?? 0) * mult, pt.z)
           drawParticle(ctx, pt.pos, col, VP, trailPhase * 2 + n, sizeScale)
         }
       }
@@ -519,13 +594,18 @@ export default function BattleCanvas(props: Props) {
         }
       })
 
-      // 障害物を削る瞬間のパーティクル（弾が通り過ぎた直後だけ破片が舞う・#11）
+      // 障害物を削る瞬間のパーティクル（弾が到達した瞬間から一定時間だけ破片が舞い、必ず消える・#11/#45）。
+      // 弧長差で判定すると弾が壁で停止した地点に破片が残り続けるため、到達時刻から実時間で散らす。
       anim.bullets.forEach((b, i) => {
         const st = states[i]
         if (!st) return
-        for (const cv of b.carves) {
-          const d = st.arcLen - cv.arcLen
-          if (d >= 0 && d < BURST_ARC) drawCarveBurst(ctx, cv.pos, cv.r, cv.attr, d / BURST_ARC, VP)
+        for (let j = 0; j < b.carves.length; j++) {
+          const cv = b.carves[j]
+          if (st.arcLen < cv.arcLen) continue // まだ弾が届いていない
+          const key = `${i}-${j}`
+          if (carveStartByKey[key] === undefined) carveStartByKey[key] = elapsed
+          const cp = (elapsed - carveStartByKey[key]) / CARVE_BURST_MS
+          if (cp >= 0 && cp < 1) drawCarveBurst(ctx, cv.pos, cv.r, cv.attr, cp, VP)
         }
       })
 
@@ -597,7 +677,183 @@ export default function BattleCanvas(props: Props) {
     props.zField,
     props.showZField,
     props.standingOrbits,
+    props.fitPoints,
+    props.aimAngle,
   ])
 
-  return <canvas ref={ref} width={INTERNAL} height={INTERNAL} aria-label="バトルフィールド" />
+  // ポインタ位置を数学座標へ変換（内部解像度と表示サイズの差を補正）
+  const eventToMath = (e: { clientX: number; clientY: number }): Vec2 | null => {
+    const canvas = ref.current
+    if (!canvas) return null
+    const rect = canvas.getBoundingClientRect()
+    if (rect.width === 0 || rect.height === 0) return null
+    const px = ((e.clientX - rect.left) * INTERNAL) / rect.width
+    const py = ((e.clientY - rect.top) * INTERNAL) / rect.height
+    return toMath({ x: px, y: py }, VP)
+  }
+  const redrawCompose = () => composeDrawRef.current?.()
+
+  // ポインタ操作：点ピック中はルーペ（#49）、それ以外は発射方向ドラッグ（#47）
+  const handlePointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    const m = eventToMath(e)
+    if (!m) return
+    try {
+      ref.current?.setPointerCapture(e.pointerId)
+    } catch {
+      /* 非対応は無視 */
+    }
+    if (props.pickMode) {
+      pickPosRef.current = m
+      redrawCompose()
+    } else if (props.onAim) {
+      aimingRef.current = true
+      props.onAim(m)
+    }
+  }
+  const handlePointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    const m = eventToMath(e)
+    if (!m) return
+    if (props.pickMode && pickPosRef.current) {
+      pickPosRef.current = m
+      redrawCompose()
+    } else if (props.onAim && aimingRef.current) {
+      props.onAim(m)
+    }
+  }
+  const handlePointerUp = () => {
+    if (props.pickMode && pickPosRef.current) {
+      props.onFieldClick?.(pickPosRef.current)
+      pickPosRef.current = null
+      redrawCompose()
+    }
+    aimingRef.current = false
+  }
+
+  const interactive = !!props.pickMode || !!props.onAim
+  return (
+    <canvas
+      ref={ref}
+      width={INTERNAL}
+      height={INTERNAL}
+      aria-label="バトルフィールド"
+      onPointerDown={interactive ? handlePointerDown : undefined}
+      onPointerMove={interactive ? handlePointerMove : undefined}
+      onPointerUp={interactive ? handlePointerUp : undefined}
+      onPointerLeave={interactive ? handlePointerUp : undefined}
+      style={interactive ? { cursor: 'crosshair', touchAction: 'none' } : undefined}
+    />
+  )
+}
+
+/** 点ピック中の拡大鏡（ルーペ・#49）。指の少し上に、指の下の盤面を拡大して見せる。 */
+function drawPickLoupe(ctx: CanvasRenderingContext2D, pos: Vec2): void {
+  const fs = toScreen(pos, VP)
+  const R = 70
+  const zoom = 2.6
+  const gap = 40
+  let cx = fs.x
+  let cy = fs.y - R - gap
+  if (cy - R < 4) cy = fs.y + R + gap // 上が見切れるなら下に出す
+  cx = Math.max(R + 4, Math.min(INTERNAL - R - 4, cx))
+  cy = Math.max(R + 4, Math.min(INTERNAL - R - 4, cy))
+  const half = R / zoom
+  ctx.save()
+  // 指→ルーペの接続線
+  ctx.strokeStyle = 'rgba(90, 209, 255, 0.5)'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.moveTo(fs.x, fs.y)
+  ctx.lineTo(cx, cy)
+  ctx.stroke()
+  // ルーペ円の内側に、指の下の領域を拡大して描く
+  ctx.beginPath()
+  ctx.arc(cx, cy, R, 0, Math.PI * 2)
+  ctx.save()
+  ctx.clip()
+  ctx.fillStyle = '#0d0b14'
+  ctx.fillRect(cx - R, cy - R, R * 2, R * 2)
+  ctx.imageSmoothingEnabled = false
+  ctx.drawImage(ctx.canvas, fs.x - half, fs.y - half, half * 2, half * 2, cx - R, cy - R, R * 2, R * 2)
+  // 中心のクロスヘア
+  ctx.strokeStyle = '#5ad1ff'
+  ctx.lineWidth = 1.5
+  ctx.beginPath()
+  ctx.moveTo(cx - 12, cy)
+  ctx.lineTo(cx + 12, cy)
+  ctx.moveTo(cx, cy - 12)
+  ctx.lineTo(cx, cy + 12)
+  ctx.stroke()
+  ctx.restore() // クリップ解除
+  // 枠
+  ctx.strokeStyle = '#5ad1ff'
+  ctx.lineWidth = 3
+  ctx.shadowColor = '#5ad1ff'
+  ctx.shadowBlur = 8
+  ctx.beginPath()
+  ctx.arc(cx, cy, R, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.shadowBlur = 0
+  // 実際に点が置かれる位置に小さな✛
+  ctx.strokeStyle = '#ffffff'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.moveTo(fs.x - 7, fs.y)
+  ctx.lineTo(fs.x + 7, fs.y)
+  ctx.moveTo(fs.x, fs.y - 7)
+  ctx.lineTo(fs.x, fs.y + 7)
+  ctx.stroke()
+  ctx.restore()
+}
+
+/** 発射方向（θ）の矢印を active ally から伸ばす（#47）。 */
+function drawAimArrow(ctx: CanvasRenderingContext2D, from: Vec2, angle: number): void {
+  const LEN = 7 // 数学ユニット
+  const tip = { x: from.x + Math.cos(angle) * LEN, y: from.y + Math.sin(angle) * LEN }
+  const a = toScreen(from, VP)
+  const b = toScreen(tip, VP)
+  ctx.save()
+  ctx.strokeStyle = '#ffd56b'
+  ctx.fillStyle = '#ffd56b'
+  ctx.globalAlpha = 0.85
+  ctx.lineWidth = 2.5
+  ctx.setLineDash([5, 4])
+  ctx.beginPath()
+  ctx.moveTo(a.x, a.y)
+  ctx.lineTo(b.x, b.y)
+  ctx.stroke()
+  ctx.setLineDash([])
+  // 矢じり
+  const ang = Math.atan2(b.y - a.y, b.x - a.x)
+  const h = 9
+  ctx.beginPath()
+  ctx.moveTo(b.x, b.y)
+  ctx.lineTo(b.x - h * Math.cos(ang - 0.4), b.y - h * Math.sin(ang - 0.4))
+  ctx.lineTo(b.x - h * Math.cos(ang + 0.4), b.y - h * Math.sin(ang + 0.4))
+  ctx.closePath()
+  ctx.fill()
+  ctx.restore()
+}
+
+/** 通過点フィットで選んだ点を✛＋連番で表示する（#46）。 */
+function drawFitPoints(ctx: CanvasRenderingContext2D, points?: Vec2[]): void {
+  if (!points || points.length === 0) return
+  ctx.save()
+  for (let i = 0; i < points.length; i++) {
+    const s = toScreen(points[i], VP)
+    ctx.strokeStyle = '#5ad1ff'
+    ctx.lineWidth = 2
+    ctx.shadowColor = '#5ad1ff'
+    ctx.shadowBlur = 8
+    ctx.beginPath()
+    ctx.moveTo(s.x - 6, s.y)
+    ctx.lineTo(s.x + 6, s.y)
+    ctx.moveTo(s.x, s.y - 6)
+    ctx.lineTo(s.x, s.y + 6)
+    ctx.stroke()
+    ctx.shadowBlur = 0
+    ctx.fillStyle = '#cdeffd'
+    ctx.font = '11px sans-serif'
+    ctx.fillText(String(i + 1), s.x + 8, s.y - 8)
+  }
+  ctx.restore()
 }

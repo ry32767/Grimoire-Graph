@@ -138,13 +138,13 @@ describe('壁すり抜け防止（判定の密化・#1）', () => {
 })
 
 describe('周回が魔法に負けると霧散する（#34）', () => {
-  it('敵弾を止めきれなかった周回は霧散（broken）し、掃射しない', () => {
-    // 弱い闇リング(z=-0.5＝強度ごく小) vs 速い光の敵弾 → 止めきれず霧散
-    const weakDark: (x: number, y: number) => number = () => -0.5
+  it('結界は敵弾に速度を削られ、0 になると破れて霧散する（#59・パリィ相互相殺）', () => {
+    // 遅い闇結界(速度2) vs しっかりした光の敵弾 → 相互相殺で結界の速度が0になり霧散
+    const e = { ...enemy('e', { x: 0, y: 12 }, 'light', 100, 12), castZField: () => FIELD.zRef }
     const res = resolveTurn({
-      allies: [ally('a', { x: 0, y: 0 })],
-      casts: [cast('a', { mode: 'polar', f: () => 5, origin: { x: 0, y: 0 }, z: weakDark })],
-      enemies: [enemy('e', { x: 10, y: 0 }, 'dark', 100, 14)],
+      allies: [ally('a', { x: 0, y: 0 }, 'dark')],
+      casts: [cast('a', { mode: 'polar', f: () => 5, origin: { x: 0, y: 0 }, z: zDarkMid }, 2)],
+      enemies: [e],
       castingEnemyIds: ['e'],
       obstacles: [],
       mechanics: withFire,
@@ -152,6 +152,24 @@ describe('周回が魔法に負けると霧散する（#34）', () => {
     const orbitShot = res.allyShots.find((s) => s.kind === 'orbit')!
     expect(orbitShot.broken).toBe(true)
     expect(res.log.some((l) => l.text.includes('霧散'))).toBe(true)
+  })
+
+  it('止めきれない敵弾でも結界は減速して存続する（#59：失速した速度で回り続ける）', () => {
+    // そこそこの闇結界(速度10) vs 光の敵弾 → 敵弾は弱まりつつ通過、結界は減速して存続（broken=false）
+    const e = { ...enemy('e', { x: 0, y: 12 }, 'light', 100, 9), castZField: () => FIELD.zRef }
+    const res = resolveTurn({
+      allies: [ally('a', { x: 0, y: 0 }, 'dark')],
+      casts: [cast('a', { mode: 'polar', f: () => 5, origin: { x: 0, y: 0 }, z: zDarkMid }, 10)],
+      enemies: [e],
+      castingEnemyIds: ['e'],
+      obstacles: [],
+      mechanics: withFire,
+    })
+    const orbitShot = res.allyShots.find((s) => s.kind === 'orbit')!
+    expect(orbitShot.broken).toBe(false) // 存続
+    expect(orbitShot.ringSpeed).toBeLessThan(10) // 敵弾に当たって減速した
+    expect(orbitShot.ringSpeed).toBeGreaterThan(0)
+    expect(res.log.some((l) => l.text.includes('減速'))).toBe(true)
   })
 
   it('敵弾を止めきった周回は霧散しない（broken=false・存続）', () => {
@@ -166,6 +184,39 @@ describe('周回が魔法に負けると霧散する（#34）', () => {
     })
     const orbitShot = res.allyShots.find((s) => s.kind === 'orbit')!
     expect(orbitShot.broken).toBe(false)
+  })
+
+  it('十分強い結界は通常速度の敵弾を止める。ただし結界も減速する（#43/#59）', () => {
+    // 速い闇結界(速度16) vs 光の敵弾(速度8) → 敵弾を止めきる（味方無傷）。結界は存続するが減速する
+    const e = { ...enemy('e', { x: 0, y: 16 }, 'light', 100, 8), castZField: () => FIELD.zRef }
+    const res = resolveTurn({
+      allies: [ally('a', { x: 0, y: 0 }, 'dark')],
+      casts: [cast('a', { mode: 'polar', f: () => 6, origin: { x: 0, y: 0 }, z: zDarkMid }, 16)],
+      enemies: [e],
+      castingEnemyIds: ['e'],
+      obstacles: [],
+      mechanics: withFire,
+    })
+    const orbitShot = res.allyShots.find((s) => s.kind === 'orbit')!
+    expect(orbitShot.broken).toBe(false) // 結界は存続
+    expect(res.enemyShots.every((s) => !s.reachedTarget)).toBe(true) // 敵弾は味方へ届かない
+    expect(res.allies[0].hp).toBe(100) // 無傷
+    expect(orbitShot.ringSpeed).toBeLessThan(16) // 止めても結界は減速する（#59）
+  })
+
+  it('強属性(|z|>zRef)の結界は失速して自滅し、消えたことがログで分かる（#31/#44）', () => {
+    // z=zPeak(=5)>zRef の光リングは減速し速度0で自滅する。結界は broken になり、専用ログが出る。
+    const res = resolveTurn({
+      allies: [ally('a', { x: 0, y: -8 }, 'light')],
+      casts: [cast('a', { mode: 'polar', f: () => 7, origin: { x: 0, y: -8 }, z: zLight }, 10)],
+      enemies: [enemy('e', { x: 0, y: 14 }, 'dark', 100, 8)],
+      castingEnemyIds: ['e'],
+      obstacles: [],
+      mechanics: withFire,
+    })
+    const orbitShot = res.allyShots.find((s) => s.kind === 'orbit')!
+    expect(orbitShot.broken).toBe(true) // 失速で自滅する
+    expect(res.log.some((l) => l.text.includes('失速') && l.text.includes('自滅'))).toBe(true) // 自滅ログで分かる
   })
 })
 
@@ -196,6 +247,23 @@ describe('防御の重ね掛け（軌道型＋パリィ）', () => {
     })
     // 両防御の方が敵弾の到達速度は小さい（=減衰が累積している）
     expect(both.enemyShots[0].flight.endSpeed).toBeLessThanOrEqual(ringOnly.enemyShots[0].flight.endSpeed)
+  })
+
+  it('パリィは相互相殺：反対極の敵弾と交差した自弾も減速し、与ダメが下がる（#59・A）', () => {
+    // 味方a(光)が (0,-6)→上へ直進し、遠くの敵T(0,14) を撃つ。別の敵P の闇弾が y=4 で自弾と交差。
+    // P が撃つと自弾が削られ、T への与ダメが減る（自弾が減速する＝相互相殺）。
+    const target = enemy('T', { x: 0, y: 14 }, 'dark', 999, 5)
+    // P は別の味方 b(HP低=狙われる) を狙い、その弾が (0,4) 付近で自弾と交差する
+    const parrier = { ...enemy('P', { x: 10, y: 4 }, 'light', 100, 10), castZField: () => -FIELD.zRef }
+    const allies = [ally('a', { x: 0, y: -6 }, 'light'), ally('b', { x: -10, y: 4 }, 'dark', 20)]
+    const aCast = cast('a', { mode: 'rotate', g: () => 0, angle: Math.PI / 2, origin: { x: 0, y: -6 }, z: zLightMid }, 12)
+    const base = { allies, casts: [aCast], enemies: [target, parrier], obstacles: [], mechanics: withFire }
+    const withParry = resolveTurn({ ...base, castingEnemyIds: ['P'] })
+    const noParry = resolveTurn({ ...base, castingEnemyIds: [] })
+    const dmg = (r: ReturnType<typeof resolveTurn>) => 999 - r.enemies.find((e) => e.id === 'T')!.hp
+    expect(dmg(noParry)).toBeGreaterThan(0) // 交差が無ければ自弾は満速で命中
+    expect(dmg(withParry)).toBeLessThan(dmg(noParry)) // 敵弾と相殺して自弾が削られ、与ダメ減
+    expect(withParry.log.some((l) => l.kind === 'parry')).toBe(true)
   })
 })
 
@@ -407,6 +475,40 @@ describe('周回の永続化（#39：破壊されるまで残る）', () => {
   })
 })
 
+describe('敵 guardian の結界効果（#61）', () => {
+  it('光の敵結界は内側の敵を回復し、結界は持続結界(owner=enemy)として残る', () => {
+    // 傷ついた光の守護者が自分の周りに光結界を張る → 自分を回復。結界は次ターンへ持ち越す
+    const g: Enemy = { ...enemy('g', { x: 0, y: 12 }, 'light', 100, 6), role: 'guardian', hp: 50 }
+    const res = resolveTurn({
+      allies: [ally('a', { x: 0, y: -12 }, 'dark')],
+      casts: [],
+      enemies: [g],
+      castingEnemyIds: ['g'],
+      obstacles: [],
+      mechanics: withFire,
+    })
+    const healed = res.enemies.find((e) => e.id === 'g')!
+    expect(healed.hp).toBeGreaterThan(50) // 光結界で回復した
+    expect(res.orbits.some((o) => o.owner === 'enemy' && o.ownerId === 'g')).toBe(true) // 敵結界が残る
+    expect(res.log.some((l) => l.text.includes('光の結界') && l.text.includes('回復'))).toBe(true)
+  })
+
+  it('闇の敵結界は敵を回復しない（視認阻害は描画側で表現）', () => {
+    const g: Enemy = { ...enemy('g', { x: 0, y: 12 }, 'dark', 100, 6), role: 'guardian', hp: 50 }
+    const res = resolveTurn({
+      allies: [ally('a', { x: 0, y: -12 }, 'light')],
+      casts: [],
+      enemies: [g],
+      castingEnemyIds: ['g'],
+      obstacles: [],
+      mechanics: withFire,
+    })
+    const e = res.enemies.find((x) => x.id === 'g')!
+    expect(e.hp).toBe(50) // 闇は回復しない
+    expect(res.orbits.some((o) => o.owner === 'enemy' && o.ownerId === 'g')).toBe(true) // 闇結界も持続（視認阻害用）
+  })
+})
+
 describe('敵弾が味方へ命中（#15）', () => {
   it('防御なしなら狙われた味方のHPが減る', () => {
     const res = resolveTurn({
@@ -466,6 +568,26 @@ describe('暴発の壁破壊（#41）', () => {
     expect(isSolidAt(w2, { x: 0, y: 9 })).toBe(false) // AoE 内の素材は消えた
     // 暴発ログが出ている
     expect(res.log.some((l) => l.kind === 'misfire')).toBe(true)
+  })
+
+  it('AoE 内に倒れた敵(hp0)がいてもダメージ判定を出さない（生存敵だけ巻き込む）', () => {
+    // 暴発点は (0,~7)。弾の直線上(x=0)に死体、外れた位置(x=3)に生存敵を AoE 内へ置く
+    const dead = enemy('dead', { x: 0, y: 6 }, 'dark', 0) // すでに撃破済み（AoE 内・経路上だが hp0 で素通り）
+    const alive = enemy('alive', { x: 3, y: 7 }, 'dark', 80) // 生存（AoE 内・経路外）
+    const res = resolveTurn({
+      allies: [ally('m', { x: 0, y: 0 })],
+      casts: [cast('m', upMisfire)],
+      enemies: [dead, alive],
+      castingEnemyIds: [],
+      obstacles: [],
+      mechanics: onlyHit,
+    })
+    // 倒した敵にはポップアップもダメージも出ない
+    expect(res.popups.some((p) => p.targetId === 'dead')).toBe(false)
+    expect(res.enemies.find((e) => e.id === 'dead')!.statuses).toHaveLength(0)
+    // 生存敵には暴発の白ダメージが入る
+    expect(res.popups.some((p) => p.targetId === 'alive' && p.kind === 'misfire')).toBe(true)
+    expect(res.enemies.find((e) => e.id === 'alive')!.hp).toBeLessThan(80)
   })
 
   it('壊れない壁（unbreakable）は暴発でも削れない', () => {

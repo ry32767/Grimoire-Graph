@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { planEnemyShot } from './enemyAI'
 import { prepareTurn, createBattleState } from './battle'
 import { resolveTurn } from './turn'
-import { buildRing, ringRadius } from './orbit'
+import { buildRing, attachRingSpeeds, ringRadius } from './orbit'
 import { constZField } from './zfields'
 import { zfieldAt } from './attribute'
 import { FIELD, GAME } from '../data/constants'
@@ -20,10 +20,10 @@ const enemy = (over: Partial<Enemy> = {}): Enemy => ({
   ...over,
 })
 
-/** center を囲む円リング（半径4・一定 z）を持続結界として作る。 */
+/** center を囲む円リング（半径4・一定 z）を持続結界として作る（点ごとの速度つき・#60）。 */
 function ringOrbit(center: { x: number; y: number }, z: number, ownerId = 't'): ActiveOrbit {
   const traj: Trajectory = { mode: 'polar', f: () => 4, origin: center, z: constZField(z) }
-  return { id: 'orb', ownerId, owner: 'player', ring: buildRing(traj), ringSpeed: 10 }
+  return { id: 'orb', ownerId, owner: 'player', ring: attachRingSpeeds(buildRing(traj), 10), ringSpeed: 10 }
 }
 
 describe('迂回型高難度：同極すり抜け（05b §5.2）', () => {

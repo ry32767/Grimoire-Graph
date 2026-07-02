@@ -3,7 +3,8 @@ import type { Attribute } from '../game/types'
 
 export const COLORS = {
   bg: '#0d0b14',
-  grid: '#26224a',
+  grid: '#221e40', // 小目盛り（1ユニット）線
+  gridMajor: '#332d5e', // 大目盛り（5ユニット）線＝数えやすさのため濃く
   axis: '#3a3470',
   light1: '#f4c430',
   light2: '#fff8e1',

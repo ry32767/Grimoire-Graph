@@ -6,7 +6,7 @@ import { planRuptorShot } from '../game/enemyAI'
 import { makeParty, PARTY } from './party'
 import { FIELD } from './constants'
 import { dist } from '../game/coords'
-import { isSolidAt } from '../game/obstacle'
+import { isSolidAt, materialCells } from '../game/obstacle'
 import type { Obstacle, Trajectory, Vec2 } from '../game/types'
 
 /** 線分 a→e のどこかが障害物の素材に当たるか（直線で射線が通らない＝壁で遮られる）。 */
@@ -41,11 +41,20 @@ describe('ステージ定義（機能14・#15）', () => {
         expect(e.hp).toBeGreaterThan(0)
       }
       for (const o of s.obstacles) {
-        expect(o.solids.length).toBeGreaterThan(0)
+        const rects = o.rects ?? []
+        // 素材は円（solids）か矩形（rects・#56）のどちらかで構成される
+        expect(o.solids.length + rects.length).toBeGreaterThan(0)
         expect(o.carves).toEqual([])
         for (const d of o.solids) {
           expect(dist({ x: d.x, y: d.y })).toBeLessThan(FIELD.rField)
           expect(d.r).toBeGreaterThan(0)
+        }
+        for (const r of rects) {
+          expect(r.w).toBeGreaterThan(0)
+          expect(r.h).toBeGreaterThan(0)
+          // 四隅とも場内
+          expect(dist({ x: r.x, y: r.y })).toBeLessThan(FIELD.rField)
+          expect(dist({ x: r.x + r.w, y: r.y + r.h })).toBeLessThan(FIELD.rField)
         }
       }
     }
@@ -98,8 +107,10 @@ describe('難易度フレームワーク（06b）', () => {
     const plan = planRuptorShot(demo, makeParty(), obstacles)
     expect(plan).not.toBeNull()
     expect(plan!.misfirePos).not.toBeNull()
-    // 暴発点はいずれかの壁素材の近く（味方の近くではない）
-    const nearWall = obstacles.some((o) => o.solids.some((d) => dist({ x: d.x, y: d.y }, plan!.misfirePos!) <= FIELD.aoeRadius + d.r))
+    // 暴発点はいずれかの壁素材の近く（円・矩形とも・#56）
+    const nearWall = obstacles.some((o) =>
+      materialCells(o).some((d) => dist({ x: d.x, y: d.y }, plan!.misfirePos!) <= FIELD.aoeRadius + d.r),
+    )
     expect(nearWall).toBe(true)
   })
 

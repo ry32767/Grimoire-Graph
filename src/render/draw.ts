@@ -1,9 +1,10 @@
 // Canvas 描画関数（機能3・5・#15）。座標変換は coords に集約したものを使う。
 import type { Ally, Attribute, Enemy, Obstacle, ObstacleKind, Vec2, ZPoint } from '../game/types'
 import { FIELD } from '../data/constants'
-import { toScreen, scaleOf, type Viewport } from '../game/coords'
+import { toScreen, scaleOf, visibleBounds, type Viewport } from '../game/coords'
 import { attributeOf, strengthOf } from '../game/attribute'
 import { COLORS } from './theme'
+import { getWallTexture } from './textures'
 
 export type { ZPoint }
 
@@ -77,26 +78,53 @@ function idSeed(id: string): number {
   return h
 }
 
-/** 背景：数学グリッドと軸・場外境界（場のタイルは廃止）。 */
+/** 方眼1マス＝数学1ユニット（射出関数・z 場と同じ基準で読めるように・#53）。 */
+export const GRID_UNIT = 1
+/** 数えやすさのため、5ユニットごとに濃い大目盛りを引く。 */
+const GRID_MAJOR = 5
+/** ズームアウト時でも線を引きすぎて固まらないための上限（#53：崩れない保険）。 */
+const GRID_MAX_LINES = 240
+
+/** u が大目盛り（GRID_MAJOR の倍数）か。 */
+function isMajorLine(u: number): boolean {
+  return Math.abs(u - Math.round(u / GRID_MAJOR) * GRID_MAJOR) < 1e-9
+}
+
+/** 背景：数学グリッドと軸・場外境界（場のタイルは廃止）。1マス=1ユニット・可視範囲に追従（#53）。 */
 export function drawBackground(ctx: CanvasRenderingContext2D, vp: Viewport): void {
   ctx.fillStyle = COLORS.bg
   ctx.fillRect(0, 0, vp.width, vp.height)
 
-  // グリッド線（数学ユニット）
-  ctx.strokeStyle = COLORS.grid
-  ctx.lineWidth = 1
-  for (let u = -FIELD.rField; u <= FIELD.rField; u += 2) {
-    const a = toScreen({ x: u, y: -FIELD.rField }, vp)
-    const b = toScreen({ x: u, y: FIELD.rField }, vp)
+  // 画面に映る数学範囲をユニット境界へ丸める（スケール変更でも方眼が全体を覆う）
+  const b = visibleBounds(vp)
+  // 線が多すぎる極端なズームアウトでは間隔を倍々に広げて固まりを防ぐ（通常スケールでは 1）
+  let unit = GRID_UNIT
+  const span = Math.max(b.maxX - b.minX, b.maxY - b.minY)
+  while (span / unit > GRID_MAX_LINES) unit *= 2
+  const x0 = Math.floor(b.minX / unit) * unit
+  const x1 = Math.ceil(b.maxX / unit) * unit
+  const y0 = Math.floor(b.minY / unit) * unit
+  const y1 = Math.ceil(b.maxY / unit) * unit
+
+  // 縦線・横線（小目盛り→大目盛りの順に2パスで描き、大目盛りを上に重ねる）
+  for (const major of [false, true]) {
+    ctx.strokeStyle = major ? COLORS.gridMajor : COLORS.grid
+    ctx.lineWidth = 1
     ctx.beginPath()
-    ctx.moveTo(a.x, a.y)
-    ctx.lineTo(b.x, b.y)
-    ctx.stroke()
-    const c = toScreen({ x: -FIELD.rField, y: u }, vp)
-    const d = toScreen({ x: FIELD.rField, y: u }, vp)
-    ctx.beginPath()
-    ctx.moveTo(c.x, c.y)
-    ctx.lineTo(d.x, d.y)
+    for (let u = x0; u <= x1 + 1e-9; u += unit) {
+      if (isMajorLine(u) !== major) continue
+      const a = toScreen({ x: u, y: y0 }, vp)
+      const c = toScreen({ x: u, y: y1 }, vp)
+      ctx.moveTo(a.x, a.y)
+      ctx.lineTo(c.x, c.y)
+    }
+    for (let u = y0; u <= y1 + 1e-9; u += unit) {
+      if (isMajorLine(u) !== major) continue
+      const a = toScreen({ x: x0, y: u }, vp)
+      const c = toScreen({ x: x1, y: u }, vp)
+      ctx.moveTo(a.x, a.y)
+      ctx.lineTo(c.x, c.y)
+    }
     ctx.stroke()
   }
   // 軸
@@ -458,7 +486,7 @@ function drawObstacleTexture(
   vp: Viewport,
   s: number,
 ): void {
-  if (o.solids.length === 0) return
+  if (o.solids.length === 0 && !(o.rects && o.rects.length)) return
   let minX = Infinity
   let maxX = -Infinity
   let minY = Infinity
@@ -469,6 +497,12 @@ function drawObstacleTexture(
     minY = Math.min(minY, d.y - d.r)
     maxY = Math.max(maxY, d.y + d.r)
   }
+  for (const r of o.rects ?? []) {
+    minX = Math.min(minX, r.x)
+    maxX = Math.max(maxX, r.x + r.w)
+    minY = Math.min(minY, r.y)
+    maxY = Math.max(maxY, r.y + r.h)
+  }
   const tl = toScreen({ x: minX, y: maxY }, vp) // y 反転：maxY が画面上
   const br = toScreen({ x: maxX, y: minY }, vp)
   const x0 = tl.x
@@ -476,6 +510,20 @@ function drawObstacleTexture(
   const x1 = br.x
   const y1 = br.y
   const kind = o.kind ?? 'normal'
+  // ピクセルアートのタイル画像を素材内に敷き詰める（#56）。取得できなければ手続き描画にフォールバック
+  const tex = getWallTexture(kind, o.element)
+  if (tex) {
+    const pat = lx.createPattern(tex, 'repeat')
+    if (pat) {
+      lx.save()
+      lx.globalAlpha = 0.62 // 下地の属性色を活かしつつ質感を重ねる
+      lx.imageSmoothingEnabled = false
+      lx.fillStyle = pat
+      lx.fillRect(x0, y0, x1 - x0, y1 - y0)
+      lx.restore()
+      return
+    }
+  }
   lx.save()
   if (kind === 'unbreakable') {
     lx.strokeStyle = 'rgba(150,162,190,0.5)'
@@ -554,7 +602,7 @@ export function drawObstacles(ctx: CanvasRenderingContext2D, obstacles: Obstacle
   if (!lx) return
 
   for (const o of obstacles) {
-    if (o.solids.length === 0) continue
+    if (o.solids.length === 0 && !(o.rects && o.rects.length)) continue // 円・矩形どちらも無ければ描かない（#56）
     lx.clearRect(0, 0, W, H)
     // ブロブ本体（円の和を塗る）
     lx.globalCompositeOperation = 'source-over'
@@ -565,7 +613,13 @@ export function drawObstacles(ctx: CanvasRenderingContext2D, obstacles: Obstacle
       lx.arc(c.x, c.y, d.r * s, 0, Math.PI * 2)
       lx.fill()
     }
-    // 種別テクスチャを素材内だけに重ねる（source-atop で solids の上にのみ描く・#40）
+    // 四角い素材（#56）：角のシャープな矩形を塗る
+    for (const r of o.rects ?? []) {
+      const tl = toScreen({ x: r.x, y: r.y + r.h }, vp) // y 反転：上辺が画面上
+      const br = toScreen({ x: r.x + r.w, y: r.y }, vp)
+      lx.fillRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y)
+    }
+    // 種別テクスチャを素材内だけに重ねる（source-atop で素材の上にのみ描く・#40/#56）
     lx.globalCompositeOperation = 'source-atop'
     drawObstacleTexture(lx, o, vp, s)
     // えぐり取った穴を抜く（滑らかな円形の削れ）
@@ -610,6 +664,52 @@ export function drawConcealVeil(ctx: CanvasRenderingContext2D, ring: ZPoint[], v
   ctx.fillStyle = 'rgba(6,5,14,0.5)'
   ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height)
   ctx.restore()
+}
+
+/**
+ * 敵の闇結界による視認阻害（#61/#62）：作成フェーズで内側をぼかし、z 場・予測経路を隠す。
+ * **1枚だけの範囲は「見づらいがギリギリ見える」薄幕**、**2枚が重なった範囲は「全く見えない黒」**にする
+ * （自陣隠蔽の 1重/2重 と同じ考え方）。リング同士が重なる領域を交差クリップで塗り分ける。
+ */
+export function drawEnemyConceal(ctx: CanvasRenderingContext2D, rings: ZPoint[][], vp: Viewport): void {
+  const valid = rings.filter((r) => r.length >= 3)
+  if (valid.length === 0) return
+  const W = ctx.canvas.width
+  const H = ctx.canvas.height
+  // 1枚ぶん：内側をぼかし＋薄い幕（ギリギリ見える）
+  for (const ring of valid) {
+    ctx.save()
+    ringScreenPath(ctx, ring, vp)
+    ctx.clip()
+    ctx.filter = 'blur(5px)'
+    ctx.drawImage(ctx.canvas, 0, 0)
+    ctx.filter = 'none'
+    ctx.fillStyle = 'rgba(10,7,20,0.5)' // 薄幕：z 場・予測経路は見えなくなるが地形はギリギリ分かる
+    ctx.fillRect(0, 0, W, H)
+    ctx.restore()
+  }
+  // 2枚が重なる領域：交差だけにクリップして不透明な黒で塗る（全く見えない・#62）
+  for (let i = 0; i < valid.length; i++)
+    for (let j = i + 1; j < valid.length; j++) {
+      ctx.save()
+      ringScreenPath(ctx, valid[i], vp)
+      ctx.clip()
+      ringScreenPath(ctx, valid[j], vp)
+      ctx.clip() // clip を重ねると交差（重なり）だけになる
+      ctx.fillStyle = '#000'
+      ctx.fillRect(0, 0, W, H)
+      ctx.restore()
+    }
+  // 視認阻害ゾーンの境界を薄い破線で示す
+  for (const ring of valid) {
+    ctx.save()
+    ringScreenPath(ctx, ring, vp)
+    ctx.strokeStyle = 'rgba(150,110,210,0.55)'
+    ctx.lineWidth = 1.5
+    ctx.setLineDash([5, 4])
+    ctx.stroke()
+    ctx.restore()
+  }
 }
 
 /** z（属性）で色分けして軌道を描く。中立は淡く、光=金・闇=紫。 */
@@ -731,19 +831,28 @@ export function drawZFieldOverlay(
   zField: (x: number, y: number) => number,
   vp: Viewport,
 ): void {
-  const step = 2 // ユニット（方眼1.0刻みに合わせた粗さ）
+  // 方眼と同じ1ユニット刻みのセルで塗る（1マス=1ユニット・グリッドに整列・#53）。
+  // セルは整数境界 [x, x+1] を占め、中心 (x+0.5, y+0.5) の z で代表させる。
   const s = scaleOf(vp)
-  const cell = step * s
+  const cell = GRID_UNIT * s
+  const R = FIELD.rField
+  const b = visibleBounds(vp)
+  const x0 = Math.max(-R, Math.floor(b.minX / GRID_UNIT) * GRID_UNIT)
+  const x1 = Math.min(R, Math.ceil(b.maxX / GRID_UNIT) * GRID_UNIT)
+  const y0 = Math.max(-R, Math.floor(b.minY / GRID_UNIT) * GRID_UNIT)
+  const y1 = Math.min(R, Math.ceil(b.maxY / GRID_UNIT) * GRID_UNIT)
   ctx.save()
-  for (let x = -FIELD.rField; x <= FIELD.rField; x += step) {
-    for (let y = -FIELD.rField; y <= FIELD.rField; y += step) {
-      if (Math.hypot(x, y) > FIELD.rField) continue
-      const z = zField(x, y)
+  for (let x = x0; x < x1 + 1e-9; x += GRID_UNIT) {
+    for (let y = y0; y < y1 + 1e-9; y += GRID_UNIT) {
+      const cx = x + GRID_UNIT / 2
+      const cy = y + GRID_UNIT / 2
+      if (Math.hypot(cx, cy) > R) continue
+      const z = zField(cx, cy)
       if (!Number.isFinite(z)) continue
       const attr = attributeOf(z)
       if (attr === 'neutral') continue
       const t = Math.min(strengthOf(z) / FIELD.sMax, 1)
-      const c = toScreen({ x, y }, vp)
+      const c = toScreen({ x: cx, y: cy }, vp)
       ctx.fillStyle =
         attr === 'light' ? `rgba(244,196,48,${0.04 + t * 0.16})` : `rgba(123,92,196,${0.05 + t * 0.18})`
       ctx.fillRect(c.x - cell / 2, c.y - cell / 2, cell + 1, cell + 1)
@@ -1041,14 +1150,15 @@ export function drawBullet(
   const color = bulletColorOf(z)
   const strength = strengthOf(z) // 0..sMax
   const sFrac = Math.min(1, strength / FIELD.sMax) // 0..1
-  // 威力 = 速度 × 強度。威力が大きいほど弾も大きくなる（#11/#21）
+  // 弾の大きさは威力（=速度×強度）で決まる（#21/#45）。速度0や弱属性なら小さく、最大威力で最大。
+  // 以前は強属性に下駄（sFrac×0.4）を履かせ基準サイズも大きかったため、常に大玉に見えていた。
   const powerFrac = powerSizeFrac(speed, z)
-  const sizeFrac = Math.max(sFrac * 0.4, powerFrac) // 強属性は最低限の存在感、威力が高いほど大きく
+  const sizeFrac = Math.max(0.06, powerFrac) // 最低限見える大きさだけ確保し、あとは威力に比例
   const pulse = 1 + Math.sin(phase * 1.7) * 0.25
   // 威力が大きいほど大きく・強いほど棘が多い（#21：形が z で変わる）
-  const glowR = (9 + sizeFrac * 18) * pulse
+  const glowR = (4 + sizeFrac * 22) * pulse
   const spikes = 4 + Math.round(sFrac * 4)
-  const coreR = (2.0 + sizeFrac * 3.4) * pulse
+  const coreR = (1.3 + sizeFrac * 4.2) * pulse
   ctx.save()
   const glow = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, glowR)
   glow.addColorStop(0, color)

@@ -5,7 +5,7 @@ import type { Ally, Enemy, EnemyFamily, EnemyRole, Flight, Obstacle, Trajectory,
 import { sampleTrajectory, validPrefix, pathTermination, dist } from './coords'
 import { simulatePath } from './physics'
 import { firstHit } from './collision'
-import { isSolidAt } from './obstacle'
+import { isSolidAt, materialCells } from './obstacle'
 import { attributeOf, strengthOf, affinityMultiplier, zfieldAt } from './attribute'
 import { ringEncloses, ringAverageAttr, type RingPoint } from './orbit'
 import { constZField } from './zfields'
@@ -260,15 +260,16 @@ function planGuardianOrbit(enemy: Enemy, obstacles: Obstacle[] = []): EnemyPlan 
  * 既存の極判定（coords.applyZValidity）がそのまま暴発（z 場エラー・04-magic §4.3）として検出する。
  */
 export function buildRuptorZField(origin: Vec2, target: Vec2, polarity: 1 | -1): ZField {
-  const dx = target.x - origin.x
-  const dy = target.y - origin.y
-  const L = Math.hypot(dx, dy) || 1
-  const ux = dx / L
-  const uy = dy / L
+  // z 場は術者位置 origin を原点として評価される（#52）ため、狙点も origin 基準の相対座標で持つ
+  const rx = target.x - origin.x
+  const ry = target.y - origin.y
+  const L = Math.hypot(rx, ry) || 1
+  const ux = rx / L
+  const uy = ry / L
   const base = RUPTOR.zBase * polarity
   const k = -RUPTOR.poleK * polarity // 接近側（g<0）で k/g が base と同符号になる
   return (x, y) => {
-    const g = (x - target.x) * ux + (y - target.y) * uy
+    const g = (x - rx) * ux + (y - ry) * uy
     return base + k / g
   }
 }
@@ -341,12 +342,12 @@ export function planRuptorShot(
   }
 
   // 障害物狙いの個体（第4面デモ・#42）：壁の素材（unbreakable 以外）の「面の手前」に暴発点を置く。
-  // 敵から近い順にいくつかのディスクを試し、確実に暴発できる（rank=3）狙いを選ぶ。
+  // 敵から近い順にいくつかの素材セル（円・矩形とも・#56）を試し、確実に暴発できる（rank=3）狙いを選ぶ。
   if (!aimOverride && enemy.ruptorTarget === 'obstacles') {
     const discs: { pos: Vec2; r: number; d: number }[] = []
     for (const ob of obstacles) {
       if ((ob.kind ?? 'normal') === 'unbreakable') continue
-      for (const disc of ob.solids) {
+      for (const disc of materialCells(ob)) {
         discs.push({ pos: { x: disc.x, y: disc.y }, r: disc.r, d: dist(enemy.pos, { x: disc.x, y: disc.y }) })
       }
     }

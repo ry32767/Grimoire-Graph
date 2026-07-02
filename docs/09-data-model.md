@@ -20,7 +20,7 @@
 | `Enemy` / `Ally` | 敵・味方術者（[05](05-enemies.md)/[01](01-overview.md) 参照）。敵は `ruptorTarget`/`castCount`/`patternPool`/`fireEvery`/`fireOffset`/`boss`/`slipThrough`/`alternatingAura`/`guardZSign` の拡張フィールドを持つ（#42/#44/#45/05b） |
 | `EnemyFamily` | `line \| arc \| wave \| spiral \| exp \| poly34`（得意関数の系統・#43） |
 | `EnemyRole` | `attacker \| breaker \| guardian \| ruptor`（#42） |
-| `Disc` / `Obstacle` / `ObstacleKind` | 障害物（solids − carves・耐久種別） |
+| `Disc` / `Rect` / `Obstacle` / `ObstacleKind` | 障害物（素材＝solids（円）＋rects（四角・#56）− carves・耐久種別） |
 | `CarveBurst` | 削る瞬間の演出データ |
 | `ActiveOrbit` | 永続する周回結界（#39） |
 | `Mechanics` | `{ obstacles, enemyFire }`（段階的解禁） |
@@ -82,7 +82,7 @@ resolveAllyCasts(state, casts, castingEnemyIds, { instability?, misfireRoll? })
 入力は非破壊（複製して新状態を返す）。解決はこの順序：
 
 1. **敵弾を構築** … `planEnemyShots` で各敵の弾を決定（多重詠唱は弾ごとに独立計画・#44）。guardian の閉軌道は飛ばさず**防御リング**（`enemyRings`）へ分離。ruptor は暴発点（`misfirePos`）つきの弾になる。
-2. **味方発射を分類・構築** … `classifyTrajectory` で発射型/軌道型に。軌道型は壁接触/失速で**霧散**判定。
+2. **味方発射を分類・構築** … `classifyTrajectory` で発射型/軌道型に。軌道型は壁接触で**霧散**判定。強属性（|z|>zRef）で失速し速度0に達したら**自滅して霧散**（ログで明示・#31/#44）。
 3. **防御** … 各敵弾に対し：
    - 3z. 障害物が敵弾を削る（味方の盾）。
    - 3a. 軌道型リング（新規＋永続）が境界で迎撃（反対極のみ相殺）。
@@ -139,6 +139,7 @@ src/
 │  ├ status.ts              状態異常（ひるみ/継続ダメージ）
 │  ├ enemyAI.ts             敵 AI（系統・ロール・探索・壁よけ）
 │  ├ recommend.ts           おすすめ術式の探索
+│  ├ exprFit.ts             式の係数化（数値→スライダー）・通過点フィット（最小二乗・#46）
 │  ├ turn.ts                ターン解決の中核
 │  └ battle.ts              戦闘ループ・勝敗判定
 ├ data/

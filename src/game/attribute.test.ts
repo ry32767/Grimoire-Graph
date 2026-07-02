@@ -90,6 +90,20 @@ describe('z 場（属性源・#30）', () => {
     expect(zfieldAt({ mode: 'rotate', g: () => 0, angle: 0, z: () => NaN }, { x: 0, y: 0 })).toBe(0)
   })
 
+  it('z 場は術者位置（origin）を原点として評価する（#52・軌道と同じ基準）', () => {
+    // 術者 (5,5)・z=y。位置 (5,8) は術者から見て y=3 → 3 を返す（絶対 y=8 ではない）
+    const traj: Trajectory = {
+      mode: 'rotate',
+      g: () => 0,
+      angle: 0,
+      origin: { x: 5, y: 5 },
+      z: (_x, y) => y,
+    }
+    expect(zfieldAt(traj, { x: 5, y: 8 })).toBeCloseTo(3, 6)
+    // 術者の足元は常に原点 → z=0
+    expect(zfieldAt(traj, { x: 5, y: 5 })).toBeCloseTo(0, 6)
+  })
+
   it('支配属性は経路で強度が最大の点の属性・強度を返す', () => {
     // z=+zPeak 一定 → どこでも光・最強
     const traj: Trajectory = { mode: 'rotate', g: () => 0, angle: 0, z: () => FIELD.zPeak }

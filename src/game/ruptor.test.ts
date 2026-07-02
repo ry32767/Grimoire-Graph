@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import { planRuptorShot, planEnemyShot, buildRuptorZField, enemyFlight } from './enemyAI'
 import { resolveTurn } from './turn'
-import { buildRing } from './orbit'
+import { buildRing, attachRingSpeeds } from './orbit'
 import { constZField } from './zfields'
 import { dist } from './coords'
 import { FIELD } from '../data/constants'
@@ -31,21 +31,30 @@ const ruptor = (pos: { x: number; y: number }, family: EnemyFamily = 'wave'): En
   castZ: -3,
 })
 
-/** 味方 pos を囲む円結界（半径 r・一定 z）を永続周回として作る。 */
+/** 味方 pos を囲む円結界（半径 r・一定 z）を永続周回として作る（点ごとの速度つき・#60）。 */
 function orbitAround(ownerId: string, center: { x: number; y: number }, z: number): ActiveOrbit {
   const traj: Trajectory = { mode: 'polar', f: () => 4, origin: center, z: constZField(z) }
-  return { id: `orb-${ownerId}`, ownerId, owner: 'player', ring: buildRing(traj), ringSpeed: 10 }
+  return {
+    id: `orb-${ownerId}`,
+    ownerId,
+    owner: 'player',
+    ring: attachRingSpeeds(buildRing(traj), 10),
+    ringSpeed: 10,
+  }
 }
 
 describe('buildRuptorZField（05b §4：z=zBase×極性+k/g の極）', () => {
   it('接近側では極性どおりの属性を帯び、狙点近傍で発散する', () => {
-    const zf = buildRuptorZField({ x: 0, y: 10 }, { x: 0, y: -8 }, -1)
+    const origin = { x: 0, y: 10 }
+    const zf = buildRuptorZField(origin, { x: 0, y: -8 }, -1)
+    // z 場は術者位置を原点に評価される（#52）：ワールド座標から相対へ変換して評価
+    const at = (x: number, y: number) => zf(x - origin.x, y - origin.y)
     // 中間点（狙点まで遠い）：闇の通常弾として読める大きさ
-    const mid = zf(0, 2)
+    const mid = at(0, 2)
     expect(mid).toBeLessThan(0)
     expect(Math.abs(mid)).toBeLessThan(FIELD.zRef + 0.5)
     // 狙点の直前：|z| が発散に向かう
-    expect(Math.abs(zf(0, -7.9))).toBeGreaterThan(2 * FIELD.zPeak)
+    expect(Math.abs(at(0, -7.9))).toBeGreaterThan(2 * FIELD.zPeak)
   })
 })
 

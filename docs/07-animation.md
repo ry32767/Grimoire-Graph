@@ -19,6 +19,14 @@ Canvas は内部解像度 `INTERNAL = 520`px 正方形、ビューポート `uni
 
 合計 `realMs = flightMs + tailMs`。
 
+### 作成フェーズのオーバーレイ（`BattleCanvas`）
+
+解決演出がない作成フェーズでは、盤面に操作補助を重ねて描く：
+
+- **発射方向の矢印**（`drawAimArrow`・#47）：active ally から θ 方向へ金色の矢印。盤面ドラッグで θ を変えると追従。
+- **通過点の✛**（`drawFitPoints`・#46）：選んだ通過点を連番つきで表示。
+- **点ピックのルーペ**（`drawPickLoupe`・#49）：点ピック中のドラッグで、**指の少し上に拡大鏡**（`ctx.drawImage(ctx.canvas, …)` で指の下を `zoom=2.6` 拡大・`imageSmoothingEnabled=false`）を出し、中心クロスヘアと着地点✛を描く。指で点が隠れない。ポインタ移動時は `composeDrawRef` 経由で盤面を再描画してから重ねる。
+
 ### 速度→時間の対応（`buildTimeline` / `posAtTime`）
 
 各弾サンプル `{pos, speed, arcLen, z}` を逆速度で積分して時間を作る：
@@ -38,7 +46,7 @@ flightMs = min(MAX_MS, max(floorMs, maxTotal × MS_PER_GAMESEC(360)))
 | イベント | 発火条件 | 長さ | 主な描画関数 |
 |---|---|---|---|
 | 弾の飛行 | サンプルあり | flightMs | `drawBullet` + `drawWaveTrail` |
-| 障害物えぐり | 弾が `carve.arcLen` を通過 | `BURST_ARC=9`（弧長窓） | `drawCarveBurst`（岩片飛散・赤橙） |
+| 障害物えぐり | 弾が `carve.arcLen` を通過 | `CARVE_BURST_MS=480`（到達時刻から実時間） | `drawCarveBurst`（岩片飛散・赤橙） |
 | 命中フラッシュ | `arcLen ≥ impact.arcLen` | `FLASH_MS=420` | 赤フラッシュ＋画面揺れ |
 | クラッシュ火花 | 2 弾が `CLASH_DIST=1.6` 以内 | `CLASH_MS=460` | `drawClashSpark`（青白い火花） |
 | 結界の霧散 | 壁/弾に負ける | `DISSIPATE_MS=520` | `drawOrbitDissipation`（リング消失・粒拡散） |
@@ -87,11 +95,11 @@ intensity = 1 − (elapsed − flashStart)/FLASH_MS    // 1→0 に減衰
 
 | # | レイヤー | 主な内容 |
 |---|---|---|
-| 0 | 背景 | `COLORS.bg` 塗り、2 ユニット格子、原点軸、場の境界円（半透明紫） |
-| 1 | z 場オーバーレイ（編集時のみ） | 光=金の薄塗り（不透明度 0.04〜0.20）、闇=紫の薄塗り（0.05〜0.23）。強度に比例 |
+| 0 | 背景 | `COLORS.bg` 塗り、**1 ユニット格子**（1マス=数学1ユニット・#53）、5ユニットごとに濃い大目盛り（`COLORS.gridMajor`）、原点軸、場の境界円（半透明紫）。格子の範囲は `visibleBounds(vp)` から決め、ステージのスケール（`unitsRadius`）を変えても画面全体を覆う |
+| 1 | z 場オーバーレイ（作成フェーズは常時・#55） | 光=金の薄塗り（不透明度 0.04〜0.20）、闇=紫の薄塗り（0.05〜0.23）。強度に比例。**セルは方眼と同じ1ユニット**で、整数境界の各マスを中心 (x+0.5, y+0.5) の z で塗る（格子に整列・#53） |
 | 1b | z 場エラー overlay（編集時・#30） | 場がエラーになる地点を全て赤 `rgba(255,60,60,0.5)`（`drawZFieldErrors`）。極=赤い線（二分法 `isPoleBetween` で検出）、定義域外=赤い領域 |
 | 2 | 敵ゴースト軌道（予告） | `COLORS.ghost` の破線 `[5,4]` |
-| 3 | 障害物 | solids を描き carves を `destination-out` で打ち抜き、種別ごとのテクスチャを `source-atop`（石積み目地/亀裂/鋲/シェブロン） |
+| 3 | 障害物 | solids（円）＋rects（四角・#56）を描き carves を `destination-out` で打ち抜き、種別ごとのピクセルアート・タイルを `source-atop` で敷き詰める（石積み/亀裂/鋲/鋼板） |
 | 4 | 味方の予測軌道（編集時） | z で色分けした線（光=金/闇=紫/中立=淡）、強度で線幅 |
 | 4b | 暴発点マーカー（編集時・#30） | 関数（軌道 or z 場）がエラーで暴発する点に**赤い ✕**（`drawMisfireMarker`・`#ff4b4b`・最前面）。`Preview.misfirePos` 由来 |
 | 5 | 敵 | オーラ→暗い下地→属性枠→ロール印（guardian=二重破線/breaker=棘）→ドット絵スプライト（16×16）→系統 glyph→名前ラベル→被弾フラッシュ |
@@ -99,13 +107,13 @@ intensity = 1 − (elapsed − flashStart)/FLASH_MS    // 1→0 に減衰
 | 7 | HP バー | 敵/味方の上 |
 | 8 | 弾の波トレイル | `drawWaveTrail`：2 本の正弦波（180°位相差）＋トレイル粒 |
 | 9 | 飛行する弾 | `drawBullet`：外周グロー→shadowBlur→回転スパイク→白いコアの多層グロー |
-| 10 | 結界リングの粒 | 18 粒がリングを 1.1 周。各粒に 5 点の尾。`zColor` で属性色 |
+| 10 | 結界リングの粒 | 18 粒がリングを 1.1 周。各粒に 5 点の尾。`zColor` で属性色。**進み方は点ごとの速度に連動**（#60：`ringTimeline`＝Σ ds/speed の累積時間で phase→index を写像。速い区間は素早く抜け、遅い区間で粒が密集）。粒サイズも触れた点の速度×強度（`ptSpeed`）。**#63：同じターン内で速度を累積**＝1周ぶんの正味エネルギー変化 `dSq=speed[last]²−speed[0]²`（>0＝加速する場 |z|<zRef）で、解決の進行 e が進むほど回転が加速/減速し粒も拡大/縮小（`spin=e+accum·e²/2`・`mult=1+accum·e`）。累積は解決アニメーション内のみ（ターンをまたがない）。加速する場・非対称なリング（螺旋等）で顕著、対称な円で dSq≈0 なら一定 |
 | 11 | 結界の霧散 | `drawOrbitDissipation` |
 | 12 | えぐりバースト | `drawCarveBurst`（岩片） |
 | 13 | クラッシュ火花 | `drawClashSpark` |
 | 14 | 暴発 | `drawMisfire` |
 | 15 | 弾の霧散 | `drawBulletDissipation` |
-| 16 | 隠蔽ヴェール | `drawConcealVeil`：闇結界の内側を 3px ぼかし＋暗幕 `rgba(6,5,14,0.5)` 重ね |
+| 16 | 隠蔽ヴェール | 自陣の闇結界＝`drawConcealVeil`（内側を 3px ぼかし＋暗幕 `rgba(6,5,14,0.5)`）。**敵 guardian の闇結界＝`drawEnemyConceal`（#61/#62）**：作成フェーズで内側を 5px ぼかし＋薄幕 `rgba(10,7,20,0.5)` で**z 場・予測経路を隠す**（1枚＝見づらいがギリギリ見える）。**2枚が重なった領域は交差クリップで不透明な黒＝全く見えない**（自陣隠蔽の 1重/2重 と同じ）。破線の境界。`standingOrbits[].owner` で切替 |
 | 17 | ダメージ／回復の数値（#42） | `drawDamageNumber`：被弾/回復の数値が浮かび上がる。**揺れの外**（UI として安定）に最前面で描く |
 
 ### 弾の色・大きさ
@@ -113,12 +121,15 @@ intensity = 1 − (elapsed − flashStart)/FLASH_MS    // 1→0 に減衰
 ```ts
 bulletColorOf(z):  光→#f4c430 / 闇→#7b5cc4 / 中立→#d9d4ea
 powerSizeFrac(speed, z) = min(1, strengthOf(z)×max(0,speed) / (sMax×maxFlightSpeed))
-                        = min(1, 威力 / (5×24))
+                        = min(1, 威力 / (5×24))           // 威力 = 速度 × 属性強度
+sizeFrac = max(0.06, powerSizeFrac)                   // 最低限見える小ささだけ確保し、あとは威力に比例
 pulse = 1 + sin(phase×1.7)×0.25                       // 0.75〜1.25 で脈動
-glowR = (9 + sizeFrac×18) × pulse,  coreR = (2.0 + sizeFrac×3.4) × pulse
+glowR = (4 + sizeFrac×22) × pulse,  coreR = (1.3 + sizeFrac×4.2) × pulse
 ```
 
-威力が高いほど弾・グロー・スパイク・トレイル粒が大きく派手になる。
+弾の大きさは**威力（=その点の速度×属性強度）にそのまま比例**する（#45）。速度0や弱属性なら小さく、最大威力で最大。
+以前は強属性へ下駄（`sFrac×0.4`）を履かせ基準サイズも大きかったため、威力が低くても常に大玉に見えていた。
+スパイクの本数だけは属性強度 `sFrac` 由来（強属性ほど棘が多い）。
 
 ### 波トレイル定数
 
@@ -142,7 +153,8 @@ glowR = (9 + sizeFrac×18) × pulse,  coreR = (2.0 + sizeFrac×3.4) × pulse
 | トークン | 値 | 用途 |
 |---|---|---|
 | `bg` | `#0d0b14` | 背景（ほぼ黒の紫） |
-| `grid` | `#26224a` | 格子 |
+| `grid` | `#221e40` | 格子（小目盛り・1ユニット） |
+| `gridMajor` | `#332d5e` | 格子（大目盛り・5ユニットごと・#53） |
 | `axis` | `#3a3470` | 原点軸 |
 | `light1` | `#f4c430` | 光属性（金）：弾・軌道・テキスト |
 | `light2` | `#fff8e1` | クリーム：UI・ハイライト・弾のコア |
@@ -158,14 +170,18 @@ glowR = (9 + sizeFrac×18) × pulse,  coreR = (2.0 + sizeFrac×3.4) × pulse
 
 `attrColor(attr)`：光→light1 / 闇→dark1 / 中立→neutral。
 
-### 障害物のテクスチャ（種別ごと）
+### 障害物のテクスチャ（種別ごと・#56）
 
-| 種別 | 下地色 | テクスチャ |
+壁の質感は**ピクセルアートのタイル画像**を素材内（`source-atop`）に `createPattern(tile,'repeat')` で敷き詰める（`src/render/textures.ts` の `getWallTexture(kind, element)`。小タイルを生成してキャッシュ。`imageSmoothingEnabled=false`、下地の属性色を活かすため `globalAlpha≈0.62` で重ねる）。画像が取得できない環境では下の手続き描画にフォールバック。将来は `getWallTexture` を `new Image()` の実 PNG 読み込みに差し替え可能。
+
+| 種別 | 下地色 | タイル（ピクセルアート） |
 |---|---|---|
-| normal/属性 | light=茶 `rgba(120,98,46,.94)` / dark=紫 `rgba(62,52,104,.94)` / 中立=灰 | 石積みの目地（横線） |
-| fragile | 薄灰 `rgba(110,106,122,.9)` | ジグザグの亀裂 |
-| tough | 濃灰 `rgba(56,56,70,.96)` | 鋲打ちグリッド |
-| unbreakable | 黒 `rgba(24,24,32,.98)` | シェブロン斜線 |
+| normal/属性 | light=茶 `rgba(120,98,46,.94)` / dark=紫 `rgba(62,52,104,.94)` / 中立=灰 | 石積みレンガ（属性で色味・段ごとに半個ずらし） |
+| fragile | 薄灰 `rgba(110,106,122,.9)` | レンガ＋ジグザグの亀裂 |
+| tough | 濃灰 `rgba(56,56,70,.96)` | レンガ＋鋲（各レンガ中央の点） |
+| unbreakable | 黒 `rgba(24,24,32,.98)` | 鋼板（斜めシェブロン＋四隅と中央の鋲） |
+
+> 形は円（`solids`）と矩形（`rects`・#56）。矩形は角のシャープな四角い壁として `fillRect` で塗り、テクスチャ・削れ穴（`destination-out`）も同じ仕組みで機能する。レイヤー3の `solids を描き` は `solids＋rects を描き` に拡張。
 
 ---
 

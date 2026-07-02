@@ -1,8 +1,8 @@
 // ステージ定義（機能14・#6・#15・06b 難易度フレームワーク）。スケール1.5倍（場 r=30）。
 // LVL（1〜7・原則ステージ番号）で HP 倍率・castMag・使える family/z場/パターンを連動して解放する。
 // castInitialSpeed は全敵・全LVLで 8 固定（速度差でなく関数の選び方・z場・タイミングで難度を作る）。
-// 障害物は solids（重なった円の和＝連続したブロブ）。当たった点を円でえぐり取り滑らかな穴が開く。
-import type { Disc, Enemy, EnemyFamily, Obstacle, ObstacleKind, Stage, ZField } from '../game/types'
+// 障害物は solids（重なった円の和＝連続したブロブ）＋rects（四角い壁・#56）。当たった点を円でえぐり取る。
+import type { Disc, Enemy, EnemyFamily, Obstacle, ObstacleKind, Rect, Stage, ZField } from '../game/types'
 import { GAME } from './constants'
 
 /** LVL → 数値スケール（06b §2）。HP倍率は基礎100を1.0とした目安、castMag は z 強度。 */
@@ -100,6 +100,11 @@ let oseq = 0
 function ob(element: Obstacle['element'], solids: Disc[], kind?: ObstacleKind): Obstacle {
   return kind ? { id: `o${oseq++}`, element, solids, carves: [], kind } : { id: `o${oseq++}`, element, solids, carves: [] }
 }
+/** 四角い壁（#56）：solids の代わりに矩形で素材を表す（角がシャープ）。 */
+function obRect(element: Obstacle['element'], rects: Rect[], kind?: ObstacleKind): Obstacle {
+  const base = { id: `o${oseq++}`, element, solids: [], rects, carves: [] }
+  return kind ? { ...base, kind } : base
+}
 /** 縦の柱：(cx, y0) から上へ n 個の円を積んだブロブ */
 function pillar(cx: number, y0: number, n: number, element: Obstacle['element'], kind?: ObstacleKind): Obstacle {
   return ob(
@@ -108,7 +113,7 @@ function pillar(cx: number, y0: number, n: number, element: Obstacle['element'],
     kind,
   )
 }
-/** 矩形ブロック：左下 (x0, y0) から cols×rows の円を敷き詰めたブロブ */
+/** 矩形ブロック：左下 (x0, y0) から cols×rows ぶんを占める四角い壁（#56：角がシャープ）。 */
 function block(
   x0: number,
   y0: number,
@@ -117,10 +122,12 @@ function block(
   element: Obstacle['element'],
   kind?: ObstacleKind,
 ): Obstacle {
-  const solids: Disc[] = []
-  for (let r = 0; r < rows; r++)
-    for (let c = 0; c < cols; c++) solids.push({ x: x0 + c * STEP, y: y0 + r * STEP, r: R })
-  return ob(element, solids, kind)
+  // 旧・円敷き詰め（中心 x0..x0+(cols-1)STEP、半径 R）と同じ範囲を覆う矩形にする
+  return obRect(
+    element,
+    [{ x: x0 - R, y: y0 - R, w: (cols - 1) * STEP + 2 * R, h: (rows - 1) * STEP + 2 * R }],
+    kind,
+  )
 }
 /** 渦巻きの腕：(cx, cy) を中心にアルキメデス螺旋へ n 個並べたブロブ（位相 phase でずらす） */
 function spiralArm(
@@ -155,10 +162,9 @@ function wall(
   element: Obstacle['element'],
   kind?: ObstacleKind,
 ): Obstacle {
-  const solids: Disc[] = []
-  const step = R * 1.4 // overlap させて連続させる
-  for (let r = 0; r < rows; r++) for (const x of spanX(x0, x1, step)) solids.push({ x, y: y0 + r * step, r: R })
-  return ob(element, solids, kind)
+  // 四角い壁（#56）：x0→x1・rows 段ぶんの厚みを持つシャープな矩形
+  const step = R * 1.4
+  return obRect(element, [{ x: x0 - R, y: y0 - R, w: x1 - x0 + 2 * R, h: (rows - 1) * step + 2 * R }], kind)
 }
 /** 列柱：x0→x1 を step 間隔で、各柱は縦 n 段のブロブ。elems を順に割り当てて光闇を交互にできる。 */
 function colonnade(

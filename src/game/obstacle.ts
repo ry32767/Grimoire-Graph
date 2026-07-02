@@ -3,11 +3,16 @@
 // 引き算して物理的にえぐり取る。「素材」＝どれかの solid 円内で、かつどの carve 円にも入らない点。
 //   - えぐる半径 = 威力 × 係数（最大半径でキャップ）。威力が高いほど一撃で広く削れて貫通しやすい。
 //   - えぐるたびに弾は減速。速度が 0 になればその場で消滅し貫通しない。反対極ほど安く削れる。
-import type { Attribute, Obstacle, ObstacleKind, Vec2 } from './types'
+import type { Attribute, Obstacle, ObstacleKind, Rect, Vec2 } from './types'
 import { COMBAT, OBSTACLE_KIND } from '../data/constants'
 import { affinityMultiplier } from './attribute'
 
-/** 点 p が障害物の素材内か（どれかの solid 円内で、かつどの carve 円にも入っていない）。 */
+/** 点 p が矩形 r の内側か。 */
+function pointInRect(p: Vec2, r: Rect): boolean {
+  return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h
+}
+
+/** 点 p が障害物の素材内か（solid 円 or 矩形の内側で、かつどの carve 円にも入っていない）。 */
 export function isSolidAt(ob: Obstacle, p: Vec2): boolean {
   let inSolid = false
   for (const s of ob.solids) {
@@ -18,6 +23,15 @@ export function isSolidAt(ob: Obstacle, p: Vec2): boolean {
       break
     }
   }
+  // 四角い素材（#56）。円に無くても矩形に入っていれば素材
+  if (!inSolid && ob.rects) {
+    for (const r of ob.rects) {
+      if (pointInRect(p, r)) {
+        inSolid = true
+        break
+      }
+    }
+  }
   if (!inSolid) return false
   for (const c of ob.carves) {
     const dx = p.x - c.x
@@ -25,6 +39,33 @@ export function isSolidAt(ob: Obstacle, p: Vec2): boolean {
     if (dx * dx + dy * dy <= c.r * c.r) return false
   }
   return true
+}
+
+/** えぐり破片の演出やAoE判定に使う「素材セル」の代表点（円＝中心、矩形＝R 間隔の格子・#56）。 */
+const CELL = 2.4
+export function materialCells(ob: Obstacle): { x: number; y: number; r: number }[] {
+  const cells = ob.solids.map((d) => ({ x: d.x, y: d.y, r: d.r }))
+  for (const r of ob.rects ?? []) {
+    for (let y = r.y + CELL / 2; y < r.y + r.h; y += CELL)
+      for (let x = r.x + CELL / 2; x < r.x + r.w; x += CELL) cells.push({ x, y, r: CELL / 2 })
+  }
+  return cells
+}
+
+/** 障害物の素材が中心 center・半径 radius の円に少しでも重なるか（暴発AoEの範囲判定・#56）。 */
+export function obstacleOverlapsCircle(ob: Obstacle, center: Vec2, radius: number): boolean {
+  for (const d of ob.solids) {
+    const dx = d.x - center.x
+    const dy = d.y - center.y
+    if (Math.hypot(dx, dy) <= radius + d.r) return true
+  }
+  for (const r of ob.rects ?? []) {
+    // 矩形へ最近接点をクランプして距離判定
+    const cx = Math.max(r.x, Math.min(center.x, r.x + r.w))
+    const cy = Math.max(r.y, Math.min(center.y, r.y + r.h))
+    if (Math.hypot(cx - center.x, cy - center.y) <= radius) return true
+  }
+  return false
 }
 
 /**
