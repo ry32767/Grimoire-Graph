@@ -62,6 +62,56 @@ describe('ステージ定義（機能14・#15）', () => {
   })
 })
 
+describe('難易度フレームワーク（06b）', () => {
+  it('castInitialSpeed は全敵・全LVLで 8 固定', () => {
+    for (const s of STAGES) for (const e of s.enemies) expect(e.castInitialSpeed).toBe(8)
+  })
+
+  it('迂回型・暴発型は line family を持たない（05b §2）', () => {
+    for (const s of STAGES) {
+      for (const e of s.enemies) {
+        const role = e.role ?? 'attacker'
+        if (role !== 'attacker' && role !== 'ruptor') continue
+        // attacker（迂回型）は line を含んでもよいのは第1面（迂回パターン未解禁）のみ
+        if (role === 'ruptor') {
+          expect(e.family).not.toBe('line')
+          expect(e.families ?? []).not.toContain('line')
+        }
+      }
+    }
+  })
+
+  it('第4面に暴発デモ（障害物狙い・低頻度）の崩し手が1体いる', () => {
+    const demos = STAGES[3].enemies.filter((e) => e.role === 'ruptor')
+    expect(demos).toHaveLength(1)
+    expect(demos[0].ruptorTarget).toBe('obstacles')
+    expect(demos[0].fireEvery).toBe(2)
+    // 1ターン目に必ず撃つ（最低1回は暴発を見せる）
+    expect((1 + (demos[0].fireOffset ?? 0)) % (demos[0].fireEvery ?? 1)).toBe(0)
+  })
+
+  it('第6面に崩し手3体（低頻度・位相ずらし）と交互張りの守護型がいる', () => {
+    const ruptors = STAGES[5].enemies.filter((e) => e.role === 'ruptor')
+    expect(ruptors).toHaveLength(3)
+    for (const r of ruptors) expect(r.fireEvery).toBe(2)
+    expect(new Set(ruptors.map((r) => r.fireOffset)).size).toBeGreaterThan(1) // タイミングが揃わない
+    const guardian = STAGES[5].enemies.find((e) => e.role === 'guardian')
+    expect(guardian?.alternatingAura).toBe(true)
+  })
+
+  it('第7面ボスは多重詠唱（2本→フェーズで3本）と HP フェーズを持つ', () => {
+    const s7 = STAGES[6]
+    const boss = s7.enemies.find((e) => e.boss)!
+    expect(boss.castCount).toBe(2)
+    expect(boss.patternPool).toEqual(['breaker', 'attacker'])
+    expect(s7.bossPhases).toHaveLength(2)
+    expect(s7.bossPhases![0]).toMatchObject({ hpBelow: 0.66, castCount: 2 })
+    expect(s7.bossPhases![1]).toMatchObject({ hpBelow: 0.33, castCount: 3, cullMinions: true })
+    // 最下層は障害物なし（逃げ場が少ない）
+    expect(s7.bossPhases![1].obstacles).toHaveLength(0)
+  })
+})
+
 describe('エンジンとの結線（スモーク）', () => {
   it('ステージ1でおすすめ光線を敵に当てるとHPが減る', () => {
     const stage = STAGES[0]

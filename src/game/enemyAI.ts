@@ -466,8 +466,9 @@ export function planEnemyShot(
     // 攻撃の z 場は対象の弱点（反対極）を、強さ違い（zPeak/zRef）で試す（#28/#31：届く威力を最大化）
     let zCands = attackZCandidates(enemy, ally.element)
     // 迂回型の高難度個体（05b §5.2）：狙う相手が結界に守られていれば、
-    // 結界の平均属性と同極の z に合わせてすり抜ける（同極は透過＝04-magic §4.6）
-    if (enemy.slipThrough && !enemy.castZField && standingRings.length > 0) {
+    // 結界の平均属性と同極の z に合わせてすり抜ける（同極は透過＝04-magic §4.6）。
+    // 固有の castZField を持つ個体でも、すり抜けが可能な局面ではそちらを優先する
+    if (enemy.slipThrough && standingRings.length > 0) {
       const enclosing = standingRings.find((ring) => ring.length >= 3 && ringEncloses(ring, aimPos))
       if (enclosing) {
         const ringAttr = ringAverageAttr(enclosing)
