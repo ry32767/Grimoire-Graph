@@ -117,7 +117,9 @@ export function prepareTurn(state: BattleState): {
     const onCadence = (state.turn + (e.fireOffset ?? 0)) % every === 0
     const canCast = hp > 0 && state.mechanics.enemyFire && !t.impaired && onCadence
     if (canCast) castingEnemyIds.push(e.id)
-    return { ...e, hp, statuses: t.statuses }
+    // 守護型の交互張り（05b §5.4）：ターンごとに光⇔闇のオーラを張り替える（奇数ターン=光）
+    const guardZSign = e.alternatingAura ? ((state.turn % 2 === 1 ? 1 : -1) as 1 | -1) : e.guardZSign
+    return { ...e, hp, statuses: t.statuses, guardZSign }
   })
 
   let next: BattleState = { ...state, allies, enemies, phase: 'compose' }

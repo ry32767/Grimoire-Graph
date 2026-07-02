@@ -7,6 +7,7 @@ import { simulatePath } from './physics'
 import { firstHit } from './collision'
 import { isSolidAt } from './obstacle'
 import { attributeOf, strengthOf, affinityMultiplier, zfieldAt } from './attribute'
+import { ringEncloses, ringAverageAttr, type RingPoint } from './orbit'
 import { constZField } from './zfields'
 import { COMBAT, FIELD, GAME, RUPTOR } from '../data/constants'
 
@@ -218,16 +219,32 @@ function enemyFamilies(enemy: Enemy): EnemyFamily[] {
 }
 
 /**
- * 防御ロール（guardian・#28）：自分の周りに周回結界（閉じた円）を張る。
- * z は自陣の属性で最強に張り、味方弾を迎撃する（同属性は透過・反対極は相殺＝#34）。
+ * 防御ロール（guardian・#28/05b §5.4）：自分の周りに周回結界（閉じた円）を張る。
+ * z は自陣の属性（交互張り個体は guardZSign）で、減速しない最大強度 |z|=zRef に張る
+ * （#31：|z|>zRef だと結界自身が失速して霧散する＝「リング全周で |z|≤zRef」の自壊回避）。
+ * 半径は障害物の素材に触れないものを選ぶ（触れると orbitWallBreak で即霧散するため・05b §5.4）。
  */
-function planGuardianOrbit(enemy: Enemy): EnemyPlan {
-  // 結界は減速しない最大強度 |z|=zRef で張る（#31：|z|>zRef だと結界自身が失速して霧散してしまう）
-  const zVal =
-    enemy.element === 'light' ? FIELD.zRef : enemy.element === 'dark' ? -FIELD.zRef : FIELD.zRef
+function planGuardianOrbit(enemy: Enemy, obstacles: Obstacle[] = []): EnemyPlan {
+  const sign = enemy.guardZSign ?? (enemy.element === 'dark' ? -1 : 1)
+  const zVal = sign * FIELD.zRef
+  // 大きい順に試し、リング上のどの点も素材に触れない半径を選ぶ（全て触れるなら最小で張る）
+  const radii = [GAME.enemyGuardRadius, GAME.enemyGuardRadius * 0.75, GAME.enemyGuardRadius * 0.55]
+  let radius = radii[radii.length - 1]
+  for (const r of radii) {
+    let touches = false
+    for (let i = 0; i < 24 && !touches; i++) {
+      const a = (i / 24) * Math.PI * 2
+      const p = { x: enemy.pos.x + r * Math.cos(a), y: enemy.pos.y + r * Math.sin(a) }
+      touches = obstacles.some((ob) => isSolidAt(ob, p))
+    }
+    if (!touches) {
+      radius = r
+      break
+    }
+  }
   const traj: Trajectory = {
     mode: 'polar',
-    f: () => GAME.enemyGuardRadius,
+    f: () => radius,
     origin: enemy.pos,
     z: constZField(zVal),
   }
@@ -355,10 +372,15 @@ export function finaleVariant(e: Enemy): Enemy {
  * 既存の単一パターン計画関数を1回ずつ呼ぶだけ。狙いは基本「まだ狙っていない味方」へ1発ずつ
  * 分散し、全員に行き渡ったら通常の優先度（低HP者へ集中）に戻る。
  */
-export function planEnemyShots(enemy: Enemy, allies: Ally[], obstacles: Obstacle[] = []): EnemyPlan[] {
+export function planEnemyShots(
+  enemy: Enemy,
+  allies: Ally[],
+  obstacles: Obstacle[] = [],
+  standingRings: RingPoint[][] = [],
+): EnemyPlan[] {
   const count = Math.max(1, enemy.castCount ?? 1)
   if (count === 1) {
-    const p = planEnemyShot(enemy, allies, obstacles)
+    const p = planEnemyShot(enemy, allies, obstacles, standingRings)
     return p ? [p] : []
   }
   const pool: EnemyRole[] =
@@ -370,7 +392,7 @@ export function planEnemyShots(enemy: Enemy, allies: Ally[], obstacles: Obstacle
     const variant: Enemy = { ...enemy, role: pool[i % pool.length], castCount: 1 }
     const remaining = alive.filter((a) => !taken.has(a.id))
     const pickFrom = remaining.length > 0 ? remaining : alive
-    const plan = planEnemyShot(variant, pickFrom, obstacles)
+    const plan = planEnemyShot(variant, pickFrom, obstacles, standingRings)
     if (!plan) continue
     if (plan.targetId) taken.add(plan.targetId)
     plans.push(plan)
@@ -382,12 +404,17 @@ export function planEnemyShots(enemy: Enemy, allies: Ally[], obstacles: Obstacle
  * 敵の攻撃を計画する：狙う味方×（狙い角×形状）の候補から、最大ダメージの軌道を選ぶ。
  * どの候補も命中見込みがなければ、最もHPの低い味方へ直進で牽制する。
  */
-export function planEnemyShot(enemy: Enemy, allies: Ally[], obstacles: Obstacle[] = []): EnemyPlan | null {
+export function planEnemyShot(
+  enemy: Enemy,
+  allies: Ally[],
+  obstacles: Obstacle[] = [],
+  standingRings: RingPoint[][] = [],
+): EnemyPlan | null {
   const alive = allies.filter((a) => a.hp > 0)
   if (alive.length === 0) return null
 
   // 防御ロール：自陣を守る周回結界を張る（#28）
-  if (enemy.role === 'guardian') return planGuardianOrbit(enemy)
+  if (enemy.role === 'guardian') return planGuardianOrbit(enemy, obstacles)
 
   // 崩し手（#42）：狙った対象の近傍で暴発させる専用計画
   if (enemy.role === 'ruptor') return planRuptorShot(enemy, allies, obstacles)
@@ -437,7 +464,19 @@ export function planEnemyShot(enemy: Enemy, allies: Ally[], obstacles: Obstacle[
     const aimPos = perceivedPos(ally)
     const base = aimAt(enemy.pos, aimPos)
     // 攻撃の z 場は対象の弱点（反対極）を、強さ違い（zPeak/zRef）で試す（#28/#31：届く威力を最大化）
-    const zCands = attackZCandidates(enemy, ally.element)
+    let zCands = attackZCandidates(enemy, ally.element)
+    // 迂回型の高難度個体（05b §5.2）：狙う相手が結界に守られていれば、
+    // 結界の平均属性と同極の z に合わせてすり抜ける（同極は透過＝04-magic §4.6）
+    if (enemy.slipThrough && !enemy.castZField && standingRings.length > 0) {
+      const enclosing = standingRings.find((ring) => ring.length >= 3 && ringEncloses(ring, aimPos))
+      if (enclosing) {
+        const ringAttr = ringAverageAttr(enclosing)
+        if (ringAttr !== 'neutral') {
+          const sign = ringAttr === 'light' ? 1 : -1
+          zCands = ATTACK_Z_MAGS.map((m) => ({ z: constZField(sign * m), zVal: sign * m }))
+        }
+      }
+    }
     // 得意関数を1～2個すべて試す（#28：複数関数を組み合わせて戦う）
     for (const fam of families) {
       const shapes = shapeCandidates(fam)

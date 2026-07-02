@@ -369,9 +369,13 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
   // 発射可否（hp>0・ひるみ・頻度・断末魔の特例）は castingEnemyIds を作る側（battle.prepareTurn）が決める。
   const enemyShots: EnemyShot[] = []
   const enemyRings: { enemyId: string; ring: RingPoint[]; ringSpeed: number; broken: boolean }[] = []
+  // 迂回型高難度の同極すり抜け（05b §5.2）用：敵から見える持続結界（前ターンまでの周回）
+  const visibleRings = activeOrbits
+    .filter((ao) => ao.owner === 'player' && ao.ring.length >= 3)
+    .map((ao) => ao.ring as RingPoint[])
   for (const e of enemies) {
     if (!input.castingEnemyIds.includes(e.id)) continue
-    for (const plan of planEnemyShots(e, allies, obstacles)) {
+    for (const plan of planEnemyShots(e, allies, obstacles, visibleRings)) {
       if (classifyTrajectory(plan.trajectory) === 'orbit') {
         // 敵の周回結界も壁/失速で丸ごと霧散する（#34/#31：敵が使った場合も同様）。形状は霧散演出のため残す
         const ring = buildRing(plan.trajectory)
@@ -789,6 +793,22 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       log.push({ kind: 'orbit', text: `${allies[i].name}は闇の周回に包まれ姿を消した` })
     } else if (conceal > 0) {
       log.push({ kind: 'orbit', text: `${allies[i].name}は闇の周回で気配を薄めた` })
+    }
+  }
+
+  // === 5.6 敵結界の属性オーラ（05b §5.4）：光の結界は囲んだ敵陣を毎ターン回復する。 ===
+  // 闇の結界の隠蔽は敵側では演出のみ（プレイヤーは自由に狙えるため機械的な効果はない）。
+  for (const gr of enemyRings) {
+    if (gr.broken || gr.ring.length < 3) continue
+    if (ringAverageAttr(gr.ring) !== 'light') continue
+    for (let i = 0; i < enemies.length; i++) {
+      if (enemies[i].hp <= 0 || !ringEncloses(gr.ring, enemies[i].pos)) continue
+      const healed = Math.min(enemies[i].maxHp, enemies[i].hp + COMBAT.orbitHealAmount)
+      const gained = healed - enemies[i].hp
+      if (gained <= 0) continue
+      enemies[i] = { ...enemies[i], hp: healed }
+      popups.push({ pos: enemies[i].pos, amount: gained, kind: 'heal', targetId: enemies[i].id, trigger: 'heal' })
+      log.push({ kind: 'orbit', text: `${enemies[i].name}は光の結界で ${gained.toFixed(0)} 回復した` })
     }
   }
 

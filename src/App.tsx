@@ -180,7 +180,12 @@ export default function App() {
       .map((id) => battle.enemies.find((e) => e.id === id))
       .filter((e): e is NonNullable<typeof e> => !!e)
       .flatMap((e) =>
-        planEnemyShots(e, battle.allies, battle.obstacles).map((plan) => ({
+        planEnemyShots(
+          e,
+          battle.allies,
+          battle.obstacles,
+          (battle.orbits ?? []).filter((o) => o.owner === 'player').map((o) => o.ring),
+        ).map((plan) => ({
           path: enemyFlight(plan.trajectory, e.castInitialSpeed).path,
           misfire: plan.misfirePos ?? null,
         })),

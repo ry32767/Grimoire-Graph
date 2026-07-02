@@ -157,6 +157,18 @@ export interface Enemy {
   fireOffset?: number
   /** ボス個体か（#45：HPフェーズ・断末魔の対象） */
   boss?: boolean
+  /**
+   * 迂回型の高難度個体（05b §5.2）：狙う味方が結界（周回）に守られているとき、
+   * 結界の平均属性と同極の z に合わせてすり抜ける（同極は透過＝04-magic §4.6 の通常ルールを利用）。
+   */
+  slipThrough?: boolean
+  /**
+   * 守護型の交互張り（05b §5.4）：ターンごとに光⇔闇のオーラを張り替える。
+   * 実際の符号は guardZSign（prepareTurn がターン偶奇で設定）で決まる。
+   */
+  alternatingAura?: boolean
+  /** 守護型が今ターン張る結界の極性（+1=光/−1=闇）。alternatingAura 個体に prepareTurn が設定 */
+  guardZSign?: 1 | -1
 }
 
 /** 円（障害物の基本形・削り穴の両方に使う）。中心 (x,y)・半径 r。 */
