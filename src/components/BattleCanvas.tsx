@@ -16,6 +16,7 @@ import {
   drawOrbitDissipation,
   drawBulletDissipation,
   drawConcealVeil,
+  drawEnemyConceal,
   strokeZPath,
   powerSizeFrac,
   type SceneParams,
@@ -119,6 +120,8 @@ const POPUP_MS = 950
 export interface StandingOrbit {
   ring: ZPoint[]
   speed: number
+  /** 所有者（#61）。敵の闇結界は作成フェーズで視認阻害を強める（z場/予測経路を隠す）。 */
+  owner?: 'player' | 'enemy'
 }
 
 interface Props {
@@ -273,8 +276,15 @@ export default function BattleCanvas(props: Props) {
         lastTrailRef.current = trailPhase
         drawScene(ctx, { ...staticParams, trailPhase })
         for (const o of standing) drawStandingOrbit(ctx, o, trailPhase)
-        // 闇の周回は内側を暗くぼかす（プレイヤー視点の視認性低下・#39）
-        for (const o of standing) if (ringAverageAttr(o.ring) === 'dark') drawConcealVeil(ctx, o.ring, VP)
+        // 自陣の闇結界は内側を暗くぼかす（自己視認低下・#39）
+        for (const o of standing) {
+          if (o.owner !== 'enemy' && ringAverageAttr(o.ring) === 'dark') drawConcealVeil(ctx, o.ring, VP)
+        }
+        // 敵の闇結界の視認阻害（#61/#62）：1枚=ギリギリ見える／2枚重なり=全く見えない黒。まとめて処理
+        const enemyDarkRings = standing
+          .filter((o) => o.owner === 'enemy' && ringAverageAttr(o.ring) === 'dark')
+          .map((o) => o.ring)
+        drawEnemyConceal(ctx, enemyDarkRings, VP)
         // 発射方向インジケータ（#47）：active ally から θ 方向へ矢印
         if (props.aimAngle !== undefined && props.activeAllyId) {
           const a = props.allies.find((al) => al.id === props.activeAllyId)

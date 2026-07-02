@@ -632,6 +632,52 @@ export function drawConcealVeil(ctx: CanvasRenderingContext2D, ring: ZPoint[], v
   ctx.restore()
 }
 
+/**
+ * 敵の闇結界による視認阻害（#61/#62）：作成フェーズで内側をぼかし、z 場・予測経路を隠す。
+ * **1枚だけの範囲は「見づらいがギリギリ見える」薄幕**、**2枚が重なった範囲は「全く見えない黒」**にする
+ * （自陣隠蔽の 1重/2重 と同じ考え方）。リング同士が重なる領域を交差クリップで塗り分ける。
+ */
+export function drawEnemyConceal(ctx: CanvasRenderingContext2D, rings: ZPoint[][], vp: Viewport): void {
+  const valid = rings.filter((r) => r.length >= 3)
+  if (valid.length === 0) return
+  const W = ctx.canvas.width
+  const H = ctx.canvas.height
+  // 1枚ぶん：内側をぼかし＋薄い幕（ギリギリ見える）
+  for (const ring of valid) {
+    ctx.save()
+    ringScreenPath(ctx, ring, vp)
+    ctx.clip()
+    ctx.filter = 'blur(5px)'
+    ctx.drawImage(ctx.canvas, 0, 0)
+    ctx.filter = 'none'
+    ctx.fillStyle = 'rgba(10,7,20,0.5)' // 薄幕：z 場・予測経路は見えなくなるが地形はギリギリ分かる
+    ctx.fillRect(0, 0, W, H)
+    ctx.restore()
+  }
+  // 2枚が重なる領域：交差だけにクリップして不透明な黒で塗る（全く見えない・#62）
+  for (let i = 0; i < valid.length; i++)
+    for (let j = i + 1; j < valid.length; j++) {
+      ctx.save()
+      ringScreenPath(ctx, valid[i], vp)
+      ctx.clip()
+      ringScreenPath(ctx, valid[j], vp)
+      ctx.clip() // clip を重ねると交差（重なり）だけになる
+      ctx.fillStyle = '#000'
+      ctx.fillRect(0, 0, W, H)
+      ctx.restore()
+    }
+  // 視認阻害ゾーンの境界を薄い破線で示す
+  for (const ring of valid) {
+    ctx.save()
+    ringScreenPath(ctx, ring, vp)
+    ctx.strokeStyle = 'rgba(150,110,210,0.55)'
+    ctx.lineWidth = 1.5
+    ctx.setLineDash([5, 4])
+    ctx.stroke()
+    ctx.restore()
+  }
+}
+
 /** z（属性）で色分けして軌道を描く。中立は淡く、光=金・闇=紫。 */
 export function strokeZPath(ctx: CanvasRenderingContext2D, pts: ZPoint[], vp: Viewport): void {
   ctx.lineWidth = 3

@@ -99,7 +99,7 @@ intensity = 1 − (elapsed − flashStart)/FLASH_MS    // 1→0 に減衰
 | 13 | クラッシュ火花 | `drawClashSpark` |
 | 14 | 暴発 | `drawMisfire` |
 | 15 | 弾の霧散 | `drawBulletDissipation` |
-| 16 | 隠蔽ヴェール | `drawConcealVeil`：闇結界の内側を 3px ぼかし＋暗幕 `rgba(6,5,14,0.5)` 重ね |
+| 16 | 隠蔽ヴェール | 自陣の闇結界＝`drawConcealVeil`（内側を 3px ぼかし＋暗幕 `rgba(6,5,14,0.5)`）。**敵 guardian の闇結界＝`drawEnemyConceal`（#61/#62）**：作成フェーズで内側を 5px ぼかし＋薄幕 `rgba(10,7,20,0.5)` で**z 場・予測経路を隠す**（1枚＝見づらいがギリギリ見える）。**2枚が重なった領域は交差クリップで不透明な黒＝全く見えない**（自陣隠蔽の 1重/2重 と同じ）。破線の境界。`standingOrbits[].owner` で切替 |
 | 17 | ダメージ／回復の数値（#42） | `drawDamageNumber`：被弾/回復の数値が浮かび上がる。**揺れの外**（UI として安定）に最前面で描く |
 
 ### 弾の色・大きさ

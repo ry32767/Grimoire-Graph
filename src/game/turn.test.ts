@@ -475,6 +475,40 @@ describe('周回の永続化（#39：破壊されるまで残る）', () => {
   })
 })
 
+describe('敵 guardian の結界効果（#61）', () => {
+  it('光の敵結界は内側の敵を回復し、結界は持続結界(owner=enemy)として残る', () => {
+    // 傷ついた光の守護者が自分の周りに光結界を張る → 自分を回復。結界は次ターンへ持ち越す
+    const g: Enemy = { ...enemy('g', { x: 0, y: 12 }, 'light', 100, 6), role: 'guardian', hp: 50 }
+    const res = resolveTurn({
+      allies: [ally('a', { x: 0, y: -12 }, 'dark')],
+      casts: [],
+      enemies: [g],
+      castingEnemyIds: ['g'],
+      obstacles: [],
+      mechanics: withFire,
+    })
+    const healed = res.enemies.find((e) => e.id === 'g')!
+    expect(healed.hp).toBeGreaterThan(50) // 光結界で回復した
+    expect(res.orbits.some((o) => o.owner === 'enemy' && o.ownerId === 'g')).toBe(true) // 敵結界が残る
+    expect(res.log.some((l) => l.text.includes('光の結界') && l.text.includes('回復'))).toBe(true)
+  })
+
+  it('闇の敵結界は敵を回復しない（視認阻害は描画側で表現）', () => {
+    const g: Enemy = { ...enemy('g', { x: 0, y: 12 }, 'dark', 100, 6), role: 'guardian', hp: 50 }
+    const res = resolveTurn({
+      allies: [ally('a', { x: 0, y: -12 }, 'light')],
+      casts: [],
+      enemies: [g],
+      castingEnemyIds: ['g'],
+      obstacles: [],
+      mechanics: withFire,
+    })
+    const e = res.enemies.find((x) => x.id === 'g')!
+    expect(e.hp).toBe(50) // 闇は回復しない
+    expect(res.orbits.some((o) => o.owner === 'enemy' && o.ownerId === 'g')).toBe(true) // 闇結界も持続（視認阻害用）
+  })
+})
+
 describe('敵弾が味方へ命中（#15）', () => {
   it('防御なしなら狙われた味方のHPが減る', () => {
     const res = resolveTurn({
