@@ -80,11 +80,12 @@ export function prepareTurn(state: BattleState): {
   return { state: next, castingEnemyIds, impairedAllyIds }
 }
 
-/** 味方の同時発射を適用して解決し、勝敗を判定する。 */
+/** 味方の同時発射を適用して解決し、勝敗を判定する。opts は instability（04b）の伝搬。 */
 export function resolveAllyCasts(
   state: BattleState,
   casts: AllyCast[],
   castingEnemyIds: string[],
+  opts?: { instability?: number; misfireRoll?: number },
 ): { state: BattleState; resolution: ResolveResult } {
   const resolution = resolveTurn({
     allies: state.allies,
@@ -94,6 +95,8 @@ export function resolveAllyCasts(
     obstacles: state.obstacles,
     mechanics: state.mechanics,
     activeOrbits: state.orbits ?? [],
+    instability: opts?.instability,
+    misfireRoll: opts?.misfireRoll,
   })
 
   const next: BattleState = {

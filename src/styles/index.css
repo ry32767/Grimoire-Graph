@@ -764,3 +764,54 @@ code {
   padding-top: 8px;
   border-top: 1px dashed var(--panel-bevel);
 }
+
+/* ===== 膜メーター（04b：初回崩壊後のみ表示） ===== */
+.instability-meter {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.instability-meter .meter-cells {
+  display: inline-flex;
+  gap: 2px;
+}
+.instability-meter .meter-cell {
+  width: 9px;
+  height: 10px;
+  border: 1px solid #6b5aa0;
+  background: rgba(140, 120, 220, 0.25);
+  border-radius: 2px;
+}
+.instability-meter .meter-cell.worn {
+  background: linear-gradient(180deg, #f4c430, #7b5cc4);
+  border-color: #c9b3ff;
+}
+.instability-meter .meter-remaining {
+  font-size: 11px;
+  color: #c9c2e8;
+}
+.instability-meter.danger .meter-remaining {
+  color: #ff6b6b;
+  animation: meterPulse 0.9s infinite alternate;
+}
+@keyframes meterPulse {
+  from { opacity: 1; }
+  to { opacity: 0.45; }
+}
+
+/* 崩壊の危険がある発射の確認ゲート（04b） */
+.btn.primary.danger {
+  background: #7a1f2b;
+  border-color: #ff6b6b;
+  color: #ffe3e3;
+}
+
+/* 物語オーバーレイ（RUPTOR_DEMO / COLLAPSE_FIRST） */
+.story-overlay .modal {
+  max-width: 640px;
+}
+.story-overlay .story-text p {
+  margin: 0 0 10px;
+  line-height: 1.7;
+}

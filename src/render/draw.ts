@@ -23,6 +23,10 @@ export interface SceneParams {
   ghostPaths?: Vec2[][]
   /** 崩し手（#42）の予告：計画された暴発点（赤✕＋揺れる円）。無い敵は null */
   ghostMisfires?: (Vec2 | null)[]
+  /** ステージの異変の段階（04b §4b.2：0=静か〜3=崩壊目前）。背景の歪み・ひびで危うさを示す */
+  anomaly?: number
+  /** 暴発半径のブレ帯（04b §4b.3）。misfirePoints/ghostMisfires の周囲に min–max の二重リングを描く */
+  misfireBand?: { min: number; max: number }
   /** 被弾中の対象ID→フラッシュ強度（1→0）。赤く光って揺れる（#20） */
   flash?: Record<string, number>
   /** 揺れの位相（時間とともに増加） */
@@ -831,6 +835,11 @@ export function drawZFieldErrors(
 export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
   drawBackground(ctx, p.vp)
 
+  // ステージの異変（04b §4b.2）：instability が上がるほど背景が波打ち、床にひびが走る
+  if (p.anomaly && p.anomaly > 0) {
+    drawAnomaly(ctx, p.vp, p.anomaly, p.trailPhase ?? p.shakePhase ?? 0)
+  }
+
   // 編集中の z 場を薄い場として表示（#37）。敵・壁より下のレイヤ＝背景直後に描く
   if (p.showZField && p.zField) {
     drawZFieldOverlay(ctx, p.zField, p.vp)
@@ -861,9 +870,14 @@ export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
   drawEnemies(ctx, p.enemies, p.vp, p.flash, p.shakePhase)
   drawCasters(ctx, p.allies, p.vp, p.activeAllyId, p.flash, p.shakePhase)
 
-  // 関数エラーで暴発する点を赤い✕で可視化（最前面・#30）
+  // 関数エラーで暴発する点を赤い✕で可視化（最前面・#30）。
+  // instability が進んでいると、半径のブレ帯（min–max のぼやけた二重リング）を重ねる（04b §4b.3）
   if (p.misfirePoints) {
-    for (const m of p.misfirePoints) if (m) drawMisfireMarker(ctx, m, p.vp)
+    for (const m of p.misfirePoints) {
+      if (!m) continue
+      if (p.misfireBand) drawMisfireBand(ctx, m, p.misfireBand, p.vp)
+      drawMisfireMarker(ctx, m, p.vp)
+    }
   }
 
   // 崩し手の暴発予告（#42）：赤✕＋不安定に揺れる円を重ねる（最前面）
@@ -898,6 +912,83 @@ export function drawRuptureWarning(
   ctx.setLineDash([])
   ctx.restore()
   drawMisfireMarker(ctx, pos, vp)
+}
+
+/**
+ * ステージの異変（04b §4b.2）：level 1=背景がわずかに波打つ／2=床のひび・周縁ノイズ／3=崩壊目前。
+ * 数値は見せず「盤面そのものが軋む」感覚だけを伝える（第1幕の主要な手がかり）。
+ */
+export function drawAnomaly(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  level: number,
+  phase = 0,
+): void {
+  ctx.save()
+  // level1+：背景がわずかに波打つ（横縞の薄い明滅）
+  const bands = 5 + level * 2
+  for (let i = 0; i < bands; i++) {
+    const y = ((i + 0.5) / bands) * vp.height + Math.sin(phase * 0.7 + i * 1.7) * 6
+    const alpha = 0.015 * level * (1 + 0.5 * Math.sin(phase * 1.1 + i))
+    ctx.fillStyle = `rgba(180,140,255,${Math.max(0, alpha)})`
+    ctx.fillRect(0, y, vp.width, 3 + level)
+  }
+  // level2+：床のひび（画面下部から走る暗い稲妻線・決定的な形＝ちらつかない）
+  if (level >= 2) {
+    ctx.strokeStyle = `rgba(20,12,30,${level >= 3 ? 0.85 : 0.6})`
+    ctx.lineWidth = 1.6
+    const cracks = level >= 3 ? 5 : 3
+    for (let c = 0; c < cracks; c++) {
+      const x0 = ((c * 2654435761) % 1000) / 1000 * vp.width
+      ctx.beginPath()
+      ctx.moveTo(x0, vp.height)
+      let x = x0
+      let y = vp.height
+      for (let s = 0; s < 6; s++) {
+        x += Math.sin(c * 3.1 + s * 2.3) * 22
+        y -= vp.height * (0.05 + 0.03 * ((c + s) % 3))
+        ctx.lineTo(x, y)
+      }
+      ctx.stroke()
+    }
+  }
+  // level3：画面周縁が赤黒く脈動する（崩壊目前）
+  if (level >= 3) {
+    const pulse = 0.16 + 0.08 * Math.sin(phase * 1.8)
+    const g = ctx.createRadialGradient(
+      vp.width / 2, vp.height / 2, Math.min(vp.width, vp.height) * 0.35,
+      vp.width / 2, vp.height / 2, Math.max(vp.width, vp.height) * 0.72,
+    )
+    g.addColorStop(0, 'rgba(0,0,0,0)')
+    g.addColorStop(1, `rgba(120,20,40,${pulse})`)
+    ctx.fillStyle = g
+    ctx.fillRect(0, 0, vp.width, vp.height)
+  }
+  ctx.restore()
+}
+
+/** 暴発半径のブレ帯（04b §4b.3）：min–max のぼやけた二重リング。正確な大きさは読み切れない。 */
+export function drawMisfireBand(
+  ctx: CanvasRenderingContext2D,
+  pos: Vec2,
+  band: { min: number; max: number },
+  vp: Viewport,
+): void {
+  const c = toScreen(pos, vp)
+  const s = scaleOf(vp)
+  ctx.save()
+  ctx.strokeStyle = 'rgba(255,75,75,0.45)'
+  ctx.lineWidth = 1.2
+  ctx.setLineDash([3, 4])
+  ctx.beginPath()
+  ctx.arc(c.x, c.y, band.min * s, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.strokeStyle = 'rgba(255,75,75,0.25)'
+  ctx.beginPath()
+  ctx.arc(c.x, c.y, band.max * s, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.setLineDash([])
+  ctx.restore()
 }
 
 /** プレビュー：関数（軌道 or z 場）がエラーで暴発する点を赤い✕で示す（#30）。 */

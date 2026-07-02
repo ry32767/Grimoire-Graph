@@ -132,6 +132,10 @@ interface Props {
   ghostPaths?: Vec2[][]
   /** 崩し手（#42）の暴発予告点（赤✕＋揺れる円）。無い敵は null */
   ghostMisfires?: (Vec2 | null)[]
+  /** ステージの異変の段階（04b §4b.2：0=静か〜3=崩壊目前）。背景の歪み・ひびで危うさを示す */
+  anomaly?: number
+  /** 暴発半径のブレ帯（04b §4b.3）。プレビューの✕の周りにぼやけた二重リングを描く */
+  misfireBand?: { min: number; max: number }
   /** 編集中の z 場（#37）。showZField の間だけ薄い場として表示する */
   zField?: (x: number, y: number) => number
   /** z 場をいじっている間だけ true（#37） */
@@ -219,6 +223,8 @@ export default function BattleCanvas(props: Props) {
     misfirePoints: props.misfirePoints,
     ghostPaths: props.ghostPaths,
     ghostMisfires: props.ghostMisfires,
+    anomaly: props.anomaly,
+    misfireBand: props.misfireBand,
     zField: props.zField,
     showZField: props.showZField,
   }
@@ -238,9 +244,10 @@ export default function BattleCanvas(props: Props) {
         // 闇の周回は内側を暗くぼかす（プレイヤー視点の視認性低下・#39）
         for (const o of standing) if (ringAverageAttr(o.ring) === 'dark') drawConcealVeil(ctx, o.ring, VP)
       }
-      // 崩し手の予告円（#42）は不安定に揺れ続けるので、予告がある間もアニメーションループを回す
+      // 崩し手の予告円（#42）と異変（04b）は揺れ続けるので、ある間はアニメーションループを回す
       const hasRuptureWarning = (props.ghostMisfires ?? []).some(Boolean)
-      if (standing.length === 0 && !hasRuptureWarning) {
+      const hasAnomaly = (props.anomaly ?? 0) > 0
+      if (standing.length === 0 && !hasRuptureWarning && !hasAnomaly) {
         drawComposeFrame(0)
         return
       }

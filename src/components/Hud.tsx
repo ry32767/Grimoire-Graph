@@ -1,4 +1,6 @@
 import type { Ally, Enemy, StatusEffect } from '../game/types'
+import { INSTABILITY } from '../data/constants'
+import { remainingMisfires } from '../game/misfireInstability'
 
 function StatusBadges({ statuses }: { statuses: StatusEffect[] }) {
   if (statuses.length === 0) return null
@@ -48,13 +50,35 @@ function HpRow({
   )
 }
 
+/**
+ * 膜メーター（04b §4b.2）：初回崩壊後にのみ表示（第1幕は数値を一切見せない）。
+ * 「あと何回で崩壊するか」を目盛りで常時示す。
+ */
+function InstabilityMeter({ count }: { count: number }) {
+  const remaining = remainingMisfires(count)
+  const danger = remaining <= 2
+  return (
+    <div className={`instability-meter${danger ? ' danger' : ''}`}>
+      <span className="hud-label">膜</span>
+      <span className="meter-cells">
+        {Array.from({ length: INSTABILITY.misfireLimit }, (_, i) => (
+          <span key={i} className={`meter-cell${i < count ? ' worn' : ''}`} />
+        ))}
+      </span>
+      <span className="meter-remaining">あと {remaining} 回で崩壊</span>
+    </div>
+  )
+}
+
 interface Props {
   allies: Ally[]
   enemies: Enemy[]
   activeAllyId?: string | null
+  /** 膜の摩耗（04b）。visible=初回崩壊後のみメーターを出す（第1幕は隠蔽） */
+  instability?: { count: number; visible: boolean }
 }
 
-export default function Hud({ allies, enemies, activeAllyId }: Props) {
+export default function Hud({ allies, enemies, activeAllyId, instability }: Props) {
   return (
     <div className="hud panel">
       <div className="hud-col">
@@ -69,6 +93,7 @@ export default function Hud({ allies, enemies, activeAllyId }: Props) {
             statuses={a.statuses}
           />
         ))}
+        {instability?.visible && <InstabilityMeter count={instability.count} />}
       </div>
       <div className="hud-col">
         <div className="hud-label">敵陣営</div>

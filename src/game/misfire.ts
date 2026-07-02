@@ -41,21 +41,25 @@ export interface MisfireResult {
   hitIds: string[]
   /** 術者（原点）を巻き込むか（自爆） */
   selfHit: boolean
+  /** 実際に使った AoE 半径（04b §4b.3：instability でばらつく。既定 aoeRadius） */
+  radius: number
 }
 
 /**
  * 暴発点・到達速度・対象から AoE ダメージを解決する。
  * 暴発でクラッシュはせず戦闘は継続する（呼び出し側で適用）。
+ * radius は instability による半径ばらつき（04b §4b.3）を反映した実半径。未指定は aoeRadius。
  */
 export function resolveMisfire(
   point: MisfirePoint,
   speed: number,
   targets: AoeTarget[],
+  radius: number = FIELD.aoeRadius,
 ): MisfireResult {
   // 暴発は常に最大威力：強度・速度ともに最大（Smax × maxFlightSpeed）。速度に依らず一定（§3.5）
   const power = FIELD.sMax * FIELD.maxFlightSpeed
   const damage = power * AFFINITY.opposite // 常に有利側（光・闇の両極性を最大で帯びる）
-  const hitIds = targets.filter((t) => dist(t.pos, point.pos) <= FIELD.aoeRadius).map((t) => t.id)
-  const selfHit = dist(point.pos, { x: 0, y: 0 }) <= FIELD.aoeRadius
-  return { pos: point.pos, speed, power, damage, statuses: maxStatuses(), hitIds, selfHit }
+  const hitIds = targets.filter((t) => dist(t.pos, point.pos) <= radius).map((t) => t.id)
+  const selfHit = dist(point.pos, { x: 0, y: 0 }) <= radius
+  return { pos: point.pos, speed, power, damage, statuses: maxStatuses(), hitIds, selfHit, radius }
 }

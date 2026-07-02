@@ -8,8 +8,26 @@ import { ROTATE_PRESETS, defaultCoeffs } from './game/functions'
 import { ZFIELD_PRESETS, defaultZCoeffs } from './game/zfields'
 import { STAGES } from './data/stages'
 import { makeParty } from './data/party'
-import { FIELD } from './data/constants'
-import { PROLOGUE, EPILOGUE, GAMEOVER_TEXT } from './data/story'
+import { FIELD, INSTABILITY } from './data/constants'
+import {
+  PROLOGUE,
+  EPILOGUE,
+  GAMEOVER_TEXT,
+  GAMEOVER_COLLAPSE,
+  RUPTOR_DEMO,
+  COLLAPSE_FIRST,
+  CODEX_MISFIRE_HINT,
+  INSCRIPTIONS,
+  SCENERIES,
+} from './data/story'
+import {
+  anomalyLevel,
+  applyStageClearRelief,
+  isLethal,
+  misfireRadiusBand,
+  shouldFirstCollapse,
+  varianceOf,
+} from './game/misfireInstability'
 import { type ComposerState, buildComposerTrajectory, buildZField, computePreview } from './components/composer'
 import BattleCanvas, { type ResolveAnimation, type AnimBullet, type AnimOrbit } from './components/BattleCanvas'
 import Hud from './components/Hud'
@@ -94,6 +112,24 @@ export default function App() {
   // #6：クリアタイム計測
   const [runStartMs, setRunStartMs] = useState<number | null>(null)
   const [clearSnapshotMs, setClearSnapshotMs] = useState(0)
+  // ===== 暴発の不安定化・累積・崩壊（04b）：ラン全体で持ち越す膜の摩耗 =====
+  const [instability, setInstability] = useState(0)
+  // ステージ開始時点のスナップショット（リトライ時にそこへ巻き戻す）
+  const [stageStartInstability, setStageStartInstability] = useState(0)
+  // このステージ内で解決した暴発数（暴発ゼロクリアの緩和・04b §4b.1 用）
+  const [stageMisfires, setStageMisfires] = useState(0)
+  // 初回崩壊（グリモワール救済）を見たか（一度きり）。以後メーター可視・崩壊＝ゲームオーバー
+  const [collapseSeen, setCollapseSeen] = useState(false)
+  // 敵の暴発を初めて見たか（RUPTOR_DEMO・図鑑補足を一度だけ出す）
+  const [demoSeen, setDemoSeen] = useState(false)
+  // 破局（instability 上限到達）でのゲームオーバーか（専用テキスト）
+  const [collapseGameover, setCollapseGameover] = useState(false)
+  // 物語オーバーレイ（RUPTOR_DEMO／COLLAPSE_FIRST）：戦闘の上に一度だけ挟む
+  const [storyOverlay, setStoryOverlay] = useState<{ title: string; lines: string[] } | null>(null)
+  // 確認ゲート（04b §4b.2）：崩壊につながる暴発を含む発射は、一度警告してから撃つ
+  const [confirmArmed, setConfirmArmed] = useState(false)
+  // このターンの解決で起きたことを onAnimationDone へ引き継ぐ
+  const pendingEventsRef = useRef<{ gained: number; enemyMisfired: boolean } | null>(null)
   // #10：音
   const sfxRef = useRef<SfxKind[]>([])
   const [muted, setMutedState] = useState(false)
@@ -151,8 +187,31 @@ export default function App() {
   const ghostPaths = useMemo(() => ghostPlans.map((g) => g.path), [ghostPlans])
   const ghostMisfires = useMemo(() => ghostPlans.map((g) => g.misfire), [ghostPlans])
 
-  const onChange = (patch: Partial<ComposerState>) =>
+  const onChange = (patch: Partial<ComposerState>) => {
+    setConfirmArmed(false) // 式を変えたら確認ゲートを解除（04b §4b.2）
     setComposers((m) => ({ ...m, [activeAllyId]: { ...m[activeAllyId], ...patch } }))
+  }
+
+  // 物語オーバーレイ（RUPTOR_DEMO／COLLAPSE_FIRST・04b）。どの画面の上にも一度だけ挟む
+  const storyOverlayEl = storyOverlay && (
+    <div className="modal-backdrop story-overlay">
+      <div className="modal">
+        <div className="modal-head">
+          <h2>{storyOverlay.title}</h2>
+        </div>
+        <div className="story-text">
+          {storyOverlay.lines.map((l, i) => (
+            <p key={i}>{l}</p>
+          ))}
+        </div>
+        <div className="center-actions">
+          <button className="btn primary" onClick={() => setStoryOverlay(null)}>
+            続ける
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 
   // 開発ジャンプ時はクリアタイム計測の起点を初期化（#33）
   useEffect(() => {
@@ -175,6 +234,12 @@ export default function App() {
     const stage = STAGES[stageIndex]
     // 遭遇した敵を図鑑に記録（#23）
     setSeenEnemies((prev) => new Set([...prev, ...stage.enemies.map((e) => e.name)]))
+    // instability はステージ開始時点へ巻き戻す（リトライ対応・ラン全体では持ち越し・04b）
+    setInstability(stageStartInstability)
+    setStageMisfires(0)
+    setCollapseGameover(false)
+    setConfirmArmed(false)
+    pendingEventsRef.current = null
     const party = makeParty()
     const fresh = createBattleState(stage, stageIndex, party)
     const prep = prepareTurn(fresh)
@@ -220,7 +285,23 @@ export default function App() {
       if (!traj) continue
       casts.push({ allyId: a.id, trajectory: traj, initialSpeed: c.speed })
     }
-    const { state: after, resolution } = resolveAllyCasts(battle, casts, castingIds)
+    // 確認ゲート（04b §4b.2）：メーター開示後、この発射に含まれる暴発で上限に達しうるなら一度警告する
+    const previewMisfireCount = casts.filter((c) => previews[c.allyId]?.misfirePos).length
+    const dangerous =
+      collapseSeen && previewMisfireCount > 0 && instability + previewMisfireCount >= INSTABILITY.misfireLimit
+    if (dangerous && !confirmArmed) {
+      setConfirmArmed(true)
+      return
+    }
+    setConfirmArmed(false)
+    const { state: after, resolution } = resolveAllyCasts(battle, casts, castingIds, {
+      instability,
+      misfireRoll: Math.random(), // 半径ばらつき（04b §4b.3）。ロジックは純粋関数のまま乱数だけ注入
+    })
+    pendingEventsRef.current = {
+      gained: resolution.misfires.length,
+      enemyMisfired: resolution.misfires.some((m) => m.owner === 'enemy'),
+    }
     const bullets: AnimBullet[] = []
     const orbits: AnimOrbit[] = []
     for (const s of resolution.allyShots) {
@@ -292,7 +373,37 @@ export default function App() {
     sfxRef.current.forEach((k) => playSfx(k))
     sfxRef.current = []
     if (!after) return
+
+    // ===== 暴発の累積とイベント判定（04b）。勝敗判定より先に破局を見る =====
+    const ev = pendingEventsRef.current
+    pendingEventsRef.current = null
+    let count = instability
+    if (ev) {
+      count = instability + ev.gained
+      setInstability(count)
+      setStageMisfires((s) => s + ev.gained)
+      if (ev.enemyMisfired && !demoSeen) setDemoSeen(true)
+      // 破局（致死期・04b §4b.2）：初回崩壊済みで上限到達＝ステージ全体暴発。勝敗に関わらずゲームオーバー
+      if (collapseSeen && isLethal(count)) {
+        setCollapseGameover(true)
+        playSfx('gameover')
+        setBattle(after)
+        setScreen('gameover')
+        return
+      }
+      // 初回崩壊（閾値到達 or 保証面・一度きり）：グリモワールの介入で救済し、以後メーターを開示
+      if (shouldFirstCollapse(count, after.stageIndex + 1, after.turn, collapseSeen)) {
+        setCollapseSeen(true)
+        setStoryOverlay({ title: '崩壊 ― 頁の気配', lines: COLLAPSE_FIRST })
+      } else if (ev.enemyMisfired && !demoSeen) {
+        // 敵の暴発を初めて見た（RUPTOR_DEMO・図鑑補足つき・一度きり）
+        setStoryOverlay({ title: '暴発 ― 式の破れ', lines: [...RUPTOR_DEMO, CODEX_MISFIRE_HINT] })
+      }
+    }
+
     if (after.outcome === 'cleared') {
+      // 暴発ゼロでクリアしたら膜がわずかに落ち着く（04b §4b.1・任意の緩和）
+      setInstability(applyStageClearRelief(count, stageMisfires + (ev?.gained ?? 0)))
       playSfx('clear')
       snapshotTime()
       setBattle(after)
@@ -333,6 +444,14 @@ export default function App() {
             ensureAudio()
             startMusic()
             setRunStartMs(performance.now())
+            // 新しいラン：膜の摩耗と開示状態をリセット（04b）
+            setInstability(0)
+            setStageStartInstability(0)
+            setStageMisfires(0)
+            setCollapseSeen(false)
+            setDemoSeen(false)
+            setCollapseGameover(false)
+            setStoryOverlay(null)
             setScreen('prologue')
           }}
           onGuide={() => setGuideOpen(true)}
@@ -368,9 +487,15 @@ export default function App() {
   }
   if (screen === 'stageIntro') {
     const stage = STAGES[stageIndex]
+    // 降下トランジション：刻印（古代人の言葉）→ 背景描写（都市の痕跡）→ 導入（story.md）
+    const lines = [
+      `【刻印】 ${INSCRIPTIONS[stageIndex] ?? ''}`,
+      SCENERIES[stageIndex] ?? '',
+      ...stage.introText,
+    ].filter((l) => l.length > 0)
     return (
       <div className="app">
-        <StoryScreen title={stage.name} lines={stage.introText} onNext={startBattle} nextLabel="戦闘開始" />
+        <StoryScreen title={stage.name} lines={lines} onNext={startBattle} nextLabel="戦闘開始" />
       </div>
     )
   }
@@ -390,12 +515,15 @@ export default function App() {
                   label: '次のステージへ',
                   primary: true,
                   onClick: () => {
+                    // 次ステージのリトライ起点として現在の instability をスナップショット（04b）
+                    setStageStartInstability(instability)
                     setStageIndex((i) => i + 1)
                     setScreen('stageIntro')
                   },
                 },
           ]}
         />
+        {storyOverlayEl}
       </div>
     )
   }
@@ -403,13 +531,14 @@ export default function App() {
     return (
       <div className="app">
         <ResultScreen
-          title="ゲームオーバー"
-          lines={[GAMEOVER_TEXT]}
+          title={collapseGameover ? '崩壊 ― 膜の破れ' : 'ゲームオーバー'}
+          lines={collapseGameover ? GAMEOVER_COLLAPSE : [GAMEOVER_TEXT]}
           actions={[
             { label: 'このステージをやり直す', primary: true, onClick: startBattle },
             { label: 'タイトルへ', onClick: () => setScreen('title') },
           ]}
         />
+        {storyOverlayEl}
       </div>
     )
   }
@@ -459,11 +588,18 @@ export default function App() {
               standingOrbits={composing ? standingOrbits : undefined}
               ghostPaths={ghostPaths}
               ghostMisfires={composing ? ghostMisfires : undefined}
+              anomaly={anomalyLevel(instability)}
+              misfireBand={varianceOf(instability) > 0 ? misfireRadiusBand(instability) : undefined}
               animation={animation}
               onAnimationDone={onAnimationDone}
             />
           </div>
-          <Hud allies={battle.allies} enemies={battle.enemies} activeAllyId={activeAllyId} />
+          <Hud
+            allies={battle.allies}
+            enemies={battle.enemies}
+            activeAllyId={activeAllyId}
+            instability={{ count: instability, visible: collapseSeen }}
+          />
         </div>
 
         <div className="battle-right">
@@ -499,8 +635,12 @@ export default function App() {
                 onZEditing={setZEditing}
               />
               <div className="action-row">
-                <button className="btn primary fire-all" onClick={fireAll}>
-                  {anyCastable ? '全員発射' : 'ターンを進める'}
+                <button className={`btn primary fire-all${confirmArmed ? ' danger' : ''}`} onClick={fireAll}>
+                  {confirmArmed
+                    ? '⚠ 崩壊の危険 ― それでも発射'
+                    : anyCastable
+                      ? '全員発射'
+                      : 'ターンを進める'}
                 </button>
                 <button className="btn small" onClick={() => setGuideOpen(true)}>
                   遊び方
@@ -538,6 +678,7 @@ export default function App() {
         />
       )}
       {guideOpen && <Guide onClose={() => setGuideOpen(false)} />}
+      {storyOverlayEl}
     </div>
   )
 }
