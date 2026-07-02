@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { STAGES } from './stages'
 import { ROTATE_PRESETS, buildTrajectory } from '../game/functions'
 import { createBattleState, prepareTurn, resolveAllyCasts } from '../game/battle'
+import { planRuptorShot } from '../game/enemyAI'
 import { makeParty, PARTY } from './party'
 import { FIELD } from './constants'
 import { dist } from '../game/coords'
@@ -88,6 +89,26 @@ describe('難易度フレームワーク（06b）', () => {
     expect(demos[0].fireEvery).toBe(2)
     // 1ターン目に必ず撃つ（最低1回は暴発を見せる）
     expect((1 + (demos[0].fireOffset ?? 0)) % (demos[0].fireEvery ?? 1)).toBe(0)
+  })
+
+  it('第4面のデモ崩し手は、壁の近傍に暴発点つきの計画を返す（RUPTOR_DEMO）', () => {
+    const s4 = STAGES[3]
+    const demo = s4.enemies.find((e) => e.role === 'ruptor')!
+    const obstacles = s4.obstacles.map((o) => ({ ...o, carves: [...o.carves] }))
+    const plan = planRuptorShot(demo, makeParty(), obstacles)
+    expect(plan).not.toBeNull()
+    expect(plan!.misfirePos).not.toBeNull()
+    // 暴発点はいずれかの壁素材の近く（味方の近くではない）
+    const nearWall = obstacles.some((o) => o.solids.some((d) => dist({ x: d.x, y: d.y }, plan!.misfirePos!) <= FIELD.aoeRadius + d.r))
+    expect(nearWall).toBe(true)
+  })
+
+  it('第4面：味方が迎撃しなければ、1ターン目にデモの暴発が解決する', () => {
+    const st = createBattleState(STAGES[3], 3, makeParty())
+    const prep = prepareTurn(st)
+    expect(prep.castingEnemyIds.some((id) => prep.state.enemies.find((e) => e.id === id)?.role === 'ruptor')).toBe(true)
+    const { resolution } = resolveAllyCasts(prep.state, [], prep.castingEnemyIds)
+    expect(resolution.misfires.filter((m) => m.owner === 'enemy').length).toBeGreaterThanOrEqual(1)
   })
 
   it('第6面に崩し手3体（低頻度・位相ずらし）と交互張りの守護型がいる', () => {

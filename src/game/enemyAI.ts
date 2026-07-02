@@ -297,64 +297,93 @@ export function planRuptorShot(
   const visible = alive.filter((a) => (a.concealed ?? 0) < COMBAT.orbitConcealFull)
   const candidates = visible.length > 0 ? visible : alive
   const target = candidates.reduce((best, a) => (threatScore(a) > threatScore(best) ? a : best))
-  let aimPos = aimOverride?.pos ?? perceivedPos(target)
-  let targetId = aimOverride?.targetId ?? target.id
-  // 障害物狙いの個体（第4面デモ・#42）：味方に最も近い壁の素材（unbreakable 以外）へ暴発点を置く
-  if (!aimOverride && enemy.ruptorTarget === 'obstacles') {
-    let bestDisc: { pos: Vec2; d: number } | null = null
-    for (const ob of obstacles) {
-      if ((ob.kind ?? 'normal') === 'unbreakable') continue
-      for (const disc of ob.solids) {
-        const p = { x: disc.x, y: disc.y }
-        const d = Math.min(...alive.map((a) => dist(a.pos, p)))
-        if (!bestDisc || d < bestDisc.d) bestDisc = { pos: p, d }
-      }
-    }
-    if (bestDisc) {
-      aimPos = bestDisc.pos
-      targetId = ''
-    }
-  }
 
   // 弾の極性は自陣の element（無属性なら対象の反対極）
   const polarity: 1 | -1 =
     enemy.element === 'light' ? 1 : enemy.element === 'dark' ? -1 : target.element === 'light' ? -1 : 1
-  const z = buildRuptorZField(enemy.pos, aimPos, polarity)
 
-  // 迂回型と同じ制約：line は使えない（05b §2）。曲率のある family から選ぶ
-  const fams = enemyFamilies(enemy).filter((f) => f !== 'line')
-  if (fams.length === 0) fams.push('arc')
-  const base = aimAt(enemy.pos, aimPos)
-
-  // 「極に到達して暴発する」候補を最優先し、その中で暴発点が狙点に最も近いものを選ぶ
-  let best: { traj: Trajectory; d: number; ruptured: boolean; end: Vec2 } | null = null
-  const consider = (traj: Trajectory) => {
-    const { path, flight } = enemyFlight(traj, enemy.castInitialSpeed)
-    if (path.length < 2 || flight.end === 'vanished') return // 失速する候補は捨てる
-    const end = path[path.length - 1]
-    const d = dist(end, aimPos)
-    const ruptured = pathTermination(sampleTrajectory(traj)).end === 'invalid'
-    if (!best || (ruptured && !best.ruptured) || (ruptured === best.ruptured && d < best.d)) {
-      best = { traj, d, ruptured, end }
-    }
-  }
-  for (const fam of fams) {
-    const aimOffsets = fam === 'spiral' ? [0] : [-0.28, -0.14, 0, 0.14, 0.28]
-    for (const off of aimOffsets) {
-      for (const shape of shapeCandidates(fam)) {
-        consider(buildEnemyTrajectory(fam, enemy.pos, base + off, shape, z))
+  /**
+   * 指定の狙点に極を仕込み、最良の軌道を探す。
+   * 「極に到達して暴発する（ruptured）」かつ「途中で壁の素材に触れない（clear）」候補を最優先し、
+   * その中で暴発点が狙点に最も近いものを選ぶ（暴発型の立ち回りは迂回型と同じ・05b §5.3）。
+   */
+  const searchAim = (aim: Vec2): { traj: Trajectory; d: number; rank: number; end: Vec2 } | null => {
+    const z = buildRuptorZField(enemy.pos, aim, polarity)
+    // 迂回型と同じ制約：line は使えない（05b §2）。曲率のある family から選ぶ
+    const fams = enemyFamilies(enemy).filter((f) => f !== 'line')
+    if (fams.length === 0) fams.push('arc')
+    const base = aimAt(enemy.pos, aim)
+    let best: { traj: Trajectory; d: number; rank: number; end: Vec2 } | null = null
+    const consider = (traj: Trajectory) => {
+      const { path, flight } = enemyFlight(traj, enemy.castInitialSpeed)
+      if (path.length < 2 || flight.end === 'vanished') return // 失速する候補は捨てる
+      const end = path[path.length - 1]
+      const d = dist(end, aim)
+      const ruptured = pathTermination(sampleTrajectory(traj)).end === 'invalid'
+      // 経路が素材に触れると弾が削られ極に届かないことがある → 触れない候補を優先
+      const clear = !path.some((p) => obstacles.some((ob) => isSolidAt(ob, p)))
+      const rank = (ruptured ? 2 : 0) + (clear ? 1 : 0)
+      if (!best || rank > best.rank || (rank === best.rank && d < best.d)) {
+        best = { traj, d, rank, end }
       }
     }
+    for (const fam of fams) {
+      const aimOffsets = fam === 'spiral' ? [0] : [-0.28, -0.14, 0, 0.14, 0.28]
+      for (const off of aimOffsets) {
+        for (const shape of shapeCandidates(fam)) {
+          consider(buildEnemyTrajectory(fam, enemy.pos, base + off, shape, z))
+        }
+      }
+    }
+    // 障害物があれば迂回軌道も試す（迂回型と同じ立ち回り・05b §5.3）
+    for (const traj of avoiderTrajectories(enemy.pos, aim, z, obstacles)) consider(traj)
+    return best
   }
-  // 障害物があれば迂回軌道も試す（迂回型と同じ立ち回り・05b §5.3）
-  for (const traj of avoiderTrajectories(enemy.pos, aimPos, z, obstacles)) consider(traj)
+
+  // 障害物狙いの個体（第4面デモ・#42）：壁の素材（unbreakable 以外）の「面の手前」に暴発点を置く。
+  // 敵から近い順にいくつかのディスクを試し、確実に暴発できる（rank=3）狙いを選ぶ。
+  if (!aimOverride && enemy.ruptorTarget === 'obstacles') {
+    const discs: { pos: Vec2; r: number; d: number }[] = []
+    for (const ob of obstacles) {
+      if ((ob.kind ?? 'normal') === 'unbreakable') continue
+      for (const disc of ob.solids) {
+        discs.push({ pos: { x: disc.x, y: disc.y }, r: disc.r, d: dist(enemy.pos, { x: disc.x, y: disc.y }) })
+      }
+    }
+    discs.sort((a, b) => a.d - b.d)
+    let fallback: { traj: Trajectory; d: number; rank: number; end: Vec2 } | null = null
+    for (const disc of discs.slice(0, 6)) {
+      // 極（g の零点）は中心でなく壁「面」の近傍（05b §4）＝素材の外に出るまで敵側へ引く
+      const L = disc.d || 1
+      const pt = (t: number): Vec2 => ({
+        x: enemy.pos.x + (disc.pos.x - enemy.pos.x) * t,
+        y: enemy.pos.y + (disc.pos.y - enemy.pos.y) * t,
+      })
+      let t = Math.max(0, (L - disc.r) / L)
+      while (t > 0 && obstacles.some((ob) => isSolidAt(ob, pt(t)))) t -= 0.4 / L
+      const aim = pt(Math.max(0, t - 1.2 / L))
+      const found = searchAim(aim)
+      if (found && found.rank >= 3) {
+        return { trajectory: found.traj, targetId: '', expectedDamage: 0, misfirePos: found.end }
+      }
+      if (found && (!fallback || found.rank > fallback.rank)) fallback = found
+    }
+    if (fallback) {
+      const fb: { traj: Trajectory; d: number; rank: number; end: Vec2 } = fallback
+      return { trajectory: fb.traj, targetId: '', expectedDamage: 0, misfirePos: fb.rank >= 2 ? fb.end : null }
+    }
+    // 壁が全て崩れた等：以後は通常の味方狙いへフォールバック
+  }
+
+  const aimPos = aimOverride?.pos ?? perceivedPos(target)
+  const targetId = aimOverride?.targetId ?? target.id
+  const best = searchAim(aimPos)
   if (!best) return null
-  const chosen: { traj: Trajectory; d: number; ruptured: boolean; end: Vec2 } = best
   return {
-    trajectory: chosen.traj,
+    trajectory: best.traj,
     targetId,
     expectedDamage: 0,
-    misfirePos: chosen.ruptured ? chosen.end : null,
+    misfirePos: best.rank >= 2 ? best.end : null, // rank≥2 ＝極に到達して暴発する候補
   }
 }
 
