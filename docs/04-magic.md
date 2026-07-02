@@ -43,6 +43,8 @@ classifyTrajectory(traj) = isLoop(traj) ? 'orbit' : 'projectile'
 
 ## 4.3 暴発（misfire・`src/game/misfire.ts`）
 
+> **拡張**：暴発の**累積（instability・膜メーター）・半径のばらつき・崩壊イベント**は [04b-misfire-instability.md](04b-misfire-instability.md)。敵が z 場の極で意図的に暴発を起こす**崩し手（ruptor）**は [05-enemies.md](05-enemies.md) §5.4b。敵の暴発も味方と同じこの仕様で解決される（威力・AoE・壁の削り・状態異常）。
+
 関数がエラー（未定義・発散・非実数・`1/x` の極など）になった点で魔法が綻び、**光と闇を最大強度で併せ持つ大 AoE** が起きる。
 
 ```ts

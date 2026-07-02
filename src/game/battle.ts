@@ -104,7 +104,7 @@ export function prepareTurn(state: BattleState): {
   // 敵の状態異常を減衰し、ひるみ中の敵は発射しない。
   // 発射頻度（06b §2）：fireEvery 間隔の敵（暴発型など）は該当ターンのみ発射する。
   const castingEnemyIds: string[] = []
-  let enemies = state.enemies.map((e) => {
+  const enemies = state.enemies.map((e) => {
     if (e.hp <= 0) return e
     const t = tickStatuses(e.statuses)
     let hp = e.hp

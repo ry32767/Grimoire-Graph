@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { planEnemyShots } from './enemyAI'
 import { createBattleState, prepareTurn, resolveAllyCasts } from './battle'
 import { resolveTurn } from './turn'
+import { STAGES } from '../data/stages'
 import type { Ally, BossPhase, Enemy, Stage } from './types'
 
 const ally = (id: string, pos: { x: number; y: number }, hp = 500): Ally => ({
@@ -98,7 +99,7 @@ describe('ボス HP フェーズと断末魔（#45）', () => {
     let st = createBattleState(bossStage(), 6, party)
     // ボスと眷属を撃破状態に
     st = { ...st, enemies: st.enemies.map((e) => ({ ...e, hp: 0 })) }
-    let r = resolveAllyCasts(st, [], [])
+    const r = resolveAllyCasts(st, [], [])
     // 勝敗はまだ確定しない（finale=pending）
     expect(r.state.finale).toBe('pending')
     expect(r.state.outcome).toBe('ongoing')
@@ -116,5 +117,19 @@ describe('ボス HP フェーズと断末魔（#45）', () => {
     // 断末魔を解決し切ったので勝敗が確定する
     expect(r2.state.finale).toBe('done')
     expect(r2.state.outcome).toBe('cleared')
+  })
+
+  it('実ステージ第7面：崩落でアリーナが差し替わり、上限到達なら撃破後でも崩壊しうる', () => {
+    // 実データの第7面を使い、フェーズ移行でアリーナ（障害物）が入れ替わることを確認
+    const s7 = STAGES[6]
+    let st = createBattleState(s7, 6, party)
+    const upperObstacleCount = st.obstacles.length
+    expect(upperObstacleCount).toBeGreaterThan(0)
+    // ボスを 60%（<66%）へ削って中層へ
+    st = { ...st, enemies: st.enemies.map((e) => (e.boss ? { ...e, hp: Math.floor(e.maxHp * 0.6) } : e)) }
+    const r = resolveAllyCasts(st, [], [])
+    expect(r.state.bossPhase).toBe(1)
+    // 中層アリーナ（短い壁のみ）に差し替わり、上層より障害物が減る
+    expect(r.state.obstacles.length).toBeLessThan(upperObstacleCount)
   })
 })

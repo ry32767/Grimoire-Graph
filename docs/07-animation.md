@@ -69,6 +69,20 @@ intensity = 1 − (elapsed − flashStart)/FLASH_MS    // 1→0 に減衰
 
 ---
 
+## 7.1b 新規の演出（#42/#45/04b）
+
+| 演出 | 実装 | 内容 |
+|---|---|---|
+| 暴発予告（崩し手） | `drawRuptureWarning` | 対詠の晒しフェーズで、計画された暴発点に赤い✕＋AoE 見込み範囲の**不安定に揺れる破線円**。予告がある間は作成フェーズもアニメーションループを回す |
+| 崩し手のロール記号 | `drawRoleMarker`（role='ruptor'） | 縁から外へ走る赤い稲妻状のひび×3本（family glyph とは別の専用警告） |
+| ステージの異変（04b 第1幕） | `drawAnomaly` | instability 段階に応じて：背景の横縞が波打つ（1）→床のひび（2）→画面周縁が赤黒く脈動（3）。数値は見せない |
+| 暴発半径のブレ帯 | `drawMisfireBand` | プレビューの暴発✕の周囲に min–max の二重破線リング（04b §4b.3） |
+| 膜メーター | `Hud.tsx InstabilityMeter` | 初回崩壊後のみ表示。12 目盛り＋「あと N 回で崩壊」。残り2回以下で赤点滅 |
+| 物語オーバーレイ | `App.tsx storyOverlay` | RUPTOR_DEMO／COLLAPSE_FIRST／COLLAPSE_PHASE／COLLAPSE_FINAL をモーダルで一度ずつ表示 |
+| 敵の暴発爆発 | 既存 `drawMisfire` を敵弾にも適用 | `EnemyShot.misfired` のとき弾の終端で爆発（味方の暴発と同じ演出） |
+
+---
+
 ## 7.2 描画レイヤー（背面→前面・`draw.ts`）
 
 | # | レイヤー | 主な内容 |
