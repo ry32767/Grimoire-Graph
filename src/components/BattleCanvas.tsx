@@ -519,8 +519,16 @@ export default function BattleCanvas(props: Props) {
         const revs = 1.1
         const eClamped = Number.isFinite(e) ? Math.max(0, Math.min(1, e)) : 0
         const tl = ringTimeline(ring)
+        // #63：同じターン内で速度を累積する。1周ぶんの正味エネルギー変化 dSq（>0=加速する場）で、
+        // 進行 e が進むほど回転が速く/遅く、粒も大きく/小さくなる（速度＝アニメーションと連動）。
+        const spd = ring.map((p) => p.speed ?? 0)
+        const v0sq = Math.max(1, (spd[0] || o.speed || 1) ** 2)
+        const dSq = spd.length > 1 ? spd[spd.length - 1] ** 2 - spd[0] ** 2 : 0
+        const accum = Math.max(-0.85, Math.min(2.5, (dSq / v0sq) * revs)) // 窓全体での累積率
+        const spin = eClamped + accum * eClamped * eClamped * 0.5 // 累積で回転が加速/減速（位相は二次）
+        const mult = Math.max(0.15, Math.min(3, 1 + accum * eClamped)) // 現在の速度倍率（粒サイズに反映）
         for (let n = 0; n < N; n++) {
-          const idx = phaseToIndex(tl, n / N + eClamped * revs)
+          const idx = phaseToIndex(tl, n / N + spin * revs)
           const pt = ring[idx]
           if (!pt) continue
           const col = zColor(pt.z)
@@ -533,8 +541,8 @@ export default function BattleCanvas(props: Props) {
           ctx.globalAlpha = 0.5
           drawTrail(ctx, trail, col, VP)
           ctx.globalAlpha = 1
-          // 威力（=その点のリング速度×強度）で粒の大きさを変える（#21/#60）
-          const sizeScale = powerSizeFrac(ptSpeed(pt, o.speed ?? 0), pt.z)
+          // 威力（=その点のリング速度×強度×累積倍率）で粒の大きさを変える（#21/#60/#63）
+          const sizeScale = powerSizeFrac(ptSpeed(pt, o.speed ?? 0) * mult, pt.z)
           drawParticle(ctx, pt.pos, col, VP, trailPhase * 2 + n, sizeScale)
         }
       }

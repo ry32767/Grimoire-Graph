@@ -93,7 +93,7 @@ intensity = 1 − (elapsed − flashStart)/FLASH_MS    // 1→0 に減衰
 | 7 | HP バー | 敵/味方の上 |
 | 8 | 弾の波トレイル | `drawWaveTrail`：2 本の正弦波（180°位相差）＋トレイル粒 |
 | 9 | 飛行する弾 | `drawBullet`：外周グロー→shadowBlur→回転スパイク→白いコアの多層グロー |
-| 10 | 結界リングの粒 | 18 粒がリングを 1.1 周。各粒に 5 点の尾。`zColor` で属性色。**進み方は点ごとの速度に連動**（#60：`ringTimeline`＝Σ ds/speed の累積時間で phase→index を写像。速い区間は素早く抜け、遅い区間で粒が密集）。粒サイズも触れた点の速度×強度（`ptSpeed`） |
+| 10 | 結界リングの粒 | 18 粒がリングを 1.1 周。各粒に 5 点の尾。`zColor` で属性色。**進み方は点ごとの速度に連動**（#60：`ringTimeline`＝Σ ds/speed の累積時間で phase→index を写像。速い区間は素早く抜け、遅い区間で粒が密集）。粒サイズも触れた点の速度×強度（`ptSpeed`）。**#63：同じターン内で速度を累積**＝1周ぶんの正味エネルギー変化 `dSq=speed[last]²−speed[0]²`（>0＝加速する場 |z|<zRef）で、解決の進行 e が進むほど回転が加速/減速し粒も拡大/縮小（`spin=e+accum·e²/2`・`mult=1+accum·e`）。累積は解決アニメーション内のみ（ターンをまたがない）。加速する場・非対称なリング（螺旋等）で顕著、対称な円で dSq≈0 なら一定 |
 | 11 | 結界の霧散 | `drawOrbitDissipation` |
 | 12 | えぐりバースト | `drawCarveBurst`（岩片） |
 | 13 | クラッシュ火花 | `drawClashSpark` |
