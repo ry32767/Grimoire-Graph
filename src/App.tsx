@@ -230,6 +230,7 @@ export default function App() {
           battle.allies,
           battle.obstacles,
           (battle.orbits ?? []).filter((o) => o.owner === 'player').map((o) => o.ring),
+          battle.enemies,
         ).map((plan) => ({
           path: enemyFlight(plan.trajectory, e.castInitialSpeed).path,
           misfire: plan.misfirePos ?? null,

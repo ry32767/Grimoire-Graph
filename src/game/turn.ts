@@ -380,7 +380,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     .map((ao) => ao.ring as RingPoint[])
   for (const e of enemies) {
     if (!input.castingEnemyIds.includes(e.id)) continue
-    for (const plan of planEnemyShots(e, allies, obstacles, visibleRings)) {
+    for (const plan of planEnemyShots(e, allies, obstacles, visibleRings, enemies)) {
       if (classifyTrajectory(plan.trajectory) === 'orbit') {
         // 敵の周回結界も壁/失速で丸ごと霧散する（#34/#31：敵が使った場合も同様）。形状は霧散演出のため残す
         const ring = attachRingSpeeds(buildRing(plan.trajectory), e.castInitialSpeed) // 点ごとの速度（#60）
