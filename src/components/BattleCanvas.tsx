@@ -130,6 +130,8 @@ interface Props {
   /** 各味方の暴発（関数エラー）点。プレビューで赤い✕として可視化する（#30） */
   misfirePoints?: (Vec2 | null)[]
   ghostPaths?: Vec2[][]
+  /** 崩し手（#42）の暴発予告点（赤✕＋揺れる円）。無い敵は null */
+  ghostMisfires?: (Vec2 | null)[]
   /** 編集中の z 場（#37）。showZField の間だけ薄い場として表示する */
   zField?: (x: number, y: number) => number
   /** z 場をいじっている間だけ true（#37） */
@@ -216,6 +218,7 @@ export default function BattleCanvas(props: Props) {
     playerPaths: props.playerPaths,
     misfirePoints: props.misfirePoints,
     ghostPaths: props.ghostPaths,
+    ghostMisfires: props.ghostMisfires,
     zField: props.zField,
     showZField: props.showZField,
   }
@@ -235,7 +238,9 @@ export default function BattleCanvas(props: Props) {
         // 闇の周回は内側を暗くぼかす（プレイヤー視点の視認性低下・#39）
         for (const o of standing) if (ringAverageAttr(o.ring) === 'dark') drawConcealVeil(ctx, o.ring, VP)
       }
-      if (standing.length === 0) {
+      // 崩し手の予告円（#42）は不安定に揺れ続けるので、予告がある間もアニメーションループを回す
+      const hasRuptureWarning = (props.ghostMisfires ?? []).some(Boolean)
+      if (standing.length === 0 && !hasRuptureWarning) {
         drawComposeFrame(0)
         return
       }

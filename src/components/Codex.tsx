@@ -11,6 +11,8 @@ const FAMILY_LABEL: Record<Enemy['family'], string> = {
   arc: '弧',
   wave: '波',
   spiral: '渦',
+  exp: '昇り',
+  poly34: '捻れ',
 }
 
 /** 図鑑の敵カタログ：全ステージの敵を名前で一意化（出現順）。 */
@@ -38,9 +40,9 @@ function elementLabel(el: Enemy['element']): string {
   return el === 'light' ? '光' : el === 'dark' ? '闇' : '無'
 }
 
-/** 戦い方ロールのラベル（#28） */
+/** 戦い方ロールのラベル（#28/#42） */
 function roleLabel(role: Enemy['role']): string {
-  return role === 'guardian' ? '守護' : role === 'breaker' ? '破壊' : '攻撃'
+  return role === 'guardian' ? '守護' : role === 'breaker' ? '破壊' : role === 'ruptor' ? '崩し' : '攻撃'
 }
 
 /** 敵カード：遭遇済みは詳細、未遭遇は「？」で伏せる（#23）。 */

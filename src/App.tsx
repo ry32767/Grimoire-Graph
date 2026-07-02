@@ -134,18 +134,22 @@ export default function App() {
     [battle],
   )
 
-  // 敵の先出し術式を公開（#17：得意関数の形を見せる）
-  const ghostPaths = useMemo<Vec2[][]>(() => {
-    if (!battle) return []
+  // 敵の先出し術式を公開（#17：得意関数の形を見せる）。崩し手は暴発予告点も添える（#42）
+  const ghostPlans = useMemo(() => {
+    if (!battle) return [] as { path: Vec2[]; misfire: Vec2 | null }[]
     return castingIds
       .map((id) => battle.enemies.find((e) => e.id === id))
       .filter((e): e is NonNullable<typeof e> => !!e && e.hp > 0)
       .map((e) => {
         const plan = planEnemyShot(e, battle.allies, battle.obstacles)
-        return plan ? enemyFlight(plan.trajectory, e.castInitialSpeed).path : []
+        return plan
+          ? { path: enemyFlight(plan.trajectory, e.castInitialSpeed).path, misfire: plan.misfirePos ?? null }
+          : { path: [] as Vec2[], misfire: null }
       })
-      .filter((p) => p.length > 0)
+      .filter((g) => g.path.length > 0)
   }, [battle, castingIds])
+  const ghostPaths = useMemo(() => ghostPlans.map((g) => g.path), [ghostPlans])
+  const ghostMisfires = useMemo(() => ghostPlans.map((g) => g.misfire), [ghostPlans])
 
   const onChange = (patch: Partial<ComposerState>) =>
     setComposers((m) => ({ ...m, [activeAllyId]: { ...m[activeAllyId], ...patch } }))
@@ -257,7 +261,7 @@ export default function App() {
           z: zfieldAt(es.traj, x.pos), // 敵弾も z 場で色/形が決まる（#28）
         })),
         side: 'enemy',
-        misfirePos: null,
+        misfirePos: es.misfired ? es.misfirePos : null, // 崩し手の暴発（#42）：解決したときだけ爆発演出
         carves: es.carves,
         impact: es.hitAllyId ? { id: es.hitAllyId, side: 'ally', arcLen: es.hitArcLen } : null,
         vanished: es.flight.end === 'vanished', // 結界/壁で止められて霧散（#38）
@@ -454,6 +458,7 @@ export default function App() {
               showZField={composing && zEditing}
               standingOrbits={composing ? standingOrbits : undefined}
               ghostPaths={ghostPaths}
+              ghostMisfires={composing ? ghostMisfires : undefined}
               animation={animation}
               onAnimationDone={onAnimationDone}
             />

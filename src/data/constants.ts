@@ -105,6 +105,18 @@ export const OBSTACLE_KIND = {
   unbreakable: { carveScale: 0, lossScale: 1 },
 } as const
 
+/**
+ * 崩し手（ruptor・#42／05b §4）：z 場に極（1/x 型の特異点）を仕込み、狙点で暴発させる敵。
+ * z(x,y) = zBase×極性 + k/g(x,y)（g は狙点で 0 になる符号付き距離）。
+ * 飛行区間は |z|≈zBase の通常の光/闇弾（迎撃・パリィは通常ルール）、狙点近傍で |z| が発散して暴発する。
+ */
+export const RUPTOR = {
+  /** 飛行区間の基礎 z（zRef 以下＝自然失速しない範囲で、属性がはっきり読める強さ） */
+  zBase: 2.2,
+  /** 極の強さ係数 k。大きいほど手前から z が急峻になり、減速域が広がる（迎撃猶予は増える） */
+  poleK: 2,
+} as const
+
 /** ゲーム進行の基礎値 */
 export const GAME = {
   /** プレイヤー最大HP（各ステージ開始時に回復・15分3ステージ想定） */

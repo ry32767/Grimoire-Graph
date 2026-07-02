@@ -13,6 +13,7 @@ import type {
   LogEntry,
   Mechanics,
   Obstacle,
+  Owner,
   Trajectory,
   Vec2,
   ZPoint,
@@ -71,6 +72,10 @@ export interface EnemyShot {
   /** 味方へ命中した時の対象IDと到達弧長（赤フラッシュ＋揺れ演出・#20） */
   hitAllyId: string | null
   hitArcLen: number
+  /** 崩し手（#42）が計画した暴発点（z 場の極）。迎撃で速度0になれば暴発しない */
+  misfirePos: Vec2 | null
+  /** 暴発が実際に解決した（迎撃されず極まで届いた）か（#42） */
+  misfired: boolean
 }
 
 /** 味方の発射（描画・解決用） */
@@ -123,6 +128,8 @@ export interface ResolveResult {
   orbits: ActiveOrbit[]
   /** 浮かび上がるダメージ／回復の数値表示（#42） */
   popups: DamagePopup[]
+  /** このターン実際に解決した暴発（味方・敵の別つき）。instability の加算に使う（04b §4b.1） */
+  misfires: { pos: Vec2; owner: Owner }[]
 }
 
 /** 永続周回の安定ID（#39）：所有者＋リング重心＋点数から決め、同じ場所の再展開は同一IDに集約する。 */
@@ -298,12 +305,41 @@ export function traverseObstacles(
 }
 
 
+/**
+ * 暴発の AoE が範囲内の壁をほぼ全て削る（unbreakable＝壊れない壁だけ残る・§3.5/§3.7）。
+ * 砕け演出（光闇交互の破片バースト）を bursts に追記する。味方・敵の暴発で共用（#42）。
+ */
+function misfireCarveWalls(
+  center: Vec2,
+  obstacles: Obstacle[],
+  bursts: CarveBurst[],
+  misArc: number,
+): void {
+  let di = 0
+  for (const ob of obstacles) {
+    if ((ob.kind ?? 'normal') === 'unbreakable') continue
+    // AoE 円に少しでも重なる素材があるか
+    const inRange = ob.solids.some((d) => dist({ x: d.x, y: d.y }, center) <= FIELD.aoeRadius + d.r)
+    if (!inRange) continue
+    // AoE 円ぶんを丸ごとえぐる＝範囲内の素材を全て除去（部分的に重なる壁も範囲内は消える）
+    ob.carves.push({ x: center.x, y: center.y, r: FIELD.aoeRadius })
+    // 砕け演出：AoE 内の各 disc 位置で破片バースト（光闇が交互）
+    for (const dsc of ob.solids) {
+      if (dist({ x: dsc.x, y: dsc.y }, center) <= FIELD.aoeRadius) {
+        bursts.push({ pos: { x: dsc.x, y: dsc.y }, r: dsc.r, arcLen: misArc, attr: di % 2 === 0 ? 'light' : 'dark', obstacleId: ob.id })
+        di++
+      }
+    }
+  }
+}
+
 /** 同時発射の解決。入力は変更せず、新しい状態とログ・飛行データを返す。 */
 export function resolveTurn(input: ResolveInput): ResolveResult {
   const { mechanics } = input
   const log: LogEntry[] = []
   const clashes: { pos: Vec2; power: number }[] = [] // 弾・結界の衝突点と威力（#20/#38）
   const popups: DamagePopup[] = [] // ダメージ／回復の数値表示（#42）
+  const misfires: { pos: Vec2; owner: Owner }[] = [] // 解決した暴発（04b：instability の加算用）
   const allies = input.allies.map((a) => ({ ...a, statuses: [...a.statuses] }))
   const enemies = input.enemies.map((e) => ({ ...e, statuses: [...e.statuses] }))
   // carves は削りで増えるので、入力を壊さないようターンごとに新しい配列へ複製（solids は不変で共有）
@@ -348,6 +384,8 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       carves: [],
       hitAllyId: null,
       hitArcLen: 0,
+      misfirePos: plan.misfirePos ?? null,
+      misfired: false,
     })
   }
 
@@ -661,25 +699,10 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       }
       // 暴発は AoE 内の壁をほぼ全て削る（unbreakable＝壊れない壁だけ残る・§3.5/§3.7）
       if (mechanics.obstacles) {
-        const center = misfirePos
         const misArc = flight.samples[flight.samples.length - 1]?.arcLen ?? 0
-        let di = 0
-        for (const ob of obstacles) {
-          if ((ob.kind ?? 'normal') === 'unbreakable') continue
-          // AoE 円に少しでも重なる素材があるか
-          const inRange = ob.solids.some((d) => dist({ x: d.x, y: d.y }, center) <= FIELD.aoeRadius + d.r)
-          if (!inRange) continue
-          // AoE 円ぶんを丸ごとえぐる＝範囲内の素材を全て除去（部分的に重なる壁も範囲内は消える）
-          ob.carves.push({ x: center.x, y: center.y, r: FIELD.aoeRadius })
-          // 砕け演出：AoE 内の各 disc 位置で破片バースト（光闇が交互）
-          for (const dsc of ob.solids) {
-            if (dist({ x: dsc.x, y: dsc.y }, center) <= FIELD.aoeRadius) {
-              p.carves.push({ pos: { x: dsc.x, y: dsc.y }, r: dsc.r, arcLen: misArc, attr: di % 2 === 0 ? 'light' : 'dark', obstacleId: ob.id })
-              di++
-            }
-          }
-        }
+        misfireCarveWalls(misfirePos, obstacles, p.carves, misArc)
       }
+      misfires.push({ pos: misfirePos, owner: 'player' }) // 解決した暴発は膜を削る（04b §4b.1）
       log.push({
         kind: 'misfire',
         text: `${nameOf(allies, p.cast.allyId)}の術式が綻び暴発！ ${mis.damage.toFixed(0)} のAoE`,
@@ -757,7 +780,8 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
 
   // === 6. 敵弾が味方へ命中（パス上で最初に当たった味方。逸れれば回避） ===
   for (const shot of enemyShots) {
-    if (shot.blocked) continue
+    // 崩し手の弾（#42）は通常の命中でなく 6b の暴発で解決する（極の直前で式が破れる）
+    if (shot.blocked || shot.misfirePos) continue
     const allyTargets: Target[] = allies
       .filter((a) => a.hp > 0)
       .map((a) => ({ id: a.id, pos: a.pos, radius: GAME.allyHitbox }))
@@ -782,6 +806,49 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     log.push({
       kind: 'enemyHit',
       text: `${nameOf(enemies, shot.enemyId)}の術式が${allies[idx].name}に命中！ ${damage.toFixed(0)} ダメージ`,
+    })
+  }
+
+  // === 6b. 崩し手の暴発（#42・05-enemies §5.4b）：迎撃されず z 場の極まで届いた敵弾は、
+  // その場で暴発 AoE（威力・状態異常は味方の暴発と完全に同一）を起こす。敵味方の別なく巻き込む。
+  for (const shot of enemyShots) {
+    if (!shot.misfirePos || shot.blocked || shot.flight.end === 'vanished') continue
+    const center = shot.misfirePos
+    const targets = [
+      ...enemies.filter((e) => e.hp > 0).map((e) => ({ id: e.id, pos: e.pos })),
+      ...allies.filter((a) => a.hp > 0).map((a) => ({ id: a.id, pos: a.pos })),
+    ]
+    const mis = resolveMisfire({ type: 'invalid', pos: center }, shot.flight.endSpeed, targets)
+    for (const id of mis.hitIds) {
+      const ei = enemies.findIndex((e) => e.id === id)
+      if (ei >= 0) {
+        enemies[ei] = {
+          ...enemies[ei],
+          hp: Math.max(0, enemies[ei].hp - mis.damage),
+          statuses: mis.statuses.reduce((acc, s) => addStatus(acc, s), enemies[ei].statuses),
+        }
+        popups.push({ pos: enemies[ei].pos, amount: mis.damage, kind: 'misfire', targetId: id, trigger: 'misfire' })
+        continue
+      }
+      const ai = allies.findIndex((a) => a.id === id)
+      if (ai >= 0) {
+        allies[ai] = {
+          ...allies[ai],
+          hp: Math.max(0, allies[ai].hp - mis.damage),
+          statuses: mis.statuses.reduce((acc, s) => addStatus(acc, s), allies[ai].statuses),
+        }
+        popups.push({ pos: allies[ai].pos, amount: mis.damage, kind: 'misfire', targetId: id, trigger: 'misfire' })
+      }
+    }
+    if (mechanics.obstacles) {
+      const misArc = shot.flight.samples[shot.flight.samples.length - 1]?.arcLen ?? 0
+      misfireCarveWalls(center, obstacles, shot.carves, misArc)
+    }
+    shot.misfired = true
+    misfires.push({ pos: center, owner: 'enemy' })
+    log.push({
+      kind: 'misfire',
+      text: `${nameOf(enemies, shot.enemyId)}の式が破れて暴発！ ${mis.damage.toFixed(0)} のAoE`,
     })
   }
 
@@ -816,6 +883,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     clashes,
     orbits: [...orbitMap.values()],
     popups,
+    misfires,
   }
 }
 

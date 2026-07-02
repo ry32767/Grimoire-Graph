@@ -21,6 +21,8 @@ export interface SceneParams {
   misfirePoints?: (Vec2 | null)[]
   /** 敵ゴースト軌道（数学座標の点列の配列） */
   ghostPaths?: Vec2[][]
+  /** 崩し手（#42）の予告：計画された暴発点（赤✕＋揺れる円）。無い敵は null */
+  ghostMisfires?: (Vec2 | null)[]
   /** 被弾中の対象ID→フラッシュ強度（1→0）。赤く光って揺れる（#20） */
   flash?: Record<string, number>
   /** 揺れの位相（時間とともに増加） */
@@ -248,6 +250,8 @@ const FAMILY_LABEL: Record<Enemy['family'], string> = {
   arc: '弧',
   wave: '波',
   spiral: '渦',
+  exp: '昇り',
+  poly34: '捻れ',
 }
 
 /** 敵の得意関数（系統）を表す小さなドット記号（#17：見た目で判別）。 */
@@ -275,6 +279,16 @@ function drawFamilyGlyph(
     ctx.moveTo(cx - 9, cy)
     ctx.quadraticCurveTo(cx - 4.5, cy - 7, cx, cy)
     ctx.quadraticCurveTo(cx + 4.5, cy + 7, cx + 9, cy)
+    ctx.stroke()
+  } else if (family === 'exp') {
+    // 指数（#43）：平坦から終盤で鋭く立ち上がる
+    ctx.moveTo(cx - 9, cy + 5)
+    ctx.quadraticCurveTo(cx + 4, cy + 4, cx + 8, cy - 7)
+    ctx.stroke()
+  } else if (family === 'poly34') {
+    // 3/4次（#43）：S字の捻れ
+    ctx.moveTo(cx - 9, cy + 5)
+    ctx.bezierCurveTo(cx - 2, cy - 9, cx + 2, cy + 9, cx + 9, cy - 5)
     ctx.stroke()
   } else {
     // spiral：渦巻き
@@ -322,6 +336,21 @@ function drawRoleMarker(
       const y = cy + Math.sin(a) * rr
       if (i === 0) ctx.moveTo(x, y)
       else ctx.lineTo(x, y)
+    }
+    ctx.stroke()
+  } else if (role === 'ruptor') {
+    // ひび割れた記号（#42：崩し手の専用警告。family の glyph とは別に見分けられる）
+    ctx.globalAlpha = 0.9
+    ctx.strokeStyle = '#ff4b4b'
+    ctx.lineWidth = 1.6
+    ctx.beginPath()
+    for (const a0 of [0.4, 2.2, 4.1]) {
+      // 縁から外へ走る稲妻状のひび（3本）
+      const x0 = cx + Math.cos(a0) * r
+      const y0 = cy + Math.sin(a0) * r
+      ctx.moveTo(x0, y0)
+      ctx.lineTo(x0 + Math.cos(a0 + 0.5) * 4, y0 + Math.sin(a0 + 0.5) * 4)
+      ctx.lineTo(x0 + Math.cos(a0 - 0.2) * 8, y0 + Math.sin(a0 - 0.2) * 8)
     }
     ctx.stroke()
   }
@@ -387,7 +416,8 @@ export function drawEnemies(
     ctx.fillStyle = COLORS.text
     ctx.font = '10px "DotGothic16", monospace'
     ctx.textAlign = 'center'
-    const roleTag = e.role === 'guardian' ? '・守' : e.role === 'breaker' ? '・破' : ''
+    const roleTag =
+      e.role === 'guardian' ? '・守' : e.role === 'breaker' ? '・破' : e.role === 'ruptor' ? '・崩' : ''
     ctx.fillText(`${e.name}〔${FAMILY_LABEL[e.family]}${roleTag}〕`, c.x, c.y - r - 6)
     // 被弾の赤フラッシュ（#20）
     drawHitFlash(ctx, c.x, c.y, r * 1.5, intensity)
@@ -835,6 +865,39 @@ export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
   if (p.misfirePoints) {
     for (const m of p.misfirePoints) if (m) drawMisfireMarker(ctx, m, p.vp)
   }
+
+  // 崩し手の暴発予告（#42）：赤✕＋不安定に揺れる円を重ねる（最前面）
+  // 作成フェーズは trailPhase が時間で進むので、それを揺れの位相に使う
+  if (p.ghostMisfires) {
+    const phase = p.shakePhase ?? p.trailPhase ?? 0
+    for (const m of p.ghostMisfires) if (m) drawRuptureWarning(ctx, m, p.vp, phase)
+  }
+}
+
+/**
+ * 崩し手（ruptor・#42）の暴発予告：赤い✕（プレイヤーの暴発プレビューと同じ）＋
+ * AoE の見込み範囲を示す、不安定に揺れる破線円を重ねる。
+ */
+export function drawRuptureWarning(
+  ctx: CanvasRenderingContext2D,
+  pos: Vec2,
+  vp: Viewport,
+  phase = 0,
+): void {
+  const c = toScreen(pos, vp)
+  const base = FIELD.aoeRadius * scaleOf(vp)
+  const wobble = 1 + 0.06 * Math.sin(phase * 2.1) + 0.04 * Math.sin(phase * 3.7 + 1.3)
+  ctx.save()
+  ctx.strokeStyle = 'rgba(255,75,75,0.65)'
+  ctx.lineWidth = 1.5
+  ctx.setLineDash([6, 5])
+  ctx.lineDashOffset = -phase * 6
+  ctx.beginPath()
+  ctx.arc(c.x, c.y, base * wobble, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.setLineDash([])
+  ctx.restore()
+  drawMisfireMarker(ctx, pos, vp)
 }
 
 /** プレビュー：関数（軌道 or z 場）がエラーで暴発する点を赤い✕で示す（#30）。 */

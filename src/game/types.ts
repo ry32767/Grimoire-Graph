@@ -25,16 +25,17 @@ export type FireMode = 'rotate' | 'polar'
  */
 export type ZField = (x: number, y: number) => number
 
-/** 敵の得意関数の系統（#17：見た目で判別）。直線/弧/波/渦。 */
-export type EnemyFamily = 'line' | 'arc' | 'wave' | 'spiral'
+/** 敵の得意関数の系統（#17：見た目で判別）。直線/弧/波/渦＋昇り（指数）/捻れ（3/4次・#43）。 */
+export type EnemyFamily = 'line' | 'arc' | 'wave' | 'spiral' | 'exp' | 'poly34'
 
 /**
- * 敵の戦い方（#28）。
- * - attacker：味方へ最大ダメージを狙う（既定）。
- * - breaker：壁を貫いてでも味方へ届かせる（障害物ペナルティを受けない）。
- * - guardian：自陣を守る防御用の周回結界を張り、味方弾を迎撃する。
+ * 敵の戦い方（#28/#42）。
+ * - attacker：味方へ最大ダメージを狙う（既定）。障害物は避けて通る（迂回型）。
+ * - breaker：壁を貫いてでも味方へ届かせる（障害物ペナルティを受けない・火力型）。
+ * - guardian：自陣を守る防御用の周回結界を張り、味方弾を迎撃する（守護型）。
+ * - ruptor：崩し手（暴発型）。z 場に極を仕込み、狙った対象の近傍で暴発を起こす。
  */
-export type EnemyRole = 'attacker' | 'breaker' | 'guardian'
+export type EnemyRole = 'attacker' | 'breaker' | 'guardian' | 'ruptor'
 
 /** 撃ち主 */
 export type Owner = 'player' | 'enemy'
@@ -135,6 +136,11 @@ export interface Enemy {
   castZ: number
   /** 敵弾の z 場 z=f(x,y)（#28）。未指定なら定数 castZ の場として扱う */
   castZField?: ZField
+  /**
+   * 崩し手（#42）の狙い先。'obstacles' は味方でなく障害物（壁）を狙って暴発させる
+   * （第4面の暴発デモ個体用：岩壁を吹き飛ばして見せる）。未指定は 'allies'。
+   */
+  ruptorTarget?: 'allies' | 'obstacles'
 }
 
 /** 円（障害物の基本形・削り穴の両方に使う）。中心 (x,y)・半径 r。 */

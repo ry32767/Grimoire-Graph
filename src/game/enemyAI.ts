@@ -2,13 +2,13 @@
 // 各敵は family（直線/弧/波/渦）を持ち、AI は狙い角と形状係数の候補から、
 // 狙う味方へ最大ダメージを与える軌道を選ぶ（軌跡型は陣営有利＝強属性で展開）。
 import type { Ally, Enemy, EnemyFamily, Flight, Obstacle, Trajectory, Vec2, ZField } from './types'
-import { sampleTrajectory, validPrefix, dist } from './coords'
+import { sampleTrajectory, validPrefix, pathTermination, dist } from './coords'
 import { simulatePath } from './physics'
 import { firstHit } from './collision'
 import { isSolidAt } from './obstacle'
 import { attributeOf, strengthOf, affinityMultiplier, zfieldAt } from './attribute'
 import { constZField } from './zfields'
-import { COMBAT, FIELD, GAME } from '../data/constants'
+import { COMBAT, FIELD, GAME, RUPTOR } from '../data/constants'
 
 /** 闇の周回1重あたり、敵が見誤る距離（ユニット・#35）。ヒットボックスより大きく外す。 */
 const CONCEAL_JITTER = 3.5
@@ -59,7 +59,14 @@ export const ARCHETYPES: Record<EnemyFamily, { label: string; glyph: EnemyFamily
   arc: { label: '弧', glyph: 'arc' },
   wave: { label: '波', glyph: 'wave' },
   spiral: { label: '渦', glyph: 'spiral' },
+  exp: { label: '昇り', glyph: 'exp' },
+  poly34: { label: '捻れ', glyph: 'poly34' },
 }
+
+/** exp 系統の指数の伸び係数（#43：終盤で鋭く跳ね上がる）。 */
+const EXP_K = 0.13
+/** poly34 系統の 3 次曲線の零点調整（g(x)=shape·(x³−POLY_C·x)＝±√POLY_C で軸を跨ぐ S 字）。 */
+const POLY_C = 140
 
 /** 敵位置 from から to を向く基準角。 */
 function aimAt(from: Vec2, to: Vec2): number {
@@ -86,6 +93,12 @@ function buildEnemyTrajectory(
     case 'spiral':
       // 渦巻き（shape=巻きの強さ）。狙い角ぶん回す
       return { mode: 'polar', f: (t) => shape * (t + angle), origin, z }
+    case 'exp':
+      // 指数（#43）：序盤はほぼ直進し、終盤で鋭く横へ跳ね上がる
+      return { mode: 'rotate', g: (x) => shape * (Math.exp(EXP_K * x) - 1), angle, origin, z }
+    case 'poly34':
+      // 3次（#43）：S字・こぶを作る高自由度の捻れ曲線
+      return { mode: 'rotate', g: (x) => shape * (x * x * x - POLY_C * x), angle, origin, z }
   }
 }
 
@@ -100,6 +113,10 @@ function shapeCandidates(family: EnemyFamily): number[] {
       return [1.5, 3]
     case 'spiral':
       return [0.7, 1.1]
+    case 'exp':
+      return [-0.8, -0.35, 0.35, 0.8]
+    case 'poly34':
+      return [-0.004, -0.002, 0.002, 0.004]
   }
 }
 
@@ -187,6 +204,11 @@ export interface EnemyPlan {
   targetId: string
   /** 見込みダメージ（0=命中見込みなし＝牽制） */
   expectedDamage: number
+  /**
+   * 崩し手（ruptor・#42）が計画した暴発点（z 場の極に弾が達する位置）。
+   * 予告マーカー（赤✕＋揺れる円）と解決時の AoE 中心に使う。他ロールは null。
+   */
+  misfirePos?: Vec2 | null
 }
 
 /** 敵が実際に使う得意関数の系統一覧（#28：family＋families を重複なくまとめる）。 */
@@ -212,6 +234,113 @@ function planGuardianOrbit(enemy: Enemy): EnemyPlan {
   return { trajectory: traj, targetId: '', expectedDamage: 0 }
 }
 
+// ===== 崩し手（ruptor・#42／05b §4）：z 場に極を仕込み、対象の近傍で暴発させる =====
+
+/**
+ * ruptor の z 場（05b §4）：狙点 target で g=0 になる「接近方向の符号付き距離」g に極を仕込む。
+ * z(x,y) = zBase×極性 + k/g(x,y)。接近側（g<0）では極の寄与が基礎 z と同符号になるよう k の符号を選び、
+ * 飛行区間は属性が読める通常の光/闇弾として振る舞う。狙点を跨ぐと z の符号が大きく反転し、
+ * 既存の極判定（coords.applyZValidity）がそのまま暴発（z 場エラー・04-magic §4.3）として検出する。
+ */
+export function buildRuptorZField(origin: Vec2, target: Vec2, polarity: 1 | -1): ZField {
+  const dx = target.x - origin.x
+  const dy = target.y - origin.y
+  const L = Math.hypot(dx, dy) || 1
+  const ux = dx / L
+  const uy = dy / L
+  const base = RUPTOR.zBase * polarity
+  const k = -RUPTOR.poleK * polarity // 接近側（g<0）で k/g が base と同符号になる
+  return (x, y) => {
+    const g = (x - target.x) * ux + (y - target.y) * uy
+    return base + k / g
+  }
+}
+
+/** ruptor が狙う味方の優先度（attacker の woundFocus/lowHpBias と同じ考え方・05-enemies §5.4b）。 */
+function threatScore(a: Ally): number {
+  const woundFocus = 1 + (1 - a.hp / a.maxHp) * 0.5
+  const lowHpBias = 1 + Math.max(0, (60 - a.hp) / 60) * 0.25
+  return woundFocus * lowHpBias
+}
+
+/**
+ * 崩し手の攻撃計画（#42・05b §4）。通常の最大ダメージ探索は使わず、
+ * 「狙う対象の近傍に z 場の極（暴発点）が来る」軌道を、迂回型と同じ family（line 不可）から選ぶ。
+ * aimOverride を渡すとその位置を狙う（ボス断末魔の分散ターゲティングに使う・#45）。
+ */
+export function planRuptorShot(
+  enemy: Enemy,
+  allies: Ally[],
+  obstacles: Obstacle[] = [],
+  aimOverride?: { pos: Vec2; targetId: string },
+): EnemyPlan | null {
+  const alive = allies.filter((a) => a.hp > 0)
+  if (alive.length === 0) return null
+  // 隠蔽の扱いは attacker と同じ（#35）：完全に隠れた味方は狙えず、見かけ位置で計画する
+  const visible = alive.filter((a) => (a.concealed ?? 0) < COMBAT.orbitConcealFull)
+  const candidates = visible.length > 0 ? visible : alive
+  const target = candidates.reduce((best, a) => (threatScore(a) > threatScore(best) ? a : best))
+  let aimPos = aimOverride?.pos ?? perceivedPos(target)
+  let targetId = aimOverride?.targetId ?? target.id
+  // 障害物狙いの個体（第4面デモ・#42）：味方に最も近い壁の素材（unbreakable 以外）へ暴発点を置く
+  if (!aimOverride && enemy.ruptorTarget === 'obstacles') {
+    let bestDisc: { pos: Vec2; d: number } | null = null
+    for (const ob of obstacles) {
+      if ((ob.kind ?? 'normal') === 'unbreakable') continue
+      for (const disc of ob.solids) {
+        const p = { x: disc.x, y: disc.y }
+        const d = Math.min(...alive.map((a) => dist(a.pos, p)))
+        if (!bestDisc || d < bestDisc.d) bestDisc = { pos: p, d }
+      }
+    }
+    if (bestDisc) {
+      aimPos = bestDisc.pos
+      targetId = ''
+    }
+  }
+
+  // 弾の極性は自陣の element（無属性なら対象の反対極）
+  const polarity: 1 | -1 =
+    enemy.element === 'light' ? 1 : enemy.element === 'dark' ? -1 : target.element === 'light' ? -1 : 1
+  const z = buildRuptorZField(enemy.pos, aimPos, polarity)
+
+  // 迂回型と同じ制約：line は使えない（05b §2）。曲率のある family から選ぶ
+  const fams = enemyFamilies(enemy).filter((f) => f !== 'line')
+  if (fams.length === 0) fams.push('arc')
+  const base = aimAt(enemy.pos, aimPos)
+
+  // 「極に到達して暴発する」候補を最優先し、その中で暴発点が狙点に最も近いものを選ぶ
+  let best: { traj: Trajectory; d: number; ruptured: boolean; end: Vec2 } | null = null
+  const consider = (traj: Trajectory) => {
+    const { path, flight } = enemyFlight(traj, enemy.castInitialSpeed)
+    if (path.length < 2 || flight.end === 'vanished') return // 失速する候補は捨てる
+    const end = path[path.length - 1]
+    const d = dist(end, aimPos)
+    const ruptured = pathTermination(sampleTrajectory(traj)).end === 'invalid'
+    if (!best || (ruptured && !best.ruptured) || (ruptured === best.ruptured && d < best.d)) {
+      best = { traj, d, ruptured, end }
+    }
+  }
+  for (const fam of fams) {
+    const aimOffsets = fam === 'spiral' ? [0] : [-0.28, -0.14, 0, 0.14, 0.28]
+    for (const off of aimOffsets) {
+      for (const shape of shapeCandidates(fam)) {
+        consider(buildEnemyTrajectory(fam, enemy.pos, base + off, shape, z))
+      }
+    }
+  }
+  // 障害物があれば迂回軌道も試す（迂回型と同じ立ち回り・05b §5.3）
+  for (const traj of avoiderTrajectories(enemy.pos, aimPos, z, obstacles)) consider(traj)
+  if (!best) return null
+  const chosen: { traj: Trajectory; d: number; ruptured: boolean; end: Vec2 } = best
+  return {
+    trajectory: chosen.traj,
+    targetId,
+    expectedDamage: 0,
+    misfirePos: chosen.ruptured ? chosen.end : null,
+  }
+}
+
 /**
  * 敵の攻撃を計画する：狙う味方×（狙い角×形状）の候補から、最大ダメージの軌道を選ぶ。
  * どの候補も命中見込みがなければ、最もHPの低い味方へ直進で牽制する。
@@ -222,6 +351,9 @@ export function planEnemyShot(enemy: Enemy, allies: Ally[], obstacles: Obstacle[
 
   // 防御ロール：自陣を守る周回結界を張る（#28）
   if (enemy.role === 'guardian') return planGuardianOrbit(enemy)
+
+  // 崩し手（#42）：狙った対象の近傍で暴発させる専用計画
+  if (enemy.role === 'ruptor') return planRuptorShot(enemy, allies, obstacles)
 
   // 闇の周回で完全に隠れた味方は視認不可＝狙えない（#35）。全員隠れていれば見えないなりに撃つ。
   const visible = alive.filter((a) => (a.concealed ?? 0) < COMBAT.orbitConcealFull)
