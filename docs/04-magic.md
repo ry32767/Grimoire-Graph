@@ -43,7 +43,7 @@ classifyTrajectory(traj) = isLoop(traj) ? 'orbit' : 'projectile'
 
 ## 4.3 暴発（misfire・`src/game/misfire.ts`）
 
-> **拡張**：暴発の**累積（instability・膜メーター）・半径のばらつき・崩壊イベント**は [04b-misfire-instability.md](04b-misfire-instability.md)。敵が z 場の極で意図的に暴発を起こす**崩し手（ruptor）**は [05-enemies.md](05-enemies.md) §5.4b。敵の暴発も味方と同じこの仕様で解決される（威力・AoE・壁の削り・状態異常）。
+> **拡張**：暴発の**累積（instability・膜メーター）・半径のばらつき・崩壊イベント**は [04b-misfire-instability.md](04b-misfire-instability.md)。敵が z 場の極で意図的に暴発を起こす**崩し手（ruptor）**は [05-enemies.md](05-enemies.md) §5.4b。敵の暴発も味方と同じこの仕様で解決される（威力・AoE・壁の削り・結界の削り・状態異常）。
 
 関数がエラー（未定義・発散・非実数・`1/x` の極など）になった点で魔法が綻び、**光と闇を最大強度で併せ持つ大 AoE** が起きる。
 
@@ -57,7 +57,8 @@ AoE 半径 = aoeRadius(=5)
 - **威力は常に最大**（`sMax × maxFlightSpeed`）。暴発時の速度に依らず一定で、光・闇の両属性を最大強度で帯びる（#41）。
 - AoE 内の**生存している**敵全員＋暴発点 `aoeRadius` 以内の生存味方全員にダメージ＋状態異常（撃破済み hp0 は対象外＝判定を出さない）。
 - **AoE 内の壁もほぼ全て削れる**（#41）：暴発点を中心に `aoeRadius` ぶんの円を `carves` に足し、範囲内の素材を丸ごと除去する。`unbreakable`（壊れない壁）だけは残る。砕けた各 disc 位置で破片バーストが舞う。
-- 暴発点が術者（原点）近傍なら**自爆**（`selfHit`）。足元で関数が壊れると味方を巻き込むので注意。
+- **AoE 内の結界（周回リング）も最大威力でパリィ相当に削る**（`blastOrbits`）：削り量はパリィと同じ `威力 × parryLossScale`（威力は常に最大 `sMax × maxFlightSpeed`）。AoE 内で最も速いリング点の速度から差し引き、残れば全体を同率で `scaleRingSpeeds`、速度0で霧散。暴発は光闇両極を最大で帯びるため**相手属性に関係なく必ず作用**し、**味方・敵どちらの結界も**（新規リング・持続結界とも）削る。`maxFlightSpeed(24)` を超えるリング速度は存在せず、削り量（`120×0.25=30`）がそれを上回るため、実際に AoE へ触れた結界はほぼ確実に霧散する。
+- 暴発点が術者近傍なら**自爆**（`selfHit`）。足元で関数が壊れると味方を巻き込むので注意（自爆判定は術者＝発射元の位置基準）。
 - `detectMisfire` は `pathTermination` を使い、`maxParam`（場内で完結）なら暴発しない。
 - **z 場（属性関数）のエラーでも暴発する**（#30）。`sqrt(-1)`・`log(0)`・`1/x` の極など、**軌道は有効でも z 場が経路上でエラー（非有限）になる点**で同じ暴発が起きる（検出は `coords.ts` の `applyZValidity`・[03-functions.md](03-functions.md) §3.3）。暴発点はエラー手前の場内有効点。
 - ステージ 6 のヒントにある通り「狙って暴発させて最大 AoE を当てる」高等戦術も成立する。
