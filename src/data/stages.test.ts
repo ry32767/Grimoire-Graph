@@ -33,11 +33,13 @@ describe('ステージ定義（機能14・#15）', () => {
 
   it('敵・障害物ブロブは場内に配置され、HP/円は正', () => {
     for (const s of STAGES) {
+      // 場の半径は面ごとに可変（#49・06b §5.5）。未指定は既定 rField。
+      const rField = s.rField ?? FIELD.rField
       expect(s.enemies.length).toBeGreaterThan(0)
       expect(s.introText.length).toBeGreaterThan(0)
       expect(s.clearText.length).toBeGreaterThan(0)
       for (const e of s.enemies) {
-        expect(dist(e.pos)).toBeLessThan(FIELD.rField)
+        expect(dist(e.pos)).toBeLessThan(rField)
         expect(e.hp).toBeGreaterThan(0)
       }
       for (const o of s.obstacles) {
@@ -46,15 +48,17 @@ describe('ステージ定義（機能14・#15）', () => {
         expect(o.solids.length + rects.length).toBeGreaterThan(0)
         expect(o.carves).toEqual([])
         for (const d of o.solids) {
-          expect(dist({ x: d.x, y: d.y })).toBeLessThan(FIELD.rField)
+          expect(dist({ x: d.x, y: d.y })).toBeLessThan(rField)
           expect(d.r).toBeGreaterThan(0)
         }
         for (const r of rects) {
           expect(r.w).toBeGreaterThan(0)
           expect(r.h).toBeGreaterThan(0)
-          // 四隅とも場内
-          expect(dist({ x: r.x, y: r.y })).toBeLessThan(FIELD.rField)
-          expect(dist({ x: r.x + r.w, y: r.y + r.h })).toBeLessThan(FIELD.rField)
+          // 四隅とも場内（矩形の全4角）
+          expect(dist({ x: r.x, y: r.y })).toBeLessThan(rField)
+          expect(dist({ x: r.x + r.w, y: r.y })).toBeLessThan(rField)
+          expect(dist({ x: r.x, y: r.y + r.h })).toBeLessThan(rField)
+          expect(dist({ x: r.x + r.w, y: r.y + r.h })).toBeLessThan(rField)
         }
       }
     }
@@ -63,6 +67,8 @@ describe('ステージ定義（機能14・#15）', () => {
   it('障害物ありステージは開始時、全ての味方→敵の直線が壁で遮られる', () => {
     for (const s of STAGES) {
       if (!s.mechanics.obstacles) continue // チュートリアル等は直線可
+      // 第4面は包囲構成（#49・敵が全方位）がテーマで「正面の壁」の概念がないため除外（06b §5.6）
+      if (s.id === 'stage-4') continue
       for (const a of PARTY) {
         for (const e of s.enemies) {
           expect(segmentBlocked(a.pos, e.pos, s.obstacles)).toBe(true)
@@ -141,6 +147,119 @@ describe('難易度フレームワーク（06b）', () => {
     expect(s7.bossPhases![1]).toMatchObject({ hpBelow: 0.33, castCount: 3, cullMinions: true })
     // 最下層は障害物なし（逃げ場が少ない）
     expect(s7.bossPhases![1].obstacles).toHaveLength(0)
+  })
+})
+
+describe('フィールド半径 rField（#49・06b §5.5）', () => {
+  it('面ごとに rField が設定される（高難度面ほど広め）', () => {
+    // 1面は既定（未指定＝FIELD.rField）、2〜3面はやや広め、5〜6面は広め、7面上層はさらに広い
+    expect(STAGES[0].rField ?? FIELD.rField).toBe(FIELD.rField)
+    expect(STAGES[1].rField).toBe(32)
+    expect(STAGES[2].rField).toBe(34)
+    expect(STAGES[3].rField).toBe(32)
+    expect(STAGES[4].rField).toBe(36)
+    expect(STAGES[5].rField).toBe(36)
+    expect(STAGES[6].rField).toBe(35)
+  })
+
+  it('第7面 bossPhases で rField が段階的に縮小する（床崩落）', () => {
+    const phases = STAGES[6].bossPhases!
+    expect(phases[0].rField).toBe(28)
+    expect(phases[1].rField).toBe(24)
+    // 縮小してもボス（y=23）は場内に残る（dist 23 < 24）
+    const boss = STAGES[6].enemies.find((e) => e.boss)!
+    expect(dist(boss.pos)).toBeLessThan(phases[1].rField!)
+  })
+})
+
+describe('翼壁（#50・06b §5.6）', () => {
+  /** 帯の外側〜境界の間（側面帯）の点が、いずれかの unbreakable 素材で塞がれているか。 */
+  function sideBandBlocked(s: (typeof STAGES)[number], sideX: number): boolean {
+    const rField = s.rField ?? FIELD.rField
+    // 帯の端（|x|=18〜19）より外側で、場内に収まる y をいくつか試す
+    for (let y = -8; y <= 12; y += 1) {
+      const x = sideX
+      if (dist({ x, y }) >= rField) continue
+      const blocked = s.obstacles.some((o) => isSolidAt(o, { x, y }))
+      if (blocked) return true
+    }
+    return false
+  }
+
+  it.each([
+    ['第2面', 1],
+    ['第3面', 2],
+    ['第5面', 4],
+    ['第6面', 5],
+  ])('%s：帯の外側の側面帯が素材で塞がれている（両側）', (_name, idx) => {
+    const s = STAGES[idx]
+    // 帯（x∈[-18,18]）の外側 x=22（右）/ x=-22（左）に翼壁の素材があること
+    expect(sideBandBlocked(s, 22)).toBe(true)
+    expect(sideBandBlocked(s, -22)).toBe(true)
+  })
+
+  it('翼壁は unbreakable（削って抜けられない・§5.6）', () => {
+    // 第2面の x≈24 付近の壁素材を含む障害物は unbreakable であること
+    const s2 = STAGES[1]
+    const wing = s2.obstacles.find((o) => isSolidAt(o, { x: 24, y: 2 }))
+    expect(wing).toBeDefined()
+    expect(wing!.kind).toBe('unbreakable')
+  })
+})
+
+describe('図鑑（05c）との整合', () => {
+  it('図鑑のHP値と一致する', () => {
+    const hpOf = (idx: number, name: string) =>
+      STAGES[idx].enemies.find((e) => e.name === name)!.hp
+    expect(hpOf(1, '回廊の衛士')).toBe(110)
+    expect(hpOf(1, '影の射手')).toBe(105)
+    expect(hpOf(2, '祭壇の影')).toBe(110)
+    expect(hpOf(2, '白の祭司')).toBe(130)
+    expect(hpOf(3, '坑道の弓手')).toBe(125)
+    expect(hpOf(3, '渦の番兵')).toBe(140)
+    expect(hpOf(4, '鏡像の衛士（光）')).toBe(125)
+    expect(hpOf(4, '鏡像の射手（闇）')).toBe(120)
+    expect(hpOf(5, '封印の番人')).toBe(180)
+    expect(STAGES[6].enemies.find((e) => e.name === '守護者の眷属（迂回）')!.hp).toBe(130)
+    expect(STAGES[6].enemies.find((e) => e.boss)!.hp).toBe(380)
+  })
+
+  it('第5面に鏡守のゴーレム（守護型・方向づけ場・単色）がいる', () => {
+    const golem = STAGES[4].enemies.find((e) => e.name === '鏡守のゴーレム')
+    expect(golem).toBeDefined()
+    expect(golem!.role).toBe('guardian')
+    expect(golem!.directedAura).toBe(true)
+    expect(golem!.species).toBe('golem')
+    // 中難度：LVL5 並のHP（150〜165 で決めてよい）
+    expect(golem!.hp).toBeGreaterThanOrEqual(150)
+    expect(golem!.hp).toBeLessThanOrEqual(165)
+  })
+
+  it('第6面の崩し手3体は abs/arc/poly34 を各体で分けて持つ（#46）', () => {
+    const ruptors = STAGES[5].enemies.filter((e) => e.role === 'ruptor')
+    const fams = ruptors.map((r) => r.family)
+    expect(new Set(fams)).toEqual(new Set(['abs', 'arc', 'poly34']))
+    // 迂回型・暴発型の制約：wave/exp/line/spiral を含まない
+    for (const r of ruptors) {
+      expect(['abs', 'arc', 'poly34']).toContain(r.family)
+    }
+  })
+
+  it('第6面の封印の番人は交互張り＋方向づけ併用（最上位ゴーレム）', () => {
+    const guardian = STAGES[5].enemies.find((e) => e.role === 'guardian')!
+    expect(guardian.alternatingAura).toBe(true)
+    expect(guardian.directedAura).toBe(true)
+  })
+
+  it('石像の番人以外は species を持ち、原型は proto', () => {
+    expect(STAGES[0].enemies[0].species).toBe('proto')
+    // 非ボスの敵はすべて species が付く（ボスは未設定でよい）
+    for (const s of STAGES) {
+      for (const e of s.enemies) {
+        if (e.boss) continue
+        expect(e.species).toBeDefined()
+      }
+    }
   })
 })
 

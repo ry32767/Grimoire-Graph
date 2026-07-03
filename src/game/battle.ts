@@ -3,6 +3,7 @@ import type { Ally, AllyCast, BattleState, LogEntry, Stage } from './types'
 import { tickStatuses } from './status'
 import { resolveTurn, type ResolveResult } from './turn'
 import { finaleVariant } from './enemyAI'
+import { FIELD } from '../data/constants'
 
 /** ステージ定義＋パーティから戦闘状態を初期化する（HPは各ステージ開始時に全快）。 */
 export function createBattleState(stage: Stage, stageIndex: number, party: Ally[]): BattleState {
@@ -19,6 +20,8 @@ export function createBattleState(stage: Stage, stageIndex: number, party: Ally[
     orbits: [],
     bossPhases: stage.bossPhases,
     bossPhase: 0,
+    // 場の半径（#49・06b §5.5）：面ごとに可変。未指定は既定 rField。
+    rField: stage.rField ?? FIELD.rField,
   }
 }
 
@@ -70,6 +73,8 @@ function applyBossPhases(state: BattleState, log: LogEntry[]): BattleState {
     obstacles: ph.obstacles.map((o) => ({ ...o, carves: [...o.carves] })),
     orbits: [], // 崩落で持続結界は霧散
     bossPhase: target,
+    // 床崩落で場が縮む（#49・06b §5.5）。指定がなければ現状維持
+    rField: ph.rField ?? state.rField,
   }
 }
 
@@ -160,6 +165,7 @@ export function resolveAllyCasts(
     activeOrbits: state.orbits ?? [],
     instability: opts?.instability,
     misfireRoll: opts?.misfireRoll,
+    fieldR: state.rField,
   })
 
   let next: BattleState = {

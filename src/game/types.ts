@@ -27,8 +27,17 @@ export type FireMode = 'rotate' | 'polar'
  */
 export type ZField = (x: number, y: number) => number
 
-/** 敵の得意関数の系統（#17：見た目で判別）。直線/弧/波/渦＋昇り（指数）/捻れ（3/4次・#43）。 */
-export type EnemyFamily = 'line' | 'arc' | 'wave' | 'spiral' | 'exp' | 'poly34'
+/**
+ * 敵の得意関数の系統（#17：見た目で判別）。
+ * 直線/弧/波/渦＋昇り（指数）/捻れ（3〜5次・#43）＋折れ（絶対値・V字・#46）。
+ */
+export type EnemyFamily = 'line' | 'arc' | 'wave' | 'spiral' | 'exp' | 'poly34' | 'abs'
+
+/**
+ * 敵の種族（05c 図鑑・#46）。描画（スプライト・撃破演出）専用でロジックには影響させない。
+ * 原型=proto／鋼鬼=oni／亡霊魔術師=wraith／紅亡霊=redWraith／ゴーレム=golem。
+ */
+export type EnemySpecies = 'proto' | 'oni' | 'wraith' | 'redWraith' | 'golem'
 
 /**
  * 敵の戦い方（#28/#42）。
@@ -54,6 +63,11 @@ export interface RotateTrajectory {
   origin?: Vec2
   /** 属性の z 場 z=f(x,y)（#30/#21）。未指定は中立(0)。経路上の位置で評価する */
   z?: ZField
+  /**
+   * 場の半径（#49・06b §5.5）。この軌道を評価するときの inField 判定に使う。
+   * 面ごと・ボスフェーズごとに可変。未指定は FIELD.rField（既定 30）。
+   */
+  fieldR?: number
 }
 
 /** 極座標方式の軌道：r=f(θ)（術者位置 origin を極の中心に・全方向） */
@@ -64,6 +78,11 @@ export interface PolarTrajectory {
   origin?: Vec2
   /** 属性の z 場 z=f(x,y)（#30/#21）。未指定は中立(0）。経路上の位置で評価する */
   z?: ZField
+  /**
+   * 場の半径（#49・06b §5.5）。この軌道を評価するときの inField 判定に使う。
+   * 面ごと・ボスフェーズごとに可変。未指定は FIELD.rField（既定 30）。
+   */
+  fieldR?: number
 }
 
 /** 軌道（発射方式の判別共用体） */
@@ -171,6 +190,16 @@ export interface Enemy {
   alternatingAura?: boolean
   /** 守護型が今ターン張る結界の極性（+1=光/−1=闇）。alternatingAura 個体に prepareTurn が設定 */
   guardZSign?: 1 | -1
+  /**
+   * 守護型の方向づけられた場（05b §5.4・#47・LVL4〜5解禁）：リングの z 場を
+   * z=zRef·cos(φ−φ_threat) 型の非一様場にし、脅威方向 φ_threat で強度を最大にする。
+   * 全周で |z|≤zRef を維持するため失速自滅しない。alternatingAura と併用可（最上位個体）。
+   */
+  directedAura?: boolean
+  /** 種族（05c 図鑑・#46）。描画専用でロジックには影響させない。 */
+  species?: EnemySpecies
+  /** LVL（1〜7・06b）。ティア演出（外見・強化度合いの表現）用。ロジックには影響させない。 */
+  level?: number
 }
 
 /** 円（障害物の基本形・削り穴の両方に使う）。中心 (x,y)・半径 r。 */
@@ -272,6 +301,11 @@ export interface BossPhase {
   obstacles: Obstacle[]
   /** 眷属を間引く（最下層＝ボス単独・#45） */
   cullMinions?: boolean
+  /**
+   * 崩落後の場の半径（06b §5.5・#49）。床崩落でフィールドが縮む段階演出用。
+   * このフェーズへ移行すると BattleState.rField を上書きする。未指定はステージ既定 rField を据え置く。
+   */
+  rField?: number
 }
 
 /** ステージ定義（§5・機能14）。データは src/data/ に分離 */
@@ -289,6 +323,12 @@ export interface Stage {
   boss?: boolean
   /** ボスの HP フェーズ（#45：床崩落・同時発射数の変化）。hpBelow 降順で定義する */
   bossPhases?: BossPhase[]
+  /**
+   * 面ごとの場の半径（06b §5.5・#49）。高難度面ほど広く取り、複雑な壁配置や
+   * 高次関数（poly34）のうねりに余地を与える。createBattleState が BattleState.rField に取り込み、
+   * 描画・当たり判定・敵AI・味方プレビューが参照する。未指定は FIELD.rField を据え置く。
+   */
+  rField?: number
 }
 
 /**
@@ -367,6 +407,12 @@ export interface BattleState {
   bossPhases?: BossPhase[]
   /** 現在のフェーズ（0=最初のアリーナ。しきいを跨ぐと +1 して床が崩れる・#45） */
   bossPhase?: number
+  /**
+   * 現在の場の半径（#49・06b §5.5）。createBattleState でステージから取得し、
+   * ボスフェーズ遷移で BossPhase.rField により縮小する。描画ビューポート・当たり判定・
+   * 敵AI・味方プレビューはこの値を使う。未指定相当は FIELD.rField。
+   */
+  rField?: number
   /**
    * 断末魔（#45）：ボス HP0 の直後に一度だけ、暴発型3連の「最後の一手」を挟む。
    * pending=次ターンで発動 → cast=発動中 → done=解決済み（勝敗判定へ進める）。

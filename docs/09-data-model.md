@@ -12,20 +12,21 @@
 | `Attribute` | `'light' \| 'dark' \| 'neutral'`（命中点の z 符号で決定） |
 | `ZField` | `(x,y)=>number`。属性の高さ z=f(x,y)。軌道とは別物 |
 | `FireMode` | `'rotate' \| 'polar'` |
-| `Trajectory` | `RotateTrajectory`（g, angle, origin, z?）か `PolarTrajectory`（f, origin, z?）の共用体 |
+| `Trajectory` | `RotateTrajectory`（g, angle, origin, z?, fieldR?）か `PolarTrajectory`（f, origin, z?, fieldR?）の共用体。`fieldR`＝この軌道の `inField` 判定に使う場半径（#49・未指定は `FIELD.rField`） |
 | `Spell` / `AllyCast` | 発射入力（owner/trajectory/initialSpeed、味方は allyId） |
 | `Flight` / `FlightSample` | 物理シミュ結果（samples・end・endPos・endSpeed） |
 | `FlightEnd` | `'vanished'(速度0消滅) \| 'outOfField' \| 'invalid'(暴発) \| 'maxParam'(完走)` |
 | `StatusEffect` | `flinch`/`burn`＋magnitude＋remainingTurns |
-| `Enemy` / `Ally` | 敵・味方術者（[05](05-enemies.md)/[01](01-overview.md) 参照）。敵は `ruptorTarget`/`castCount`/`patternPool`/`fireEvery`/`fireOffset`/`boss`/`slipThrough`/`alternatingAura`/`guardZSign` の拡張フィールドを持つ（#42/#44/#45/05b） |
-| `EnemyFamily` | `line \| arc \| wave \| spiral \| exp \| poly34`（得意関数の系統・#43） |
+| `Enemy` / `Ally` | 敵・味方術者（[05](05-enemies.md)/[01](01-overview.md) 参照）。敵は `ruptorTarget`/`castCount`/`patternPool`/`fireEvery`/`fireOffset`/`boss`/`slipThrough`/`alternatingAura`/`guardZSign`/`directedAura`/`species`/`level` の拡張フィールドを持つ（#42/#44/#45/#46/#47/05b）。`directedAura`＝守護型の方向づけ場（#47）、`species`/`level`＝描画・ティア演出専用でロジック不関与 |
+| `EnemyFamily` | `line \| arc \| wave \| spiral \| exp \| poly34 \| abs`（得意関数の系統・#43/#46。`abs`＝折れ／絶対値・V字） |
+| `EnemySpecies` | `proto \| oni \| wraith \| redWraith \| golem`（種族・05c 図鑑・#46。描画専用） |
 | `EnemyRole` | `attacker \| breaker \| guardian \| ruptor`（#42） |
 | `Disc` / `Rect` / `Obstacle` / `ObstacleKind` | 障害物（素材＝solids（円）＋rects（四角・#56）− carves・耐久種別） |
 | `CarveBurst` | 削る瞬間の演出データ |
 | `ActiveOrbit` | 永続する周回結界（#39） |
 | `Mechanics` | `{ obstacles, enemyFire }`（段階的解禁） |
-| `BossPhase` | ボスの HP フェーズ（#45）：`{ hpBelow, castCount, obstacles, cullMinions? }` |
-| `Stage` | ステージ定義（enemies/obstacles/introText/clearText/mechanics/boss?/bossPhases?） |
+| `BossPhase` | ボスの HP フェーズ（#45）：`{ hpBelow, castCount, obstacles, cullMinions?, rField? }`（`rField`＝崩落後の場半径・`applyBossPhases` が `BattleState.rField` へ反映・#49） |
+| `Stage` | ステージ定義（enemies/obstacles/introText/clearText/mechanics/boss?/bossPhases?/rField?（面ごとの場半径・`createBattleState` が `BattleState.rField` へ取り込む・#49）） |
 | `Phase` | `'enemyReveal' \| 'compose' \| 'resolve'` |
 | `LogEntry` | 戦闘ログ（kind で分類） |
 | `BattleState` | 戦闘状態（メモリ上のみ・永続化なし） |
@@ -39,11 +40,14 @@
   orbits?: ActiveOrbit[],   // 持続中の周回結界
   bossPhases?: BossPhase[], // ボスの HP フェーズ定義（createBattleState でステージから複製・#45）
   bossPhase?: number,       // 現在のフェーズ（0=最初のアリーナ）
+  rField?: number,          // 現在の場半径（#49・§5.5）。createBattleState が Stage.rField を取得・applyBossPhases が BossPhase.rField で縮小
   finale?: 'pending'|'cast'|'done'  // 断末魔（ボスHP0後の暴発3連）の進行状態
 }
 ```
 
 > **ラン全体の状態**（`instability`・初回崩壊済みフラグ・図鑑補足の既読など・04b）は `BattleState` ではなく `App.tsx` の React state が持つ（ステージをまたいで持ち越すため）。ゲームロジックへは `resolveTurn` の入力（`instability`/`misfireRoll`）として注入する。
+
+> **場半径の伝播（#49・§5.5）**：`BattleState.rField` は `resolveAllyCasts` から `ResolveInput.fieldR` として `resolveTurn` に渡り、敵AI（`planEnemyShots(…, fieldR)`）が計画する軌道に `Trajectory.fieldR` として刻まれる。味方casts は `buildComposerTrajectory(c, origin, fieldR)` が同じ値を刻む。`coords.sampleTrajectory` は `traj.fieldR ?? FIELD.rField` を `inField` 判定に使うため、面/フェーズで場が変わっても物理・迎撃・暴発・描画（`Viewport.unitsRadius`）が同じ半径で一致する。グローバル可変状態は持たない（純粋関数）。
 
 ---
 
@@ -111,7 +115,7 @@ resolveAllyCasts(state, casts, castingEnemyIds, { instability?, misfireRoll? })
 }
 ```
 
-`App.tsx` はこれを `ResolveAnimation`（`AnimBullet[]` / `AnimOrbit[]` / `clashes`）に変換して `BattleCanvas` に渡す。
+`App.tsx` はこれを `ResolveAnimation`（`AnimBullet[]` / `AnimOrbit[]` / `clashes` / `popups` / **`deaths`** / **`bossView`**）に変換して `BattleCanvas` に渡す。`deaths[]`（`EnemyDeath = {id,pos,species,element,tier,hitboxRadius,boss}`）は「このターン hp>0→hp≤0 になった敵」を撃破前の敵から作り、`BattleCanvas` が種族別の消滅アニメ（`drawEnemyDeath`／ボスは `drawBossCollapse`）を再生する（05c §6.5・#46/#51）。`bossView = {phase,finale,outcome}` はボスの多段外見（`drawBossSprite`）に渡す描画専用の状態。**いずれも当たり判定・ダメージ計算には影響しない**（描画タイムラインのみ）。
 
 ---
 
@@ -148,7 +152,7 @@ src/
 │  ├ party.ts               自陣営 3 人
 │  └ story.ts               世界観テキスト
 ├ components/               React UI（BattleCanvas/FunctionPanel/Hud/Codex/Guide/screens/composer）
-├ render/                   draw.ts（描画関数群）・theme.ts（配色）
+├ render/                   draw.ts（描画関数群）・theme.ts（配色）・species.ts（種族→パレット/装飾の純粋関数・05c §0/§6・#46）・textures.ts（壁タイル）
 ├ audio/sound.ts            Web Audio 合成の効果音・BGM
 └ styles/                   CSS・フォント
 ```

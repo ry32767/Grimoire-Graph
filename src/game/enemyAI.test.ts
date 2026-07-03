@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { planEnemyShot, enemyFlight, ARCHETYPES } from './enemyAI'
+import { planEnemyShot, enemyFlight, ARCHETYPES, AVOIDER_FAMILIES } from './enemyAI'
 import { firstHit } from './collision'
 import { isSolidAt } from './obstacle'
 import { classifyTrajectory } from './loop'
@@ -32,10 +32,47 @@ const enemy = (pos: { x: number; y: number }, family: EnemyFamily, element: Enem
 })
 
 describe('敵AIの攻撃計画（#2/#17）', () => {
-  it('全familyが存在し、ラベルを持つ', () => {
-    for (const f of ['line', 'arc', 'wave', 'spiral'] as EnemyFamily[]) {
+  it('全familyが存在し、ラベルを持つ（abs=折れを含む・#46）', () => {
+    for (const f of ['line', 'arc', 'wave', 'spiral', 'exp', 'poly34', 'abs'] as EnemyFamily[]) {
       expect(ARCHETYPES[f].label.length).toBeGreaterThan(0)
     }
+  })
+
+  it('abs（折れ）型も狙った味方に命中する軌道を組める（05b §2・#46）', () => {
+    const e = enemy({ x: 0, y: 8 }, 'abs')
+    const target = ally('t', { x: 0, y: -8 })
+    const plan = planEnemyShot(e, [target])
+    expect(plan).not.toBeNull()
+    const { flight } = enemyFlight(plan!.trajectory, e.castInitialSpeed)
+    expect(firstHit(flight.samples, target.pos, GAME.allyHitbox)).not.toBeNull()
+  })
+
+  it('迂回型（attacker）が使う family は abs/arc/poly34 のみ＝AVOIDER_FAMILIES（#46）', () => {
+    // AVOIDER_FAMILIES 集合そのものの不変条件：wave/exp/line/spiral は含まれない
+    expect([...AVOIDER_FAMILIES].sort()).toEqual(['abs', 'arc', 'poly34'])
+    for (const forbidden of ['wave', 'exp', 'line', 'spiral'] as EnemyFamily[]) {
+      expect(AVOIDER_FAMILIES.includes(forbidden)).toBe(false)
+    }
+  })
+
+  it('迂回型が abs/arc/poly34 を1つでも持てば、wave/exp を混ぜても選ばない（#46）', () => {
+    // 壁ごしの相手に回り込む迂回型。families に wave/exp を混ぜても、選ばれる軌道は
+    // 命中まで壁に触れず回り込む＝周期蛇行の wave では安定して閉じられない曲線が選ばれる。
+    const wall: Obstacle = {
+      id: 'w', element: 'dark',
+      solids: [{ x: -2, y: 0, r: 2.4 }, { x: 0, y: 0, r: 2.4 }, { x: 2, y: 0, r: 2.4 }],
+      carves: [],
+    }
+    const e: Enemy = { ...enemy({ x: 0, y: 10 }, 'arc'), families: ['wave', 'exp', 'poly34'] }
+    const target = ally('t', { x: 0, y: -10 }, 'light')
+    const plan = planEnemyShot(e, [target], [wall])
+    expect(plan).not.toBeNull()
+    const { flight } = enemyFlight(plan!.trajectory, e.castInitialSpeed)
+    const hit = firstHit(flight.samples, target.pos, GAME.allyHitbox)
+    expect(hit).not.toBeNull()
+    // 命中までに壁の素材へ触れない＝安定して隙間を抜けている（wave/exp では困難な回避）
+    const touches = flight.samples.some((sm) => sm.arcLen < hit!.arcLen && isSolidAt(wall, sm.pos))
+    expect(touches).toBe(false)
   })
 
   it('直進型は狙った味方に命中する軌道を選ぶ', () => {

@@ -116,6 +116,8 @@ function applyZValidity(samples: Sample[], zf?: ZField, origin?: Vec2): void {
 /** 軌道を原点側から外側へサンプリングする（無効点・場外点も含めて返す）。 */
 export function sampleTrajectory(traj: Trajectory): Sample[] {
   const out: Sample[] = []
+  // 場の半径は軌道に紐づく（#49・06b §5.5：面/ボスフェーズで可変）。未指定は既定 rField。
+  const fieldR = traj.fieldR ?? FIELD.rField
   if (traj.mode === 'rotate') {
     const o = traj.origin ?? { x: 0, y: 0 }
     // #14：局所 y を g(0) だけ平行移動し、術者位置 origin を始点にする
@@ -126,7 +128,7 @@ export function sampleTrajectory(traj: Trajectory): Sample[] {
       const valid = Number.isFinite(y)
       const local = valid ? rotate({ x, y: y - g0 }, traj.angle) : { x: NaN, y: NaN }
       const pos = valid ? { x: o.x + local.x, y: o.y + local.y } : { x: NaN, y: NaN }
-      out.push({ param: x, pos, valid, inField: valid && dist(pos) <= FIELD.rField })
+      out.push({ param: x, pos, valid, inField: valid && dist(pos) <= fieldR })
     }
   } else {
     const o = traj.origin ?? { x: 0, y: 0 }
@@ -136,7 +138,7 @@ export function sampleTrajectory(traj: Trajectory): Sample[] {
       const pos = valid
         ? { x: o.x + r * Math.cos(t), y: o.y + r * Math.sin(t) }
         : { x: NaN, y: NaN }
-      out.push({ param: t, pos, valid, inField: valid && dist(pos) <= FIELD.rField })
+      out.push({ param: t, pos, valid, inField: valid && dist(pos) <= fieldR })
     }
   }
   // z 場のエラー点（暴発）を反映：軌道は有効でも z がエラーになる点で打ち切る（#30）。

@@ -1,10 +1,18 @@
 // Canvas 描画関数（機能3・5・#15）。座標変換は coords に集約したものを使う。
-import type { Ally, Attribute, Enemy, Obstacle, ObstacleKind, Vec2, ZPoint } from '../game/types'
+import type { Ally, Attribute, Enemy, EnemySpecies, Obstacle, ObstacleKind, Vec2, ZPoint } from '../game/types'
 import { FIELD } from '../data/constants'
 import { toScreen, scaleOf, visibleBounds, type Viewport } from '../game/coords'
 import { attributeOf, strengthOf } from '../game/attribute'
 import { COLORS } from './theme'
 import { getWallTexture } from './textures'
+import {
+  speciesOf,
+  speciesStyle,
+  tierOf,
+  GUARD_LIGHT,
+  GUARD_DARK,
+  type SpeciesStyle,
+} from './species'
 
 export type { ZPoint }
 
@@ -38,6 +46,10 @@ export interface SceneParams {
   zField?: (x: number, y: number) => number
   /** z 場をいじっている間だけ true：場のプレビューを表示する（#37） */
   showZField?: boolean
+  /** ボスの多段外見（#51）に渡す状態（bossPhase・finale・outcome）。 */
+  bossView?: BossView
+  /** 撃破演出が始まった敵ID（#46）：生存スプライトを隠し、消滅アニメへ譲る。 */
+  hideEnemyIds?: Set<string>
 }
 
 /** 被弾の揺れ量（px）。強度と位相・IDシードで上下左右に細かく震える（#20）。 */
@@ -141,7 +153,7 @@ export function drawBackground(ctx: CanvasRenderingContext2D, vp: Viewport): voi
   // 場外境界
   ctx.strokeStyle = 'rgba(120,110,180,0.4)'
   ctx.beginPath()
-  ctx.arc(o.x, o.y, FIELD.rField * scaleOf(vp), 0, Math.PI * 2)
+  ctx.arc(o.x, o.y, vp.unitsRadius * scaleOf(vp), 0, Math.PI * 2)
   ctx.stroke()
 }
 
@@ -203,13 +215,412 @@ const MAGE_PAL: Record<string, string> = {
   D: '#2a2342',
 }
 
-// 光の敵（守護像）
+// 原型スプライトのドット絵（種族パレットで塗り分ける・#46）。光=石像／闇=幽鬼のシルエット。
 const LIGHT_ENEMY_ROWS = ['.GGG.', 'GGGGG', 'GeWeG', 'GGGGG', '.G.G.', 'G...G']
-const LIGHT_ENEMY_PAL: Record<string, string> = { G: '#F4C430', W: '#FFF8E1', e: '#3a2342' }
-
-// 闇の敵（幽鬼）
 const DARK_ENEMY_ROWS = ['.PPP.', 'PPPPP', 'PeWeP', 'PPPPP', '.PPP.', 'P.P.P']
-const DARK_ENEMY_PAL: Record<string, string> = { P: '#7B5CC4', W: '#1E2A6B', e: '#FFF8E1' }
+
+// ===== 種族別スプライト（05c §0/§6・#46）：species×tier で手続き描画する =====
+
+/** 原型（proto）：既存の石像ドット絵を種族パレットで描く（無装飾）。 */
+function drawProto(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  style: SpeciesStyle,
+  light: boolean,
+): void {
+  const rows = light ? LIGHT_ENEMY_ROWS : DARK_ENEMY_ROWS
+  const pal: Record<string, string> = light
+    ? { G: style.base, W: style.accent, e: style.edge }
+    : { P: style.base, W: style.accent, e: style.accent }
+  const px = (r * 2) / rows[0].length
+  drawPixelSprite(ctx, cx, cy, rows, pal, px)
+}
+
+/** 鋼鬼（oni）：武骨な鎧＋兜の角＋破城槌。ティア(1〜3)で装甲面積・角・得物が大型化する。 */
+function drawOni(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  style: SpeciesStyle,
+): void {
+  const t = style.ornaments // 1..3
+  ctx.save()
+  ctx.strokeStyle = style.edge
+  ctx.lineWidth = Math.max(1.5, r * 0.1)
+  // 胴の鎧（ティアで幅が増す）
+  const bw = r * (0.85 + t * 0.1)
+  const bh = r * (0.95 + t * 0.08)
+  ctx.fillStyle = style.base
+  ctx.beginPath()
+  ctx.moveTo(cx - bw * 0.5, cy - bh * 0.3)
+  ctx.lineTo(cx - bw * 0.35, cy + bh * 0.7)
+  ctx.lineTo(cx + bw * 0.35, cy + bh * 0.7)
+  ctx.lineTo(cx + bw * 0.5, cy - bh * 0.3)
+  ctx.closePath()
+  ctx.fill()
+  ctx.stroke()
+  // 兜（丸い頭当て）
+  ctx.beginPath()
+  ctx.arc(cx, cy - bh * 0.45, r * 0.42, Math.PI, 0)
+  ctx.fill()
+  ctx.stroke()
+  // 兜の角（ティアの数だけ左右に生える）
+  ctx.strokeStyle = style.accent
+  ctx.lineWidth = Math.max(1.5, r * 0.09)
+  for (let i = 0; i < t; i++) {
+    const dx = r * (0.28 + i * 0.14)
+    const hy = cy - bh * 0.62
+    for (const sgn of [-1, 1]) {
+      ctx.beginPath()
+      ctx.moveTo(cx + sgn * dx * 0.6, hy)
+      ctx.lineTo(cx + sgn * dx, hy - r * (0.28 + i * 0.08))
+      ctx.stroke()
+    }
+  }
+  // 目（睨む二つの光点）
+  ctx.fillStyle = style.accent
+  for (const sgn of [-1, 1]) {
+    ctx.beginPath()
+    ctx.arc(cx + sgn * r * 0.16, cy - bh * 0.42, Math.max(1, r * 0.08), 0, Math.PI * 2)
+    ctx.fill()
+  }
+  // 破城槌（右手の得物・ティアで大型化）
+  const mlen = r * (0.7 + t * 0.25)
+  const mw = r * (0.18 + t * 0.06)
+  ctx.strokeStyle = style.edge
+  ctx.lineWidth = Math.max(2, r * 0.1)
+  ctx.beginPath()
+  ctx.moveTo(cx + bw * 0.4, cy + bh * 0.2)
+  ctx.lineTo(cx + bw * 0.4 + mlen * 0.6, cy - mlen * 0.5)
+  ctx.stroke()
+  ctx.fillStyle = style.base
+  ctx.beginPath()
+  ctx.arc(cx + bw * 0.4 + mlen * 0.6, cy - mlen * 0.55, mw, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.stroke()
+  ctx.restore()
+}
+
+/** 亡霊魔術師（wraith）：半透明ローブ＋紋様。ティアで輪郭が濃く・紋様が複雑に。crackColor 指定で紅亡霊の亀裂も描く。 */
+function drawWraith(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  style: SpeciesStyle,
+  phase: number,
+  crack = false,
+): void {
+  const t = style.ornaments
+  ctx.save()
+  ctx.globalAlpha = style.alpha
+  // フード＋ローブ（裾が揺らぐ幽体）
+  ctx.fillStyle = style.base
+  ctx.beginPath()
+  ctx.moveTo(cx, cy - r * 0.9) // 頭頂
+  ctx.quadraticCurveTo(cx - r * 0.8, cy - r * 0.2, cx - r * 0.62, cy + r * 0.5)
+  // 裾の波打ち（位相で揺れる）
+  const hem = cy + r * 0.85
+  ctx.quadraticCurveTo(cx - r * 0.4, hem + Math.sin(phase) * r * 0.1, cx - r * 0.2, hem)
+  ctx.quadraticCurveTo(cx, hem + Math.sin(phase + 1) * r * 0.12, cx + r * 0.2, hem)
+  ctx.quadraticCurveTo(cx + r * 0.4, hem + Math.sin(phase + 2) * r * 0.1, cx + r * 0.62, cy + r * 0.5)
+  ctx.quadraticCurveTo(cx + r * 0.8, cy - r * 0.2, cx, cy - r * 0.9)
+  ctx.closePath()
+  ctx.fill()
+  // 輪郭（ティアで濃く）
+  ctx.globalAlpha = Math.min(1, style.alpha + 0.15 * t)
+  ctx.strokeStyle = style.edge
+  ctx.lineWidth = Math.max(1, r * (0.04 + t * 0.02))
+  ctx.stroke()
+  // フードの闇（顔は空虚）
+  ctx.globalAlpha = style.alpha
+  ctx.fillStyle = 'rgba(8,6,18,0.75)'
+  ctx.beginPath()
+  ctx.ellipse(cx, cy - r * 0.28, r * 0.32, r * 0.42, 0, 0, Math.PI * 2)
+  ctx.fill()
+  // 灯る二つの目
+  ctx.fillStyle = style.accent
+  for (const sgn of [-1, 1]) {
+    ctx.beginPath()
+    ctx.arc(cx + sgn * r * 0.13, cy - r * 0.28, Math.max(1, r * 0.07), 0, Math.PI * 2)
+    ctx.fill()
+  }
+  // ローブの紋様（ティアの数だけ横線が増える）
+  ctx.strokeStyle = style.accent
+  ctx.globalAlpha = style.alpha * 0.7
+  ctx.lineWidth = Math.max(1, r * 0.04)
+  for (let i = 0; i < t; i++) {
+    const y = cy + r * (0.18 + i * 0.2)
+    ctx.beginPath()
+    ctx.moveTo(cx - r * (0.45 - i * 0.06), y)
+    ctx.lineTo(cx + r * (0.45 - i * 0.06), y)
+    ctx.stroke()
+  }
+  // 紅亡霊の亀裂（内側から紅い光が漏れ、明滅する・#46）
+  if (crack) {
+    const pulse = 0.55 + 0.45 * Math.abs(Math.sin(phase * style.crackPulse))
+    ctx.globalAlpha = pulse
+    ctx.strokeStyle = style.accent // '#ff3b3b'
+    ctx.shadowColor = style.accent
+    ctx.shadowBlur = 6
+    ctx.lineWidth = Math.max(1, r * 0.06)
+    const cracks = 1 + t // ティアで本数が増える
+    for (let i = 0; i < cracks; i++) {
+      const a0 = (i / cracks) * Math.PI * 2 + 0.4
+      let x = cx + Math.cos(a0) * r * 0.1
+      let y = cy - r * 0.1 + Math.sin(a0) * r * 0.1
+      ctx.beginPath()
+      ctx.moveTo(x, y)
+      for (let k = 0; k < 3; k++) {
+        x += Math.cos(a0 + (k % 2 ? 0.6 : -0.4)) * r * 0.22
+        y += Math.sin(a0 + (k % 2 ? 0.6 : -0.4)) * r * 0.22
+        ctx.lineTo(x, y)
+      }
+      ctx.stroke()
+    }
+  }
+  ctx.restore()
+}
+
+/** ゴーレム（golem）：石塊＋同心円紋様（一重→二重→三重）。目は結界属性色（eyeColor）に発光。 */
+function drawGolem(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  style: SpeciesStyle,
+  eyeColor: string,
+): void {
+  const t = style.ornaments
+  ctx.save()
+  // 角張った石塊の胴
+  ctx.fillStyle = style.base
+  ctx.strokeStyle = style.edge
+  ctx.lineWidth = Math.max(1.5, r * 0.1)
+  ctx.beginPath()
+  ctx.moveTo(cx - r * 0.7, cy - r * 0.55)
+  ctx.lineTo(cx + r * 0.7, cy - r * 0.55)
+  ctx.lineTo(cx + r * 0.8, cy + r * 0.5)
+  ctx.lineTo(cx + r * 0.35, cy + r * 0.85)
+  ctx.lineTo(cx - r * 0.35, cy + r * 0.85)
+  ctx.lineTo(cx - r * 0.8, cy + r * 0.5)
+  ctx.closePath()
+  ctx.fill()
+  ctx.stroke()
+  // 同心円の紋様（ティアで一重→二重→三重）
+  ctx.strokeStyle = style.accent
+  ctx.lineWidth = Math.max(1, r * 0.05)
+  for (let i = 0; i < t; i++) {
+    ctx.beginPath()
+    ctx.arc(cx, cy + r * 0.08, r * (0.24 + i * 0.2), 0, Math.PI * 2)
+    ctx.stroke()
+  }
+  // ティア3：発光する回路状の筋（05c §6：完成形）
+  if (t >= 3) {
+    ctx.strokeStyle = eyeColor
+    ctx.globalAlpha = 0.5
+    ctx.lineWidth = Math.max(1, r * 0.04)
+    for (const sgn of [-1, 1]) {
+      ctx.beginPath()
+      ctx.moveTo(cx + sgn * r * 0.5, cy - r * 0.4)
+      ctx.lineTo(cx + sgn * r * 0.5, cy + r * 0.6)
+      ctx.stroke()
+    }
+    ctx.globalAlpha = 1
+  }
+  // 目：現在張っている結界の属性色に発光（05c §4）。ティアで大きく・強く
+  ctx.shadowColor = eyeColor
+  ctx.shadowBlur = 6 + t * 2
+  ctx.fillStyle = eyeColor
+  const er = Math.max(1.4, r * (0.09 + t * 0.02))
+  for (const sgn of [-1, 1]) {
+    ctx.beginPath()
+    ctx.arc(cx + sgn * r * 0.24, cy - r * 0.18, er, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.restore()
+}
+
+/**
+ * ゴーレムの目の発光色（05c §4）：現在張っている結界の属性色。
+ * guardZSign（交互張りが今ターン設定した極性）を優先し、無ければ自身の防御属性から導出する。
+ */
+function golemEyeColor(e: Pick<Enemy, 'guardZSign' | 'element'>): string {
+  if (e.guardZSign === 1) return GUARD_LIGHT
+  if (e.guardZSign === -1) return GUARD_DARK
+  return e.element === 'light' ? GUARD_LIGHT : GUARD_DARK
+}
+
+/**
+ * 種族スプライトを (cx,cy) 中心・半径 r で描く（05c §0/§6・#46）。
+ * boss は専用描画（drawBossSprite）へ回すため、ここでは扱わない。
+ */
+function drawSpeciesSprite(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  species: EnemySpecies,
+  tier: 1 | 2 | 3,
+  element: Attribute,
+  eyeColor: string,
+  phase: number,
+): void {
+  const style = speciesStyle(species, tier, element)
+  const light = element === 'light'
+  if (species === 'oni') drawOni(ctx, cx, cy, r, style)
+  else if (species === 'wraith') drawWraith(ctx, cx, cy, r, style, phase)
+  else if (species === 'redWraith') drawWraith(ctx, cx, cy, r, style, phase, true)
+  else if (species === 'golem') drawGolem(ctx, cx, cy, r, style, eyeColor)
+  else drawProto(ctx, cx, cy, r, style, light)
+}
+
+// ===== ボスの多段外見（#51・06b §6 第7面「ボスの見た目」）=====
+
+/** ボスの光（金）/闇（紫）の左右色。左半身=光・右半身=闇に固定（06b §6）。 */
+const BOSS_LIGHT = '#f4c430'
+const BOSS_DARK = '#8a6cff'
+
+/** 天秤（左半身=光/右半身=闇）を (cx,cy) 中心に角度 tilt[rad] だけ傾けて描く。 */
+function drawScale(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  arm: number,
+  tilt: number,
+): void {
+  ctx.save()
+  ctx.translate(cx, cy)
+  ctx.rotate(tilt)
+  ctx.strokeStyle = '#efe6c8'
+  ctx.lineWidth = Math.max(1.5, arm * 0.08)
+  // 梁
+  ctx.beginPath()
+  ctx.moveTo(-arm, 0)
+  ctx.lineTo(arm, 0)
+  ctx.stroke()
+  // 支柱
+  ctx.beginPath()
+  ctx.moveTo(0, 0)
+  ctx.lineTo(0, arm * 0.4)
+  ctx.stroke()
+  // 左右の皿（光・闇）
+  for (const [sgn, col] of [[-1, BOSS_LIGHT], [1, BOSS_DARK]] as const) {
+    ctx.strokeStyle = col
+    ctx.beginPath()
+    ctx.moveTo(sgn * arm, 0)
+    ctx.lineTo(sgn * arm, arm * 0.35)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.arc(sgn * arm, arm * 0.4, arm * 0.28, 0, Math.PI)
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
+/**
+ * 魔導書の守護者（ボス・#51）：書物のページ状装甲＋天秤の意匠。左=光/右=闇の対称。
+ * bossPhase(0/1/2) で装甲剥離・天秤の傾き・核の露出が段階的に進み、
+ * finale='cast' で断末魔（激しい揺れ＋3つの綻び）、outcome='cleared'（finale='done'）で撃破後の崩壊。
+ */
+function drawBossSprite(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  phase: number,
+  view?: BossView,
+): void {
+  const ph = view?.phase ?? 0 // 0/1/2
+  const finale = view?.finale
+  const R = r * 1.15 // ボスは既存枠より一回り大きく（hitbox 3.6 相当）
+  // 撃破後の崩壊（outcome='cleared'）は BattleCanvas の撃破タイムライン（drawBossCollapse）で
+  // progress つきに描くため、ここ（生存中スプライト）では扱わない。
+  const casting = finale === 'cast'
+  // 断末魔は制御を失って激しく揺れる（固定角なし）
+  const tremor = casting ? Math.sin(phase * 3.1) * R * 0.06 : 0
+  ctx.save()
+  ctx.translate(tremor, Math.cos(phase * 2.7) * (casting ? R * 0.05 : 0))
+
+  // 天秤の傾き（フェーズで増す・#51）。断末魔は激しく振れる
+  const tilt = casting
+    ? Math.sin(phase * 2.3) * 0.5
+    : ph >= 2
+      ? 0.7 // 30〜45°付近（大きく傾いたまま）
+      : ph === 1
+        ? 0.22 // 10〜15°
+        : 0 // 水平
+
+  // ページ状装甲（左=光/右=闇）。フェーズが進むほど剥離して枚数が減る
+  const plates = ph >= 2 ? 2 : ph === 1 ? 3 : 4
+  for (const [sgn, col] of [[-1, BOSS_LIGHT], [1, BOSS_DARK]] as const) {
+    ctx.strokeStyle = 'rgba(20,16,34,0.9)'
+    ctx.lineWidth = Math.max(1, R * 0.03)
+    for (let i = 0; i < plates; i++) {
+      const t = i / Math.max(1, plates - 1)
+      const px0 = cx + sgn * R * (0.18 + t * 0.6)
+      const py0 = cy - R * 0.55 + t * R * 0.1
+      // 剥離した破片は少し浮いて舞う（フェーズ2以降・断末魔で大きく）
+      const lift = (ph >= 1 ? (1 - t) : 0) * (casting ? R * 0.3 : R * 0.12) * (0.5 + 0.5 * Math.sin(phase + i))
+      ctx.fillStyle = col
+      ctx.globalAlpha = 0.85 - t * 0.15
+      ctx.beginPath()
+      ctx.rect(px0 - R * 0.16, py0 - lift, R * 0.32, R * 1.0)
+      ctx.fill()
+      ctx.stroke()
+    }
+  }
+  ctx.globalAlpha = 1
+
+  // 核（フェーズ3で露出・光と闇が混ざる発光体・小刻みに明滅）
+  if (ph >= 2 || casting) {
+    const flick = 0.6 + 0.4 * Math.abs(Math.sin(phase * (casting ? 5 : 2.4)))
+    const coreR = R * (casting ? 0.6 : 0.4) * flick
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR)
+    g.addColorStop(0, '#ffffff')
+    g.addColorStop(0.5, `rgba(244,196,48,${0.6 * flick})`)
+    g.addColorStop(1, `rgba(138,108,255,0)`)
+    ctx.fillStyle = g
+    ctx.beginPath()
+    ctx.arc(cx, cy, coreR, 0, Math.PI * 2)
+    ctx.fill()
+  }
+
+  // 刻印が裂けて光が漏れる（フェーズ3・紅亡霊に近いがボス規模）
+  if (ph >= 2 && !casting) {
+    ctx.strokeStyle = 'rgba(255,240,180,0.7)'
+    ctx.lineWidth = Math.max(1, R * 0.03)
+    for (let i = 0; i < 3; i++) {
+      const a0 = (i / 3) * Math.PI * 2 + 0.5
+      ctx.beginPath()
+      ctx.moveTo(cx, cy)
+      ctx.lineTo(cx + Math.cos(a0) * R * 0.7, cy + Math.sin(a0) * R * 0.7)
+      ctx.stroke()
+    }
+  }
+
+  // 断末魔：3つの綻び（drawMisfire の白紫の視覚言語を小さく流用・体の中心と左右）
+  if (casting) {
+    for (const dx of [-R * 0.55, 0, R * 0.55]) {
+      const rift = 0.5 + 0.5 * Math.abs(Math.sin(phase * 4 + dx))
+      const g = ctx.createRadialGradient(cx + dx, cy, 0, cx + dx, cy, R * 0.5 * rift)
+      g.addColorStop(0, '#ffffff')
+      g.addColorStop(0.5, 'rgba(180,131,255,0.7)')
+      g.addColorStop(1, 'rgba(0,0,0,0)')
+      ctx.fillStyle = g
+      ctx.beginPath()
+      ctx.arc(cx + dx, cy, R * 0.5 * rift, 0, Math.PI * 2)
+      ctx.fill()
+    }
+  }
+
+  // 胸の天秤（最重要のビジュアル・#51）。装甲より前面に描く
+  drawScale(ctx, cx, cy + R * 0.05, R * 0.55, tilt)
+  ctx.restore()
+}
 
 /** 味方術者（#15）：各自の配置に魔導士のドット絵＋属性オーラ＋名前。active は強調。 */
 export function drawCasters(
@@ -284,6 +695,7 @@ const FAMILY_LABEL: Record<Enemy['family'], string> = {
   spiral: '渦',
   exp: '昇り',
   poly34: '捻れ',
+  abs: '折れ',
 }
 
 /** 敵の得意関数（系統）を表す小さなドット記号（#17：見た目で判別）。 */
@@ -318,9 +730,15 @@ function drawFamilyGlyph(
     ctx.quadraticCurveTo(cx + 4, cy + 4, cx + 8, cy - 7)
     ctx.stroke()
   } else if (family === 'poly34') {
-    // 3/4次（#43）：S字の捻れ
+    // 3〜5次（#43/#46）：S字の捻れ
     ctx.moveTo(cx - 9, cy + 5)
     ctx.bezierCurveTo(cx - 2, cy - 9, cx + 2, cy + 9, cx + 9, cy - 5)
+    ctx.stroke()
+  } else if (family === 'abs') {
+    // 折れ（#46）：V字に鋭く折れる
+    ctx.moveTo(cx - 9, cy - 6)
+    ctx.lineTo(cx, cy + 6)
+    ctx.lineTo(cx + 9, cy - 6)
     ctx.stroke()
   } else {
     // spiral：渦巻き
@@ -389,16 +807,29 @@ function drawRoleMarker(
   ctx.restore()
 }
 
-/** 敵の描画（属性ごとのドット絵スプライト＋得意関数記号＋名前）。 */
+/**
+ * ボスの多段外見（#51）に渡す状態。BattleState から抜き出す（描画専用）。
+ * phase=0/1/2（bossPhase）／finale・outcome で断末魔〜撃破後を分岐する。
+ */
+export interface BossView {
+  phase?: number
+  finale?: 'pending' | 'cast' | 'done'
+  outcome?: 'ongoing' | 'cleared' | 'gameover'
+}
+
+/** 敵の描画（種族別スプライト＋得意関数記号＋名前・#46）。ボスは多段外見（#51）。 */
 export function drawEnemies(
   ctx: CanvasRenderingContext2D,
   enemies: Enemy[],
   vp: Viewport,
   flash?: Record<string, number>,
   shakePhase = 0,
+  bossView?: BossView,
+  hideIds?: Set<string>,
 ): void {
   for (const e of enemies) {
     if (e.hp <= 0) continue
+    if (hideIds?.has(e.id)) continue // 撃破演出中は生存スプライトを隠す（#46）
     const c0 = toScreen(e.pos, vp)
     const intensity = flash?.[e.id] ?? 0
     const sh = shakeOffset(intensity, shakePhase, idSeed(e.id))
@@ -426,11 +857,16 @@ export function drawEnemies(
     ctx.stroke()
     // 戦い方ロールの縁取り（#27/#28）：guardian=二重結界リング／breaker=尖った砕き縁
     drawRoleMarker(ctx, c.x, c.y, r * 1.18, e.role, tint)
-    // スプライト
-    const rows = light ? LIGHT_ENEMY_ROWS : DARK_ENEMY_ROWS
-    const pal = light ? LIGHT_ENEMY_PAL : DARK_ENEMY_PAL
-    const px = (e.hitboxRadius * scaleOf(vp) * 2) / rows[0].length
-    drawPixelSprite(ctx, c.x, c.y, rows, pal, px)
+    // 種族スプライト（05c §0/§6・#46）。ボスは専用の多段外見（#51）へ回す
+    const phase = shakePhase
+    if (e.boss) {
+      drawBossSprite(ctx, c.x, c.y, r, phase, bossView)
+    } else {
+      const species = speciesOf(e)
+      const tier = tierOf(e.level)
+      const eye = golemEyeColor(e)
+      drawSpeciesSprite(ctx, c.x, c.y, r * 0.95, species, tier, e.element, eye, phase)
+    }
     // 得意関数の記号（特性の紋章＝暗い円板に乗せて目立たせる・#27）
     const gx = c.x + r * 1.1
     const gy = c.y - r * 1.1
@@ -835,7 +1271,7 @@ export function drawZFieldOverlay(
   // セルは整数境界 [x, x+1] を占め、中心 (x+0.5, y+0.5) の z で代表させる。
   const s = scaleOf(vp)
   const cell = GRID_UNIT * s
-  const R = FIELD.rField
+  const R = vp.unitsRadius // #49：場の半径はビューポートから（面/フェーズで可変）
   const b = visibleBounds(vp)
   const x0 = Math.max(-R, Math.floor(b.minX / GRID_UNIT) * GRID_UNIT)
   const x1 = Math.min(R, Math.ceil(b.maxX / GRID_UNIT) * GRID_UNIT)
@@ -902,7 +1338,7 @@ export function drawZFieldErrors(
   const step = 0.8 // ユニット
   const s = scaleOf(vp)
   const cell = step * s
-  const R = FIELD.rField
+  const R = vp.unitsRadius // #49：場の半径はビューポートから（面/フェーズで可変）
   const xs: number[] = []
   for (let x = -R; x <= R + 1e-9; x += step) xs.push(x)
   ctx.save()
@@ -976,7 +1412,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
   }
 
   // 敵・術者は軌跡の上に描く（軌跡で隠れない・#27）
-  drawEnemies(ctx, p.enemies, p.vp, p.flash, p.shakePhase)
+  drawEnemies(ctx, p.enemies, p.vp, p.flash, p.shakePhase, p.bossView, p.hideEnemyIds)
   drawCasters(ctx, p.allies, p.vp, p.activeAllyId, p.flash, p.shakePhase)
 
   // 関数エラーで暴発する点を赤い✕で可視化（最前面・#30）。
@@ -1619,7 +2055,7 @@ export function drawFallingDebris(ctx: CanvasRenderingContext2D, vp: Viewport, p
   // フィールド円内にクリップ（盤面の外へはみ出さない）
   const center = toScreen({ x: 0, y: 0 }, vp)
   ctx.beginPath()
-  ctx.arc(center.x, center.y, FIELD.rField * s, 0, Math.PI * 2)
+  ctx.arc(center.x, center.y, vp.unitsRadius * s, 0, Math.PI * 2)
   ctx.clip()
   for (let i = 0; i < N; i++) {
     const fx = (((i * 73) % 100) / 100) * W
@@ -1638,6 +2074,286 @@ export function drawFallingDebris(ctx: CanvasRenderingContext2D, vp: Viewport, p
     ctx.fillStyle = 'rgba(210,200,220,0.55)' // 角のハイライト
     ctx.fillRect(-size / 2, -size / 2, size * 0.42, size * 0.42)
     ctx.restore()
+  }
+  ctx.restore()
+}
+
+// ===== 種族別の撃破演出（05c §6.5・#46）：progress 0→1 で消滅アニメを再生 =====
+// いずれも当たり判定・ダメージ計算に一切影響しない、描画タイムラインのみの演出。
+
+/** 属性の光色（撃破時の光の筋・粒に使う）。 */
+function attrGlow(element: Attribute): string {
+  return element === 'light' ? '#f4c430' : element === 'dark' ? '#b483ff' : '#d9d4ea'
+}
+
+/** 決定的な擬似乱数（撃破の破片配置をフレーム間で安定させる）。 */
+function rand01(i: number): number {
+  const h = Math.sin(i * 12.9898) * 43758.5453
+  return h - Math.floor(h)
+}
+
+/**
+ * 種族別の撃破演出を (pos) 中心・半径 r（数学ユニット由来）で描く（05c §6.5）。
+ * species/element/tier と progress から見た目のみを決める。
+ */
+export function drawEnemyDeath(
+  ctx: CanvasRenderingContext2D,
+  pos: Vec2,
+  hitboxRadius: number,
+  species: EnemySpecies,
+  element: Attribute,
+  tier: 1 | 2 | 3,
+  progress: number,
+  vp: Viewport,
+): void {
+  if (progress < 0 || progress >= 1) return
+  const c = toScreen(pos, vp)
+  const r = hitboxRadius * scaleOf(vp)
+  const glow = attrGlow(element)
+  if (species === 'oni') drawOniDeath(ctx, c.x, c.y, r, element, progress)
+  else if (species === 'wraith') drawWraithDeath(ctx, c.x, c.y, r, glow, progress, false, tier)
+  else if (species === 'redWraith') drawWraithDeath(ctx, c.x, c.y, r, glow, progress, true, tier)
+  else if (species === 'golem') drawGolemDeath(ctx, c.x, c.y, r, element, progress)
+  else drawProtoDeath(ctx, c.x, c.y, r, glow, progress)
+}
+
+/** 原型（石像）：ひび割れて光の粒になって崩れる（基準形）。 */
+function drawProtoDeath(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  glow: string,
+  p: number,
+): void {
+  ctx.save()
+  const N = 16
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * Math.PI * 2 + rand01(i) * 0.6
+    const d = p * r * (1.2 + rand01(i + 1) * 1.2)
+    ctx.globalAlpha = Math.max(0, 1 - p) * 0.9
+    ctx.fillStyle = i % 2 === 0 ? glow : '#fff8e1'
+    ctx.shadowColor = glow
+    ctx.shadowBlur = 6
+    const sz = Math.max(1, r * 0.18 * (1 - p))
+    const x = cx + Math.cos(a) * d
+    const y = cy + Math.sin(a) * d - p * r * 0.5 // 光の粒は少し上へ
+    ctx.beginPath()
+    ctx.arc(x, y, sz, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.restore()
+}
+
+/** 鋼鬼：膝から崩れ、鎧の破片が飛散して瓦礫が残ってから消える（実体・重量感）。 */
+function drawOniDeath(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  element: Attribute,
+  p: number,
+): void {
+  ctx.save()
+  // 崩れ落ちる本体（沈みながらフェード）
+  const sink = p * r * 0.5
+  ctx.globalAlpha = Math.max(0, 1 - p * 1.4)
+  const base = element === 'light' ? '#c9a24b' : element === 'dark' ? '#6b5aa8' : '#8a8496'
+  ctx.fillStyle = base
+  ctx.beginPath()
+  ctx.arc(cx, cy + sink, r * 0.6 * (1 - p * 0.5), 0, Math.PI * 2)
+  ctx.fill()
+  // 飛散する鎧の破片（四角・重力で落ちて地面に瓦礫として残る）
+  const N = 14
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * Math.PI * 2 + rand01(i) * 1.2
+    const reach = 0.6 + rand01(i + 3)
+    const dist = p * r * 1.6 * reach
+    const gx = cx + Math.cos(a) * dist
+    // 破片は放物線で飛び、後半は地面（cy+r）に積もる
+    const fall = p * p * r * 2.2
+    const gy = Math.min(cy + r * 0.9, cy + Math.sin(a) * dist * 0.4 + fall)
+    ctx.globalAlpha = i % 4 === 0 ? Math.max(0, 1 - (p - 0.5) * 2) : Math.max(0, 1 - p * 0.6) // 一部は瓦礫として残る
+    ctx.fillStyle = i % 3 === 0 ? '#e8e0c8' : base
+    const sz = Math.max(1.5, r * 0.2 * (1 - p * 0.4))
+    ctx.save()
+    ctx.translate(gx, gy)
+    ctx.rotate(a + p * 3)
+    ctx.fillRect(-sz / 2, -sz / 2, sz, sz)
+    ctx.restore()
+  }
+  ctx.restore()
+}
+
+/**
+ * 亡霊魔術師：ローブがほどけ、上方へ属性色の光の筋となって静かに消える（破片も音もない）。
+ * 紅亡霊(crack)は、消える直前に亀裂が強く明滅→細かな光の破片が弾ける（無害・小規模・05c §6.5）。
+ */
+function drawWraithDeath(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  glow: string,
+  p: number,
+  crack: boolean,
+  tier: 1 | 2 | 3,
+): void {
+  ctx.save()
+  // ローブがほどけて上へ立ちのぼる光の筋（3〜4本）
+  const streaks = 3 + tier
+  for (let i = 0; i < streaks; i++) {
+    const sx = cx + (rand01(i) - 0.5) * r * 0.8
+    const rise = p * r * 2.2
+    ctx.globalAlpha = Math.max(0, 1 - p) * 0.7
+    ctx.strokeStyle = glow
+    ctx.shadowColor = glow
+    ctx.shadowBlur = 8
+    ctx.lineWidth = Math.max(1, r * 0.12 * (1 - p))
+    ctx.beginPath()
+    ctx.moveTo(sx, cy + r * 0.5 - p * r * 0.5)
+    ctx.quadraticCurveTo(
+      sx + Math.sin(i + p * 4) * r * 0.3,
+      cy - rise * 0.5,
+      sx + Math.sin(i) * r * 0.4,
+      cy - rise,
+    )
+    ctx.stroke()
+  }
+  // 紅亡霊：終盤に亀裂が強く明滅してから紅い光の破片が弾ける（本物の暴発より小さく・無害）
+  if (crack && p > 0.5) {
+    const q = (p - 0.5) / 0.5
+    const flick = Math.abs(Math.sin(p * 30))
+    // 亀裂の明滅
+    ctx.globalAlpha = Math.max(0, 1 - q) * flick
+    ctx.strokeStyle = '#ff3b3b'
+    ctx.shadowColor = '#ff3b3b'
+    ctx.shadowBlur = 8
+    ctx.lineWidth = Math.max(1, r * 0.08)
+    for (let i = 0; i < 2 + tier; i++) {
+      const a0 = (i / (2 + tier)) * Math.PI * 2
+      ctx.beginPath()
+      ctx.moveTo(cx, cy)
+      ctx.lineTo(cx + Math.cos(a0) * r * 0.6, cy + Math.sin(a0) * r * 0.6)
+      ctx.stroke()
+    }
+    // 細かな光の破片（規模は控えめ＝暴発と誤認させない）
+    const N = 10
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * Math.PI * 2 + rand01(i)
+      const d = q * r * 1.1 // AoE より遥かに小さい
+      ctx.globalAlpha = Math.max(0, 1 - q) * 0.8
+      ctx.fillStyle = '#ff7a6a'
+      ctx.beginPath()
+      ctx.arc(cx + Math.cos(a) * d, cy + Math.sin(a) * d, Math.max(0.6, r * 0.08 * (1 - q)), 0, Math.PI * 2)
+      ctx.fill()
+    }
+  }
+  ctx.restore()
+}
+
+/**
+ * ゴーレム：目の光が消え→同心円に沿って亀裂→その場に沈むように崩れる（破片はほぼ真下に積もる）。
+ */
+function drawGolemDeath(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  element: Attribute,
+  p: number,
+): void {
+  ctx.save()
+  const base = element === 'light' ? '#8a7c5e' : element === 'dark' ? '#5a5470' : '#6e6a78'
+  // 前半：同心円に沿って亀裂が走る（本体はまだ立っている）
+  if (p < 0.5) {
+    ctx.globalAlpha = 1 - p
+    ctx.fillStyle = base
+    ctx.beginPath()
+    ctx.arc(cx, cy, r * 0.7, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = 'rgba(20,16,28,0.9)'
+    ctx.lineWidth = Math.max(1, r * 0.06)
+    const cracks = Math.floor(p * 12)
+    for (let i = 0; i < cracks; i++) {
+      const a0 = (i / 12) * Math.PI * 2
+      ctx.beginPath()
+      ctx.moveTo(cx, cy)
+      ctx.lineTo(cx + Math.cos(a0) * r * 0.7, cy + Math.sin(a0) * r * 0.7)
+      ctx.stroke()
+    }
+  } else {
+    // 後半：その場に沈むように崩れ、破片は真下に積もる（暴れない）
+    const q = (p - 0.5) / 0.5
+    const N = 12
+    for (let i = 0; i < N; i++) {
+      const spread = (rand01(i) - 0.5) * r * 0.9 // 横のばらつきは小さい
+      const fall = q * r * 1.0
+      const gx = cx + spread
+      const gy = Math.min(cy + r * 0.9, cy + fall)
+      ctx.globalAlpha = Math.max(0, 1 - q * 0.7)
+      ctx.fillStyle = i % 3 === 0 ? '#b8b0c8' : base
+      const sz = Math.max(1.5, r * 0.22 * (1 - q * 0.3))
+      ctx.fillRect(gx - sz / 2, gy - sz / 2, sz, sz)
+    }
+  }
+  ctx.restore()
+}
+
+/**
+ * ボスの撃破後の最終崩壊（#51・06b §6）。progress 0→1：
+ * ①震えが止まり ②装甲・破片がゆっくり落下し ③輪郭が光の粒でほどけ ④最後に天秤だけが水平に戻って消える。
+ */
+export function drawBossCollapse(
+  ctx: CanvasRenderingContext2D,
+  pos: Vec2,
+  hitboxRadius: number,
+  progress: number,
+  vp: Viewport,
+): void {
+  if (progress < 0 || progress >= 1) return
+  const c = toScreen(pos, vp)
+  const R = hitboxRadius * scaleOf(vp) * 1.15
+  const p = progress
+  ctx.save()
+  // ①〜②：残った装甲・破片が重力に従って落下し積もる（前半 0〜0.55）
+  if (p < 0.7) {
+    const fall = Math.min(1, p / 0.6)
+    for (const [sgn, col] of [[-1, BOSS_LIGHT], [1, BOSS_DARK]] as const) {
+      for (let i = 0; i < 4; i++) {
+        const gx = c.x + sgn * R * (0.2 + i * 0.18)
+        const gy = c.y - R * 0.4 + fall * (R * 1.4 + i * R * 0.1)
+        ctx.globalAlpha = Math.max(0, 1 - fall) * 0.9
+        ctx.fillStyle = col
+        ctx.fillRect(gx - R * 0.14, Math.min(c.y + R * 0.9, gy), R * 0.28, R * 0.5)
+      }
+    }
+  }
+  // ③：輪郭が光の粒となってほどけ、立ちのぼって消える（中盤 0.3〜0.85）
+  if (p > 0.3 && p < 0.9) {
+    const q = (p - 0.3) / 0.6
+    const N = 40
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * Math.PI * 2 + rand01(i)
+      const rr = R * (0.5 + rand01(i + 1) * 0.5)
+      const x = c.x + Math.cos(a) * rr
+      const y = c.y + Math.sin(a) * rr - q * R * 1.6 // 立ちのぼる
+      ctx.globalAlpha = Math.max(0, 1 - q) * 0.8
+      ctx.fillStyle = i % 2 === 0 ? BOSS_LIGHT : '#fff8e1'
+      ctx.shadowColor = BOSS_LIGHT
+      ctx.shadowBlur = 6
+      ctx.beginPath()
+      ctx.arc(x, y, Math.max(0.6, R * 0.06 * (1 - q)), 0, Math.PI * 2)
+      ctx.fill()
+    }
+  }
+  // ④：最後に天秤だけが残り、傾きから水平（0）へ戻ってから消える（後半 0.6〜1）
+  ctx.shadowBlur = 0
+  if (p > 0.55) {
+    const q = (p - 0.55) / 0.45
+    const tilt = 0.7 * (1 - q) // 傾き→水平
+    ctx.globalAlpha = q < 0.8 ? 1 : Math.max(0, 1 - (q - 0.8) / 0.2) // 最後にフェード
+    drawScale(ctx, c.x, c.y, R * 0.6, tilt)
   }
   ctx.restore()
 }

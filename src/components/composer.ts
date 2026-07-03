@@ -144,27 +144,30 @@ export function presetsFor(mode: 'rotate' | 'polar'): Preset[] {
   return mode === 'rotate' ? ROTATE_PRESETS : POLAR_PRESETS
 }
 
-/** 状態から軌道を組み立てる（origin=術者位置・z 場つき・#14/#30）。組み立てられなければ null。 */
-export function buildComposerTrajectory(c: ComposerState, origin?: Vec2): Trajectory | null {
+/**
+ * 状態から軌道を組み立てる（origin=術者位置・z 場つき・#14/#30）。組み立てられなければ null。
+ * fieldR（#49・06b §5.5）を渡すと inField 判定に使う場の半径を軌道へ紐づける（面/フェーズで可変）。
+ */
+export function buildComposerTrajectory(c: ComposerState, origin?: Vec2, fieldR?: number): Trajectory | null {
   const z = buildZField(c)
   if (c.mode === 'rotate') {
     if (c.useFree) {
       const g = parseExpression(c.freeExpr)
       if (!g) return null
-      return { mode: 'rotate', g, angle: c.angle, origin, z }
+      return { mode: 'rotate', g, angle: c.angle, origin, z, fieldR }
     }
     const preset = findPreset(c.presetId)
     if (!preset || preset.category !== 'rotate') return null
-    return { ...buildTrajectory(preset, c.coeffs, c.angle, origin), z }
+    return { ...buildTrajectory(preset, c.coeffs, c.angle, origin), z, fieldR }
   }
   if (c.useFree) {
     const f = parseExpression(c.freeExpr, 't')
     if (!f) return null
-    return { mode: 'polar', f, origin, z }
+    return { mode: 'polar', f, origin, z, fieldR }
   }
   const preset = findPreset(c.presetId)
   if (!preset || preset.category !== 'polar') return null
-  return { ...buildTrajectory(preset, c.coeffs, 0, origin), z }
+  return { ...buildTrajectory(preset, c.coeffs, 0, origin), z, fieldR }
 }
 
 /** 軌道上の1点（描画で z により色分けする） */

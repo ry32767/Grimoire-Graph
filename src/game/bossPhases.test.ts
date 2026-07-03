@@ -1,10 +1,12 @@
 // 多重詠唱（#44）・ボス HP フェーズ（床崩落）・断末魔の暴発3連（#45）のテスト。
 import { describe, it, expect } from 'vitest'
-import { planEnemyShots } from './enemyAI'
+import { planEnemyShots, enemyFlight } from './enemyAI'
 import { createBattleState, prepareTurn, resolveAllyCasts } from './battle'
 import { resolveTurn } from './turn'
+import { dist } from './coords'
+import { zfieldAt } from './attribute'
 import { STAGES } from '../data/stages'
-import type { Ally, BossPhase, Enemy, Stage } from './types'
+import type { Ally, BossPhase, Enemy, Stage, ZField } from './types'
 
 const ally = (id: string, pos: { x: number; y: number }, hp = 500): Ally => ({
   id, name: id, pos, hp, maxHp: hp, element: 'neutral', statuses: [],
@@ -25,6 +27,37 @@ describe('多重詠唱（#44・05b §5.5）', () => {
     expect(plans).toHaveLength(3)
     const targets = new Set(plans.map((p) => p.targetId))
     expect(targets.size).toBe(3) // 3人へ1発ずつ
+  })
+
+  it('多重詠唱のパターン別 family/z（06b §6 第7面・B.7）', () => {
+    // 火力型（breaker）弾＝family 制約なし＋一定 z（castZ）／迂回型（attacker）弾＝abs/arc/poly34 のみ＋castZField。
+    const sinField: ZField = (x) => 2.0 * Math.sin(0.2 * x)
+    const boss = baseEnemy({
+      family: 'line', families: ['line', 'exp', 'abs', 'poly34'],
+      castCount: 2, patternPool: ['breaker', 'attacker'], castZField: sinField, castZ: -3,
+    })
+    const allies = [ally('a', { x: -8, y: -14 }), ally('b', { x: 8, y: -14 })]
+    const plans = planEnemyShots(boss, allies)
+    expect(plans).toHaveLength(2)
+    // 各弾の曲率と、経路上2点での z のばらつき（一定場か非一様場か）を測る
+    const measure = (p: (typeof plans)[number]) => {
+      const { path } = enemyFlight(p.trajectory, 8)
+      const s = path[0]
+      const e = path[path.length - 1]
+      const mid = path[Math.floor(path.length / 2)]
+      const L = dist(e, s) || 1
+      const curve = Math.abs((e.x - s.x) * (s.y - mid.y) - (s.x - mid.x) * (e.y - s.y)) / L
+      // 経路上の2点で z が変わるか（一定場なら差 0、sin/cos なら差あり）
+      const zSpread = Math.abs(zfieldAt(p.trajectory, mid) - zfieldAt(p.trajectory, path[Math.floor(path.length * 0.8)]))
+      return { curve, zSpread }
+    }
+    const [m0, m1] = plans.map(measure)
+    // 火力型弾：直進（line 可）で曲率ほぼ 0、z は一定場（castZField を使わない＝2点で同じ）
+    expect(m0.curve).toBeLessThan(0.5)
+    expect(m0.zSpread).toBeCloseTo(0, 6)
+    // 迂回型弾：line/exp 不可で必ず曲がる。z は sin/cos の castZField（経路上で変化する＝非一様）
+    expect(m1.curve).toBeGreaterThan(2)
+    expect(m1.zSpread).toBeGreaterThan(0)
   })
 
   it('resolveTurn は castCount ぶんの敵弾を同時発射する', () => {

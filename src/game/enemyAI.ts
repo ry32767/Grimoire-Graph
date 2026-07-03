@@ -7,7 +7,7 @@ import { simulatePath } from './physics'
 import { firstHit } from './collision'
 import { isSolidAt, materialCells } from './obstacle'
 import { attributeOf, strengthOf, affinityMultiplier, zfieldAt } from './attribute'
-import { ringEncloses, ringAverageAttr, type RingPoint } from './orbit'
+import { ringEncloses, ringAverageAttr, ringCentroid, ringRadius, type RingPoint } from './orbit'
 import { constZField } from './zfields'
 import { COMBAT, FIELD, GAME, RUPTOR } from '../data/constants'
 
@@ -62,48 +62,100 @@ export const ARCHETYPES: Record<EnemyFamily, { label: string; glyph: EnemyFamily
   spiral: { label: '渦', glyph: 'spiral' },
   exp: { label: '昇り', glyph: 'exp' },
   poly34: { label: '捻れ', glyph: 'poly34' },
+  abs: { label: '折れ', glyph: 'abs' },
 }
+
+/**
+ * 迂回型（attacker の avoider 運用）・暴発型（ruptor）が使える family（#46・05b §2）。
+ * V字・放物線・高次曲線は「一度大きく曲がって戻る」制御がしやすく、狙った隙間を安定して抜けられる。
+ * wave（周期蛇行）/exp（単調急伸）/spiral/line はこの集合に含めない＝これらのパターンでは決して選ばれない。
+ */
+export const AVOIDER_FAMILIES: readonly EnemyFamily[] = ['abs', 'arc', 'poly34']
 
 /** exp 系統の指数の伸び係数（#43：終盤で鋭く跳ね上がる）。 */
 const EXP_K = 0.13
 /** poly34 系統の 3 次曲線の零点調整（g(x)=shape·(x³−POLY_C·x)＝±√POLY_C で軸を跨ぐ S 字）。 */
 const POLY_C = 140
+/** poly34 の 5 次項の零点調整（g(x)=shape·(x⁵−POLY_C5·x³)：より多くのこぶを作る・#46）。 */
+const POLY_C5 = 700
+/** abs 系統の折れ点 h（#46）：目標までの距離に対する割合（0.5＝中間で V 字に折れる）。 */
+const ABS_H_RATIO = 0.5
+
+/**
+ * poly34 の 1 つの形状候補（次数と係数のペア・#46）。3〜5次を同じ枠組みで扱う。
+ * deg=3：x³−POLY_C·x（S 字）／deg=4：x⁴−POLY_C·x²（W 字＝谷ふたつ）／deg=5：x⁵−POLY_C5·x³（こぶ多め）。
+ */
+interface PolyShape {
+  deg: 3 | 4 | 5
+  shape: number
+}
+const POLY34_SHAPES: PolyShape[] = [
+  { deg: 3, shape: -0.004 },
+  { deg: 3, shape: -0.002 },
+  { deg: 3, shape: 0.002 },
+  { deg: 3, shape: 0.004 },
+  { deg: 4, shape: -0.00018 },
+  { deg: 4, shape: 0.00018 },
+  { deg: 5, shape: -0.000012 },
+  { deg: 5, shape: 0.000012 },
+]
+
+/** poly34 の次数別 g(x)（#46：3〜5次）。 */
+function polyG(deg: 3 | 4 | 5, shape: number): (x: number) => number {
+  switch (deg) {
+    case 3:
+      return (x) => shape * (x * x * x - POLY_C * x)
+    case 4:
+      return (x) => shape * (x * x * x * x - POLY_C * x * x)
+    case 5:
+      return (x) => shape * (x * x * x * x * x - POLY_C5 * x * x * x)
+  }
+}
 
 /** 敵位置 from から to を向く基準角。 */
 function aimAt(from: Vec2, to: Vec2): number {
   return Math.atan2(to.y - from.y, to.x - from.x)
 }
 
-/** family＋狙い角＋形状係数から敵の軌道を組み立てる（origin=敵位置・z 場つき）。 */
+/**
+ * family＋狙い角＋形状係数から敵の軌道を組み立てる（origin=敵位置・z 場つき）。
+ * hFold は abs（折れ）の折れ点 h（ローカル x）。未指定は SAMPLING の代表距離を使う（既定 20）。
+ */
 function buildEnemyTrajectory(
   family: EnemyFamily,
   origin: Vec2,
   angle: number,
   shape: number,
   z: ZField,
+  hFold = 20,
+  polyDeg: 3 | 4 | 5 = 3,
+  fieldR?: number,
 ): Trajectory {
   switch (family) {
     case 'line':
-      return { mode: 'rotate', g: () => 0, angle, origin, z }
+      return { mode: 'rotate', g: () => 0, angle, origin, z, fieldR }
     case 'arc':
       // 緩い放物の弧（左右に曲がる）
-      return { mode: 'rotate', g: (x) => shape * x * x, angle, origin, z }
+      return { mode: 'rotate', g: (x) => shape * x * x, angle, origin, z, fieldR }
     case 'wave':
       // 波打って進む（shape=振幅）
-      return { mode: 'rotate', g: (x) => shape * Math.sin(0.45 * x), angle, origin, z }
+      return { mode: 'rotate', g: (x) => shape * Math.sin(0.45 * x), angle, origin, z, fieldR }
     case 'spiral':
       // 渦巻き（shape=巻きの強さ）。狙い角ぶん回す
-      return { mode: 'polar', f: (t) => shape * (t + angle), origin, z }
+      return { mode: 'polar', f: (t) => shape * (t + angle), origin, z, fieldR }
     case 'exp':
       // 指数（#43）：序盤はほぼ直進し、終盤で鋭く横へ跳ね上がる
-      return { mode: 'rotate', g: (x) => shape * (Math.exp(EXP_K * x) - 1), angle, origin, z }
+      return { mode: 'rotate', g: (x) => shape * (Math.exp(EXP_K * x) - 1), angle, origin, z, fieldR }
     case 'poly34':
-      // 3次（#43）：S字・こぶを作る高自由度の捻れ曲線
-      return { mode: 'rotate', g: (x) => shape * (x * x * x - POLY_C * x), angle, origin, z }
+      // 3〜5次（#43/#46）：S字・こぶを作る高自由度の捻れ曲線
+      return { mode: 'rotate', g: polyG(polyDeg, shape), angle, origin, z, fieldR }
+    case 'abs':
+      // 折れ（#46）：g(x)=shape·|x−h|。折れ点 h で V 字に鋭く曲がる
+      return { mode: 'rotate', g: (x) => shape * Math.abs(x - hFold), angle, origin, z, fieldR }
   }
 }
 
-/** family ごとの形状係数候補。 */
+/** family ごとの形状係数候補（poly34 の 4/5 次は POLY34_SHAPES で別扱い）。 */
 function shapeCandidates(family: EnemyFamily): number[] {
   switch (family) {
     case 'line':
@@ -117,8 +169,43 @@ function shapeCandidates(family: EnemyFamily): number[] {
     case 'exp':
       return [-0.8, -0.35, 0.35, 0.8]
     case 'poly34':
+      // 3 次分（4/5 次は familyTrajectories が POLY34_SHAPES から別途展開する）
       return [-0.004, -0.002, 0.002, 0.004]
+    case 'abs':
+      // 折れの傾き（V字の開き）。左右どちらへも折れられるよう正負を用意
+      return [-0.9, -0.45, 0.45, 0.9]
   }
+}
+
+/**
+ * family の全形状候補を「基準角＋オフセット」で展開した軌道群を返す（#46：poly34 の 3〜5 次・
+ * abs の折れ点 h を含めてここで一元化する）。spiral は狙い角オフセットを取らない。
+ * hFold は abs の折れ点（対象までのローカル距離 × ABS_H_RATIO を呼び出し側が渡す）。
+ */
+function familyTrajectories(
+  family: EnemyFamily,
+  origin: Vec2,
+  baseAngle: number,
+  z: ZField,
+  hFold: number,
+  fieldR?: number,
+): Trajectory[] {
+  const offsets = family === 'spiral' ? [0] : [-0.28, -0.14, 0, 0.14, 0.28]
+  const out: Trajectory[] = []
+  for (const off of offsets) {
+    const angle = baseAngle + off
+    if (family === 'poly34') {
+      // 3〜5 次を次数ごとに展開（05b §2）
+      for (const ps of POLY34_SHAPES) {
+        out.push({ mode: 'rotate', g: polyG(ps.deg, ps.shape), angle, origin, z, fieldR })
+      }
+      continue
+    }
+    for (const shape of shapeCandidates(family)) {
+      out.push(buildEnemyTrajectory(family, origin, angle, shape, z, hFold, 3, fieldR))
+    }
+  }
+  return out
 }
 
 // ===== 壁を避ける軌道生成（#28：通過点を選び、それを通る近似曲線＝多項式を作る） =====
@@ -160,7 +247,7 @@ function clamp(v: number, lo: number, hi: number): number {
  * そこを横へ膨らませる通過点を選んで近似曲線を引く。単一の弓なりと S 字（より複雑）を出す。
  * 障害物が無ければ空（迂回不要）。breaker（壁を壊す）には呼び出し側が渡さない。
  */
-function avoiderTrajectories(origin: Vec2, aimPos: Vec2, z: ZField, obstacles: Obstacle[]): Trajectory[] {
+function avoiderTrajectories(origin: Vec2, aimPos: Vec2, z: ZField, obstacles: Obstacle[], fieldR?: number): Trajectory[] {
   if (obstacles.length === 0) return []
   const angle = aimAt(origin, aimPos)
   const L = dist(origin, aimPos)
@@ -178,7 +265,7 @@ function avoiderTrajectories(origin: Vec2, aimPos: Vec2, z: ZField, obstacles: O
   // 単一の弓なり：迂回起点を横へ膨らませて壁の脇/上を抜ける
   for (const off of [4, 7, 10, -4, -7, -10]) {
     const g = fitPolynomial([{ x: 0, y: 0 }, { x: mid, y: off }, { x: L, y: 0 }])
-    out.push({ mode: 'rotate', g, angle, origin, z })
+    out.push({ mode: 'rotate', g, angle, origin, z, fieldR })
   }
   // S 字：2つの通過点で複雑に回り込む（#28：独特な軌跡）
   const xa = clamp(xb * 0.7, 1.5, L - 3)
@@ -186,7 +273,7 @@ function avoiderTrajectories(origin: Vec2, aimPos: Vec2, z: ZField, obstacles: O
   if (xc > xa) {
     for (const off of [6, 9, -6, -9]) {
       const g = fitPolynomial([{ x: 0, y: 0 }, { x: xa, y: off }, { x: xc, y: -off * 0.7 }, { x: L, y: 0 }])
-      out.push({ mode: 'rotate', g, angle, origin, z })
+      out.push({ mode: 'rotate', g, angle, origin, z, fieldR })
     }
   }
   return out
@@ -219,14 +306,50 @@ function enemyFamilies(enemy: Enemy): EnemyFamily[] {
 }
 
 /**
+ * 迂回型・暴発型が使う family を AVOIDER_FAMILIES（abs/arc/poly34）に制限する（#46・05b §2）。
+ * wave/exp/spiral/line は決して選ばれない。フィルタ結果が空（第1面の line 素 attacker 等）なら
+ * 後方互換として元の family をそのまま返す（＝素の直進 attacker）。
+ */
+function avoiderFamiliesOf(enemy: Enemy): EnemyFamily[] {
+  const fams = enemyFamilies(enemy).filter((f) => AVOIDER_FAMILIES.includes(f))
+  return fams.length > 0 ? fams : enemyFamilies(enemy)
+}
+
+/**
+ * 守護型の脅威方向 φ_threat（05b §5.4・#47）：見えている味方のうち最も脅威度の高い者の方向。
+ * threatScore（woundFocus/lowHpBias）で選び、その味方を敵から見た角度を返す。見えなければ null。
+ */
+function threatDirection(enemy: Enemy, allies: Ally[]): number | null {
+  const visible = allies.filter((a) => a.hp > 0 && (a.concealed ?? 0) < COMBAT.orbitConcealFull)
+  if (visible.length === 0) return null
+  const t = visible.reduce((best, a) => (threatScore(a) > threatScore(best) ? a : best))
+  return aimAt(enemy.pos, t.pos)
+}
+
+/**
+ * 守護型の結界 z 場を組む（05b §5.4）。
+ * - 通常（一様）：z = sign·zRef（全周一定・|z|=zRef で失速しない）。
+ * - 方向づけ（directedAura・#47）：z(x,y) = sign·zRef·cos(φ−φ_threat)。脅威方向 φ_threat で
+ *   |z| 最大（=zRef）、そこから離れるほど弱まる。全周で |z|≤zRef を保つため失速自滅しない。
+ *   alternatingAura と併用時も sign（guardZSign）を振幅に掛けるだけで振幅≤zRef を維持する。
+ * z 場は術者位置 origin を原点として評価される（#52）ため、(x,y) は origin 相対で受ける。
+ */
+function buildGuardZField(enemy: Enemy, sign: 1 | -1, threatPhi: number | null): ZField {
+  if (!enemy.directedAura || threatPhi === null) return constZField(sign * FIELD.zRef)
+  const amp = sign * FIELD.zRef
+  // (x,y) は origin 相対。その点の方位角 φ と脅威方向の差の余弦で強度を傾ける
+  return (x, y) => amp * Math.cos(Math.atan2(y, x) - threatPhi)
+}
+
+/**
  * 防御ロール（guardian・#28/05b §5.4）：自分の周りに周回結界（閉じた円）を張る。
- * z は自陣の属性（交互張り個体は guardZSign）で、減速しない最大強度 |z|=zRef に張る
+ * z は自陣の属性（交互張り個体は guardZSign）で、減速しない最大強度 |z|≤zRef に張る
  * （#31：|z|>zRef だと結界自身が失速して霧散する＝「リング全周で |z|≤zRef」の自壊回避）。
+ * directedAura 個体は脅威方向に強度を偏らせた非一様場を張る（#47・全周で |z|≤zRef を維持）。
  * 半径は障害物の素材に触れないものを選ぶ（触れると orbitWallBreak で即霧散するため・05b §5.4）。
  */
-function planGuardianOrbit(enemy: Enemy, obstacles: Obstacle[] = []): EnemyPlan {
+function planGuardianOrbit(enemy: Enemy, allies: Ally[] = [], obstacles: Obstacle[] = [], fieldR?: number): EnemyPlan {
   const sign = enemy.guardZSign ?? (enemy.element === 'dark' ? -1 : 1)
-  const zVal = sign * FIELD.zRef
   // 大きい順に試し、リング上のどの点も素材に触れない半径を選ぶ（全て触れるなら最小で張る）
   const radii = [GAME.enemyGuardRadius, GAME.enemyGuardRadius * 0.75, GAME.enemyGuardRadius * 0.55]
   let radius = radii[radii.length - 1]
@@ -242,11 +365,13 @@ function planGuardianOrbit(enemy: Enemy, obstacles: Obstacle[] = []): EnemyPlan 
       break
     }
   }
+  const threatPhi = threatDirection(enemy, allies)
   const traj: Trajectory = {
     mode: 'polar',
     f: () => radius,
     origin: enemy.pos,
-    z: constZField(zVal),
+    z: buildGuardZField(enemy, sign, threatPhi),
+    fieldR,
   }
   return { trajectory: traj, targetId: '', expectedDamage: 0 }
 }
@@ -283,14 +408,18 @@ function threatScore(a: Ally): number {
 
 /**
  * 崩し手の攻撃計画（#42・05b §4）。通常の最大ダメージ探索は使わず、
- * 「狙う対象の近傍に z 場の極（暴発点）が来る」軌道を、迂回型と同じ family（line 不可）から選ぶ。
+ * 「狙う対象の近傍に z 場の極（暴発点）が来る」軌道を、迂回型と同じ family（abs/arc/poly34 のみ・#46）から選ぶ。
  * aimOverride を渡すとその位置を狙う（ボス断末魔の分散ターゲティングに使う・#45）。
+ * standingRings（前ターンまでの持続結界）を渡すと、対象が結界に囲まれている場合は極を
+ * リング迎撃範囲の手前に置く（#48）。
  */
 export function planRuptorShot(
   enemy: Enemy,
   allies: Ally[],
   obstacles: Obstacle[] = [],
   aimOverride?: { pos: Vec2; targetId: string },
+  standingRings: RingPoint[][] = [],
+  fieldR?: number,
 ): EnemyPlan | null {
   const alive = allies.filter((a) => a.hp > 0)
   if (alive.length === 0) return null
@@ -303,6 +432,12 @@ export function planRuptorShot(
   const polarity: 1 | -1 =
     enemy.element === 'light' ? 1 : enemy.element === 'dark' ? -1 : target.element === 'light' ? -1 : 1
 
+  // 迂回型と同じ family 制約（#46・05b §2/§5.3）：abs/arc/poly34 のみ。
+  // 個体が有効な family を1つも持たない（wave/exp/line 素の個体等）なら、
+  // 暴発型の主力 family 一式（abs/arc/poly34）へフォールバックする（05b §5.3）。
+  const own = avoiderFamiliesOf(enemy).filter((f) => AVOIDER_FAMILIES.includes(f))
+  const fams = own.length > 0 ? own : [...AVOIDER_FAMILIES]
+
   /**
    * 指定の狙点に極を仕込み、最良の軌道を探す。
    * 「極に到達して暴発する（ruptured）」かつ「途中で壁の素材に触れない（clear）」候補を最優先し、
@@ -310,10 +445,8 @@ export function planRuptorShot(
    */
   const searchAim = (aim: Vec2): { traj: Trajectory; d: number; rank: number; end: Vec2 } | null => {
     const z = buildRuptorZField(enemy.pos, aim, polarity)
-    // 迂回型と同じ制約：line は使えない（05b §2）。曲率のある family から選ぶ
-    const fams = enemyFamilies(enemy).filter((f) => f !== 'line')
-    if (fams.length === 0) fams.push('arc')
     const base = aimAt(enemy.pos, aim)
+    const hFold = dist(enemy.pos, aim) * ABS_H_RATIO
     let best: { traj: Trajectory; d: number; rank: number; end: Vec2 } | null = null
     const consider = (traj: Trajectory) => {
       const { path, flight } = enemyFlight(traj, enemy.castInitialSpeed)
@@ -329,16 +462,33 @@ export function planRuptorShot(
       }
     }
     for (const fam of fams) {
-      const aimOffsets = fam === 'spiral' ? [0] : [-0.28, -0.14, 0, 0.14, 0.28]
-      for (const off of aimOffsets) {
-        for (const shape of shapeCandidates(fam)) {
-          consider(buildEnemyTrajectory(fam, enemy.pos, base + off, shape, z))
-        }
-      }
+      for (const traj of familyTrajectories(fam, enemy.pos, base, z, hFold, fieldR)) consider(traj)
     }
     // 障害物があれば迂回軌道も試す（迂回型と同じ立ち回り・05b §5.3）
-    for (const traj of avoiderTrajectories(enemy.pos, aim, z, obstacles)) consider(traj)
+    for (const traj of avoiderTrajectories(enemy.pos, aim, z, obstacles, fieldR)) consider(traj)
     return best
+  }
+
+  /**
+   * 結界に囲まれた対象を狙うときの狙点補正（#48・05b §4）：極（暴発点）を
+   * 「リングの迎撃範囲（半径＋迎撃厚み）に入る手前」＝敵側の経路上に置く。手前で暴発させれば
+   * 弾自体はリングの迎撃を経験せず、AoE がリング内側（対象）へ届く。壁狙いの手前補正と同じ考え方。
+   * ただし手前に引いた極が AoE 半径の外（リングが大きすぎて奥まで届かない）になる場合は、
+   * この戦術は成立しない＝真位置を狙って通常の迎撃（反対極結界での相殺）に委ねる（05b §4.6 の
+   * 「リング半径を広げる」対抗策）。囲む結界がなければ pos をそのまま返す。
+   */
+  const ringFrontAim = (pos: Vec2): Vec2 => {
+    const enclosing = standingRings.find((ring) => ring.length >= 3 && ringEncloses(ring, pos))
+    if (!enclosing) return pos
+    const c = ringCentroid(enclosing)
+    // 中心から迎撃範囲手前までの距離。AoE 半径の外なら奥（対象）へ届かない＝補正しない
+    const stand = ringRadius(enclosing) + RUPTOR.ringFrontMargin
+    if (stand >= FIELD.aoeRadius) return pos
+    // 敵→リング中心の方向で、迎撃範囲の手前まで引いた点を狙点にする
+    const dir = { x: c.x - enemy.pos.x, y: c.y - enemy.pos.y }
+    const D = Math.hypot(dir.x, dir.y) || 1
+    const back = Math.max(0, D - stand) // 中心から stand だけ手前＝敵側
+    return { x: enemy.pos.x + (dir.x / D) * back, y: enemy.pos.y + (dir.y / D) * back }
   }
 
   // 障害物狙いの個体（第4面デモ・#42）：壁の素材（unbreakable 以外）の「面の手前」に暴発点を置く。
@@ -376,7 +526,9 @@ export function planRuptorShot(
     // 壁が全て崩れた等：以後は通常の味方狙いへフォールバック
   }
 
-  const aimPos = aimOverride?.pos ?? perceivedPos(target)
+  // 対象が結界に囲まれていれば、極をリング迎撃範囲の手前に置く（#48）。囲まれていなければ真位置を狙う
+  const rawAim = aimOverride?.pos ?? perceivedPos(target)
+  const aimPos = aimOverride ? rawAim : ringFrontAim(rawAim)
   const targetId = aimOverride?.targetId ?? target.id
   const best = searchAim(aimPos)
   if (!best) return null
@@ -407,10 +559,11 @@ export function planEnemyShots(
   allies: Ally[],
   obstacles: Obstacle[] = [],
   standingRings: RingPoint[][] = [],
+  fieldR?: number,
 ): EnemyPlan[] {
   const count = Math.max(1, enemy.castCount ?? 1)
   if (count === 1) {
-    const p = planEnemyShot(enemy, allies, obstacles, standingRings)
+    const p = planEnemyShot(enemy, allies, obstacles, standingRings, fieldR)
     return p ? [p] : []
   }
   const pool: EnemyRole[] =
@@ -419,10 +572,19 @@ export function planEnemyShots(
   const taken = new Set<string>()
   const plans: EnemyPlan[] = []
   for (let i = 0; i < count; i++) {
-    const variant: Enemy = { ...enemy, role: pool[i % pool.length], castCount: 1 }
+    const role = pool[i % pool.length]
+    // パターン別 family/z（06b §6 第7面・B.7）：family 制約は role 分岐（planEnemyShot 内）に委ねる。
+    // z 場は breaker（火力型）弾＝一定（castZ）、それ以外（迂回/暴発）弾＝castZField があればそれ。
+    // 専用の合成ロジックは作らず、変異体の castZField を落とすだけで一定場に切り替える。
+    const variant: Enemy = {
+      ...enemy,
+      role,
+      castCount: 1,
+      castZField: role === 'breaker' ? undefined : enemy.castZField,
+    }
     const remaining = alive.filter((a) => !taken.has(a.id))
     const pickFrom = remaining.length > 0 ? remaining : alive
-    const plan = planEnemyShot(variant, pickFrom, obstacles, standingRings)
+    const plan = planEnemyShot(variant, pickFrom, obstacles, standingRings, fieldR)
     if (!plan) continue
     if (plan.targetId) taken.add(plan.targetId)
     plans.push(plan)
@@ -439,23 +601,25 @@ export function planEnemyShot(
   allies: Ally[],
   obstacles: Obstacle[] = [],
   standingRings: RingPoint[][] = [],
+  fieldR?: number,
 ): EnemyPlan | null {
   const alive = allies.filter((a) => a.hp > 0)
   if (alive.length === 0) return null
 
-  // 防御ロール：自陣を守る周回結界を張る（#28）
-  if (enemy.role === 'guardian') return planGuardianOrbit(enemy, obstacles)
+  // 防御ロール：自陣を守る周回結界を張る（#28）。方向づけ場は脅威（味方）方向へ強度を偏らせる（#47）
+  if (enemy.role === 'guardian') return planGuardianOrbit(enemy, allies, obstacles, fieldR)
 
-  // 崩し手（#42）：狙った対象の近傍で暴発させる専用計画
-  if (enemy.role === 'ruptor') return planRuptorShot(enemy, allies, obstacles)
+  // 崩し手（#42）：狙った対象の近傍で暴発させる専用計画（結界対処は standingRings を渡す・#48）
+  if (enemy.role === 'ruptor') return planRuptorShot(enemy, allies, obstacles, undefined, standingRings, fieldR)
 
   // 闇の周回で完全に隠れた味方は視認不可＝狙えない（#35）。全員隠れていれば見えないなりに撃つ。
   const visible = alive.filter((a) => (a.concealed ?? 0) < COMBAT.orbitConcealFull)
   const candidates = visible.length > 0 ? visible : alive
 
-  // 壁を貫くロール（breaker）は障害物のペナルティを受けない（#28：壁を破壊して届かせる）
+  // 壁を貫くロール（breaker＝火力型）は障害物のペナルティを受けない（#28：壁を破壊して届かせる）。
+  // 火力型は family 制約なし。迂回型（attacker）は abs/arc/poly34 のみに絞る（#46・05b §2）。
   const breaker = enemy.role === 'breaker'
-  const families = enemyFamilies(enemy)
+  const families = breaker ? enemyFamilies(enemy) : avoiderFamiliesOf(enemy)
 
   let best: EnemyPlan | null = null
   // 候補軌道を1つ評価して best を更新する（#28：直進系も迂回系も同じ採点）。
@@ -491,11 +655,10 @@ export function planEnemyShot(
   const MANEUVER = 0.9
   for (const ally of candidates) {
     // 隠れている味方は見かけの位置（ずれた位置）で狙う＝命中評価もそこに対して行う（#35）
-    const aimPos = perceivedPos(ally)
-    const base = aimAt(enemy.pos, aimPos)
+    let aimPos = perceivedPos(ally)
     // 攻撃の z 場は対象の弱点（反対極）を、強さ違い（zPeak/zRef）で試す（#28/#31：届く威力を最大化）
     let zCands = attackZCandidates(enemy, ally.element)
-    // 迂回型の高難度個体（05b §5.2）：狙う相手が結界に守られていれば、
+    // 迂回型の高難度個体（05b §5.2/#47）：狙う相手が結界に守られていれば、
     // 結界の平均属性と同極の z に合わせてすり抜ける（同極は透過＝04-magic §4.6）。
     // 固有の castZField を持つ個体でも、すり抜けが可能な局面ではそちらを優先する
     if (enemy.slipThrough && standingRings.length > 0) {
@@ -505,26 +668,28 @@ export function planEnemyShot(
         if (ringAttr !== 'neutral') {
           const sign = ringAttr === 'light' ? 1 : -1
           zCands = ATTACK_Z_MAGS.map((m) => ({ z: constZField(sign * m), zVal: sign * m }))
+          // 対象が隠蔽されている（#47）：ジッターのかかった見かけ位置は不確か。
+          // 位置が確実な「結界そのもの（リング中心）」を同極 z で狙い、その奥（対象がいる可能性が
+          // 高い場所）まで透過で届かせる。隠蔽なし（concealed≤0）なら真位置をそのまま狙う。
+          if ((ally.concealed ?? 0) > 0) aimPos = ringCentroid(enclosing)
         }
       }
     }
-    // 得意関数を1～2個すべて試す（#28：複数関数を組み合わせて戦う）
+    const base = aimAt(enemy.pos, aimPos)
+    const hFold = dist(enemy.pos, aimPos) * ABS_H_RATIO
+    // 得意関数を1～2個すべて試す（#28：複数関数を組み合わせて戦う。poly34 の 3〜5 次・abs の折れ点は
+    // familyTrajectories が一元展開する・#46）
     for (const fam of families) {
-      const shapes = shapeCandidates(fam)
-      const aimOffsets = fam === 'spiral' ? [0] : [-0.28, -0.14, 0, 0.14, 0.28]
-      for (const off of aimOffsets) {
-        for (const shape of shapes) {
-          for (const zc of zCands) {
-            const traj = buildEnemyTrajectory(fam, enemy.pos, base + off, shape, zc.z)
-            consider(traj, ally, aimPos, attributeOf(zc.zVal), strengthOf(zc.zVal), 1)
-          }
+      for (const zc of zCands) {
+        for (const traj of familyTrajectories(fam, enemy.pos, base, zc.z, hFold, fieldR)) {
+          consider(traj, ally, aimPos, attributeOf(zc.zVal), strengthOf(zc.zVal), 1)
         }
       }
     }
     // 壁よけ（#28）：通過点を選んで近似曲線で回り込む。breaker は壊して進むので使わない。
     if (!breaker) {
       for (const zc of zCands) {
-        for (const traj of avoiderTrajectories(enemy.pos, aimPos, zc.z, obstacles)) {
+        for (const traj of avoiderTrajectories(enemy.pos, aimPos, zc.z, obstacles, fieldR)) {
           consider(traj, ally, aimPos, attributeOf(zc.zVal), strengthOf(zc.zVal), MANEUVER)
         }
       }
@@ -537,7 +702,7 @@ export function planEnemyShot(
   const target = candidates.reduce((lo, a) => (a.hp < lo.hp ? a : lo))
   const fallbackZ = enemy.castZField ?? constZField((target.element === 'light' ? -1 : 1) * FIELD.zRef)
   return {
-    trajectory: buildEnemyTrajectory('line', enemy.pos, aimAt(enemy.pos, perceivedPos(target)), 0, fallbackZ),
+    trajectory: buildEnemyTrajectory('line', enemy.pos, aimAt(enemy.pos, perceivedPos(target)), 0, fallbackZ, 20, 3, fieldR),
     targetId: target.id,
     expectedDamage: 0,
   }

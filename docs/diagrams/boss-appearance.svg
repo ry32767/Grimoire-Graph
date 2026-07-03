@@ -1,0 +1,100 @@
+<svg viewBox="0 0 880 260" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
+  <rect x="0" y="0" width="880" height="260" fill="#0d0b14"/>
+  <!-- 4パネル：フェーズ1/2/3/断末魔（06b §6 第7面「ボスの見た目」の概念図・実寸ではない） -->
+
+  <!-- パネル共通の枠 -->
+  <g font-size="12" fill="#fff8e1" text-anchor="middle">
+    <text x="110" y="20">フェーズ1（bossPhase=0）</text>
+    <text x="330" y="20">フェーズ2（=1）</text>
+    <text x="550" y="20">フェーズ3（=2）</text>
+    <text x="770" y="20">断末魔（finale='cast'）</text>
+  </g>
+
+  <!-- ===== フェーズ1：装甲4枚・対称・天秤水平 ===== -->
+  <g transform="translate(110,130)">
+    <!-- 左半身=光(金)・右半身=闇(紫) 対称の装甲4枚 -->
+    <rect x="-46" y="-60" width="44" height="120" rx="6" fill="#c9a24b" fill-opacity="0.85" stroke="#f4c430" stroke-width="1.5"/>
+    <rect x="2" y="-60" width="44" height="120" rx="6" fill="#6b5aa8" fill-opacity="0.85" stroke="#7b5cc4" stroke-width="1.5"/>
+    <rect x="-30" y="-45" width="24" height="90" rx="4" fill="#e8e0c8" fill-opacity="0.35"/>
+    <rect x="6" y="-45" width="24" height="90" rx="4" fill="#b8b0c8" fill-opacity="0.35"/>
+    <!-- 天秤（水平） -->
+    <g transform="translate(0,-70)">
+      <line x1="-30" y1="0" x2="30" y2="0" stroke="#fff8e1" stroke-width="2"/>
+      <line x1="0" y1="0" x2="0" y2="-16" stroke="#fff8e1" stroke-width="2"/>
+      <circle cx="-30" cy="4" r="4" fill="#f4c430"/>
+      <circle cx="30" cy="4" r="4" fill="#7b5cc4"/>
+    </g>
+    <text x="0" y="80" font-size="10" fill="#c7c2d6" text-anchor="middle">刻印は淡く均等・核は見えない</text>
+  </g>
+
+  <!-- ===== フェーズ2：装甲3枚・一部剥離・天秤わずかに傾く(~13°) ===== -->
+  <g transform="translate(330,130)">
+    <rect x="-46" y="-60" width="44" height="120" rx="6" fill="#c9a24b" fill-opacity="0.85" stroke="#f4c430" stroke-width="1.5"/>
+    <rect x="2" y="-60" width="44" height="120" rx="6" fill="#6b5aa8" fill-opacity="0.7" stroke="#7b5cc4" stroke-width="1.5"/>
+    <!-- 剥離片が舞う -->
+    <rect x="30" y="-30" width="14" height="22" rx="2" fill="#6b5aa8" fill-opacity="0.6" transform="rotate(18 37 -19)"/>
+    <rect x="40" y="10" width="12" height="18" rx="2" fill="#e8e0c8" fill-opacity="0.5" transform="rotate(-12 46 19)"/>
+    <g transform="translate(0,-70) rotate(13)">
+      <line x1="-30" y1="0" x2="30" y2="0" stroke="#fff8e1" stroke-width="2"/>
+      <line x1="0" y1="0" x2="0" y2="-16" stroke="#fff8e1" stroke-width="2"/>
+      <circle cx="-30" cy="4" r="4" fill="#f4c430"/>
+      <circle cx="30" cy="4" r="4" fill="#7b5cc4"/>
+    </g>
+    <text x="0" y="90" font-size="10" fill="#c7c2d6" text-anchor="middle">装甲の一部が剥離して舞う</text>
+  </g>
+
+  <!-- ===== フェーズ3：装甲2枚・核露出・明滅・天秤大きく傾く(~40°) ===== -->
+  <g transform="translate(550,130)">
+    <rect x="-40" y="-55" width="34" height="110" rx="6" fill="#c9a24b" fill-opacity="0.6" stroke="#f4c430" stroke-width="1.2"/>
+    <rect x="6" y="-55" width="34" height="110" rx="6" fill="#6b5aa8" fill-opacity="0.6" stroke="#7b5cc4" stroke-width="1.2"/>
+    <!-- 核（金/紫が滲む発光体） -->
+    <circle cx="0" cy="0" r="20" fill="url(#coreGrad)" opacity="0.95"/>
+    <circle cx="0" cy="0" r="20" fill="none" stroke="#fff8e1" stroke-width="1" opacity="0.6"/>
+    <!-- 刻印が裂けて光が漏れる -->
+    <path d="M -30,-40 L -10,-20 M 30,-40 L 10,-20 M -20,40 L 0,20" stroke="#ffe066" stroke-width="1.2" opacity="0.8"/>
+    <g transform="translate(0,-68) rotate(40)">
+      <line x1="-30" y1="0" x2="30" y2="0" stroke="#fff8e1" stroke-width="2"/>
+      <line x1="0" y1="0" x2="0" y2="-16" stroke="#fff8e1" stroke-width="2"/>
+      <circle cx="-30" cy="4" r="4" fill="#f4c430"/>
+      <circle cx="30" cy="4" r="4" fill="#7b5cc4"/>
+    </g>
+    <text x="0" y="90" font-size="10" fill="#c7c2d6" text-anchor="middle">核露出・小刻みに明滅</text>
+  </g>
+
+  <!-- ===== 断末魔：3つの綻び・激しく振れる天秤 ===== -->
+  <g transform="translate(770,130)">
+    <rect x="-34" y="-50" width="30" height="100" rx="6" fill="#c9a24b" fill-opacity="0.4" stroke="#f4c430" stroke-width="1"/>
+    <rect x="4" y="-50" width="30" height="100" rx="6" fill="#6b5aa8" fill-opacity="0.4" stroke="#7b5cc4" stroke-width="1"/>
+    <!-- 3つの綻び（白紫の暴発の視覚言語を小さく流用：中央・左・右） -->
+    <g opacity="0.9">
+      <circle cx="0" cy="0" r="16" fill="#ffffff" opacity="0.55"/>
+      <circle cx="0" cy="0" r="16" fill="none" stroke="#b483ff" stroke-width="2"/>
+      <circle cx="-34" cy="-20" r="8" fill="#ffffff" opacity="0.4"/>
+      <circle cx="-34" cy="-20" r="8" fill="none" stroke="#f4c430" stroke-width="1.4"/>
+      <circle cx="34" cy="20" r="8" fill="#ffffff" opacity="0.4"/>
+      <circle cx="34" cy="20" r="8" fill="none" stroke="#7b5cc4" stroke-width="1.4"/>
+    </g>
+    <!-- 制御を失って激しく振れる天秤（複数の残像） -->
+    <g transform="translate(0,-66)" opacity="0.35">
+      <line x1="-30" y1="0" x2="30" y2="0" stroke="#fff8e1" stroke-width="1.5" transform="rotate(55)"/>
+      <line x1="-30" y1="0" x2="30" y2="0" stroke="#fff8e1" stroke-width="1.5" transform="rotate(-30)"/>
+    </g>
+    <g transform="translate(0,-66) rotate(20)">
+      <line x1="-30" y1="0" x2="30" y2="0" stroke="#fff8e1" stroke-width="2"/>
+      <line x1="0" y1="0" x2="0" y2="-16" stroke="#fff8e1" stroke-width="2"/>
+      <circle cx="-30" cy="4" r="4" fill="#f4c430"/>
+      <circle cx="30" cy="4" r="4" fill="#7b5cc4"/>
+    </g>
+    <text x="0" y="90" font-size="10" fill="#c7c2d6" text-anchor="middle">3つの綻び・激しい揺れ</text>
+  </g>
+
+  <defs>
+    <radialGradient id="coreGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fffef0"/>
+      <stop offset="45%" stop-color="#f4c430"/>
+      <stop offset="100%" stop-color="#7b5cc4"/>
+    </radialGradient>
+  </defs>
+
+  <text x="440" y="250" font-size="10" fill="#8a7bbf" text-anchor="middle">概念図（06b §6 第7面「ボスの見た目」・実装は drawBossSprite / drawBossCollapse）。撃破後は天秤のみが水平へ戻り消える（未図示）。</text>
+</svg>

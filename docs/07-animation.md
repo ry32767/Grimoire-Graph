@@ -52,6 +52,32 @@ flightMs = min(MAX_MS, max(floorMs, maxTotal × MS_PER_GAMESEC(360)))
 | 結界の霧散 | 壁/弾に負ける | `DISSIPATE_MS=520` | `drawOrbitDissipation`（リング消失・粒拡散） |
 | 弾の霧散 | 速度 0 | `DISSIPATE_MS=520` | `drawBulletDissipation`（コア収縮・粒拡散） |
 | 暴発 | `misfirePos` 到達 | `MISFIRE_TAIL_MS=1000` | `drawMisfire`（収縮→大爆発の 2 段） |
+| 撃破（雑魚・種族別） | 致命弾のフラッシュ開始（取れなければ `e≥0.9`） | `DEATH_MS=900` | `drawEnemyDeath`（種族ごとの消滅・05c §6.5） |
+| 撃破（ボス最終崩壊） | ボス撃破確定（`outcome='cleared'`） | `BOSS_COLLAPSE_MS=2200` | `drawBossCollapse`（装甲落下→粒子ほどけ→天秤水平） |
+
+### 種族別の撃破演出（`drawEnemyDeath`・05c §6.5・#46）
+
+敵 HP が 0 になった撃破を、種族ごとに描き分ける（**当たり判定・ダメージ計算には一切影響しない、描画タイムラインのみ**）。`ResolveAnimation.deaths[]`（`{id,pos,species,element,tier,hitboxRadius,boss}`）を App が「このターン hp>0→hp≤0 になった敵」から作り、`BattleCanvas` が `deathStartById[id]` に**そのフラッシュ開始時刻**（＝致命弾の到達）を記録して `progress` を進める。開始した敵は `hideEnemyIds` で生存スプライトを隠し、消滅アニメへ譲る。
+
+| 種族 | 消滅の見た目 |
+|---|---|
+| 原型（proto） | ひび割れて光の粒になって崩れる（基準形） |
+| 鋼鬼（oni） | 膝から沈み、鎧の破片が飛散→一部は地面に瓦礫として残ってから消える（実体・重量感） |
+| 亡霊魔術師（wraith） | ローブがほどけ、上方へ属性色の光の筋（3〜4本）となって静かに消える（破片なし） |
+| 紅亡霊（redWraith） | 亡霊と同じ輪ほどけ＋消える直前に亀裂が強く明滅→細かな紅の光の破片が弾ける。**規模は AoE より遥かに小さく色も抑え、本物の暴発と誤認させない（AoE・ダメージなし）** |
+| ゴーレム（golem） | 目の光が消え→同心円に沿って亀裂→その場に沈むように崩れる（破片はほぼ真下に積もる） |
+
+### ボスの多段外見と最終崩壊（`drawBossSprite`/`drawBossCollapse`・#51・06b §6）
+
+書物のページ状装甲＋天秤の意匠（左半身=光/金・右半身=闇/紫）。`bossView`（`{phase,finale,outcome}`）で段階変化する。**天秤の傾き**が最重要のビジュアル（story.md「傾き続けた天秤が水平で止まった」に対応）。
+
+| 状態 | 装甲・核 | 天秤 |
+|---|---|---|
+| フェーズ1（`bossPhase=0`） | 装甲4枚・左右対称、核は見えない | 水平（0°） |
+| フェーズ2（`=1`） | 装甲3枚・一部剥離して舞う | わずかに傾く（~0.22rad≒13°） |
+| フェーズ3（`=2`） | 装甲2枚・核（金↔紫の発光体）露出・小刻みに明滅・刻印が裂けて光が漏れる | 大きく傾く（~0.7rad≒40°） |
+| 断末魔（`finale='cast'`） | 激しい揺れ＋**3つの綻び**（`drawMisfire` の白紫の視覚言語を小さく流用・中央/左右） | 制御を失って激しく振れる |
+| 撃破後（`outcome='cleared'`） | `drawBossCollapse`：①装甲・破片が落下 ②輪郭が光の粒でほどけ立ちのぼる ③最後に**天秤だけが残り水平（0）へ戻ってから消える** | 傾き→水平へ |
 
 ### 暴発の演出（`drawMisfire`＋ステージ全体演出・#29/#41）
 
@@ -102,7 +128,7 @@ intensity = 1 − (elapsed − flashStart)/FLASH_MS    // 1→0 に減衰
 | 3 | 障害物 | solids（円）＋rects（四角・#56）を描き carves を `destination-out` で打ち抜き、種別ごとのピクセルアート・タイルを `source-atop` で敷き詰める（石積み/亀裂/鋲/鋼板） |
 | 4 | 味方の予測軌道（編集時） | z で色分けした線（光=金/闇=紫/中立=淡）、強度で線幅 |
 | 4b | 暴発点マーカー（編集時・#30） | 関数（軌道 or z 場）がエラーで暴発する点に**赤い ✕**（`drawMisfireMarker`・`#ff4b4b`・最前面）。`Preview.misfirePos` 由来 |
-| 5 | 敵 | オーラ→暗い下地→属性枠→ロール印（guardian=二重破線/breaker=棘）→ドット絵スプライト（16×16）→系統 glyph→名前ラベル→被弾フラッシュ |
+| 5 | 敵 | オーラ→暗い下地→属性枠→ロール印（guardian=二重破線/breaker=棘）→**種族別スプライト**（`drawSpeciesSprite`：oni/wraith/redWraith/golem/proto を species×tier で手続き描画。ボスは `drawBossSprite`・#46/#51）→系統 glyph→名前ラベル→被弾フラッシュ。撃破時は生存スプライトを隠し消滅アニメ（`drawEnemyDeath`/`drawBossCollapse`）へ譲る |
 | 6 | 味方術者 | オーラ→アクティブ強調リング（破線）→ドット絵スプライト→隠蔽ヴェール→名前→被弾フラッシュ |
 | 7 | HP バー | 敵/味方の上 |
 | 8 | 弾の波トレイル | `drawWaveTrail`：2 本の正弦波（180°位相差）＋トレイル粒 |

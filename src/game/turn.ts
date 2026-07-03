@@ -117,6 +117,8 @@ export interface ResolveInput {
   instability?: number
   /** 半径ばらつきの乱数 [0,1)（純粋関数を保つため呼び出し側が与える）。0.5 でブレなし。未指定は 0.5 */
   misfireRoll?: number
+  /** 現在の場の半径（#49・06b §5.5）。敵AIの計画に渡し、面/フェーズで可変な inField を反映する。未指定は既定 rField */
+  fieldR?: number
 }
 
 export interface ResolveResult {
@@ -380,7 +382,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     .map((ao) => ao.ring as RingPoint[])
   for (const e of enemies) {
     if (!input.castingEnemyIds.includes(e.id)) continue
-    for (const plan of planEnemyShots(e, allies, obstacles, visibleRings)) {
+    for (const plan of planEnemyShots(e, allies, obstacles, visibleRings, input.fieldR)) {
       if (classifyTrajectory(plan.trajectory) === 'orbit') {
         // 敵の周回結界も壁/失速で丸ごと霧散する（#34/#31：敵が使った場合も同様）。形状は霧散演出のため残す
         const ring = attachRingSpeeds(buildRing(plan.trajectory), e.castInitialSpeed) // 点ごとの速度（#60）

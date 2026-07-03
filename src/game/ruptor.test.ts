@@ -78,7 +78,7 @@ describe('planRuptorShot（#42）', () => {
     const e = ruptor({ x: 0, y: 10 }, 'line')
     const plan = planRuptorShot(e, [ally('t', { x: 0, y: -8 })])
     expect(plan).not.toBeNull()
-    // arc にフォールバックする＝軌道は曲率を持つ（直線なら中間点の横ずれが 0 になる）
+    // abs/arc/poly34 へフォールバックする＝軌道は曲率を持つ（直線なら中間点の横ずれが 0 になる）
     const { path } = enemyFlight(plan!.trajectory, e.castInitialSpeed)
     const mid = path[Math.floor(path.length / 2)]
     const start = path[0]
@@ -87,6 +87,34 @@ describe('planRuptorShot（#42）', () => {
     const L = dist(end, start)
     const cross = Math.abs((end.x - start.x) * (start.y - mid.y) - (start.x - mid.x) * (end.y - start.y)) / L
     expect(cross).toBeGreaterThan(0.3)
+  })
+
+  it('wave/exp family しか持たなくても、暴発型の主力 family（abs/arc/poly34）で正確に暴発する（#46）', () => {
+    // wave は迂回型・暴発型では選べない（05b §2）。フォールバックで abs/arc/poly34 が使われ、
+    // 狙点直上に暴発点が乗る（wave のまま撃てば周期蛇行で狙点から大きく外れてしまう）。
+    for (const f of ['wave', 'exp'] as EnemyFamily[]) {
+      const e = ruptor({ x: 0, y: 10 }, f)
+      const t = ally('t', { x: 0, y: -8 })
+      const plan = planRuptorShot(e, [t])
+      expect(plan).not.toBeNull()
+      expect(plan!.misfirePos).not.toBeNull()
+      expect(dist(plan!.misfirePos!, t.pos)).toBeLessThan(FIELD.aoeRadius)
+    }
+  })
+
+  it('結界に囲まれた対象は、極をリング迎撃範囲の手前に置き AoE を内側へ届かせる（#48・05b §4）', () => {
+    // 半径 2 の小さな結界（迎撃範囲 2＋ringFrontMargin < aoeRadius）：手前で暴発しても AoE が対象へ届く。
+    const e = ruptor({ x: 0, y: 10 })
+    const t = ally('t', { x: 0, y: -8 })
+    const smallRing: Trajectory = { mode: 'polar', f: () => 2, origin: t.pos, z: constZField(FIELD.zRef) }
+    const ring = attachRingSpeeds(buildRing(smallRing), 10)
+    const plan = planRuptorShot(e, [t], [], undefined, [ring])
+    expect(plan).not.toBeNull()
+    expect(plan!.misfirePos).not.toBeNull()
+    // 暴発点はリング境界（半径2）の手前＝対象より敵側に置かれる（対象ちょうどではない）
+    expect(plan!.misfirePos!.y).toBeGreaterThan(t.pos.y)
+    // それでも AoE（半径5）が対象を巻き込む＝手前で暴発しても内側へ届く
+    expect(dist(plan!.misfirePos!, t.pos)).toBeLessThan(FIELD.aoeRadius)
   })
 
   it('ruptorTarget=obstacles は味方でなく壁の近くに暴発点を置く（第4面デモ・#42）', () => {

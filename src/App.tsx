@@ -41,7 +41,13 @@ import {
   NO_FIT,
 } from './components/composer'
 import { fitToPoints, renderExpr } from './game/exprFit'
-import BattleCanvas, { type ResolveAnimation, type AnimBullet, type AnimOrbit } from './components/BattleCanvas'
+import BattleCanvas, {
+  type ResolveAnimation,
+  type AnimBullet,
+  type AnimOrbit,
+  type EnemyDeath,
+} from './components/BattleCanvas'
+import { speciesOf, tierOf } from './render/species'
 import Hud from './components/Hud'
 import BattleLog from './components/BattleLog'
 import FunctionPanel from './components/FunctionPanel'
@@ -185,7 +191,7 @@ export default function App() {
       if (a.hp <= 0) continue
       const c = composers[a.id]
       if (!c) continue
-      const traj = buildComposerTrajectory(c, a.pos)
+      const traj = buildComposerTrajectory(c, a.pos, battle.rField)
       out[a.id] = computePreview(traj, c.speed, battle.mechanics.obstacles ? battle.obstacles : [])
     }
     return out
@@ -230,6 +236,7 @@ export default function App() {
           battle.allies,
           battle.obstacles,
           (battle.orbits ?? []).filter((o) => o.owner === 'player').map((o) => o.ring),
+          battle.rField,
         ).map((plan) => ({
           path: enemyFlight(plan.trajectory, e.castInitialSpeed).path,
           misfire: plan.misfirePos ?? null,
@@ -445,7 +452,7 @@ export default function App() {
       if (a.hp <= 0 || impairedIds.includes(a.id)) continue
       const c = composers[a.id]
       if (!c) continue
-      const traj = buildComposerTrajectory(c, a.pos)
+      const traj = buildComposerTrajectory(c, a.pos, battle.rField)
       if (!traj) continue
       casts.push({ allyId: a.id, trajectory: traj, initialSpeed: c.speed })
     }
@@ -521,8 +528,35 @@ export default function App() {
     if (kinds.has('enemyHit')) sfx.push('enemyHit')
     if (resolution.clashes.length > 0) sfx.push('clash') // パリィ/結界の「バチッ」（#38）
     sfxRef.current = sfx
+    // 撃破演出（05c §6.5・#46/#51）：このターン hp>0→hp<=0 になった敵を種族別に消滅させる。
+    // 位置・種族・ティアは撃破前の敵（battle.enemies）から取る（描画のみ・ロジック不変）。
+    const deaths: EnemyDeath[] = []
+    for (const before of battle.enemies) {
+      if (before.hp <= 0) continue
+      const nowDead = after.enemies.find((x) => x.id === before.id)
+      if (!nowDead || nowDead.hp > 0) continue
+      // ボスは断末魔（finale=pending/cast）の間は HP0 でも崩壊させない。撃破確定（cleared）でのみ最終崩壊（#51）。
+      if (before.boss && after.outcome !== 'cleared') continue
+      deaths.push({
+        id: before.id,
+        pos: before.pos,
+        species: speciesOf(before),
+        element: before.element,
+        tier: tierOf(before.level),
+        hitboxRadius: before.hitboxRadius,
+        boss: before.boss,
+      })
+    }
+    const bossView = { phase: after.bossPhase, finale: after.finale, outcome: after.outcome }
     setBattle({ ...battle, phase: 'resolve' })
-    setAnimation({ bullets, orbits, clashes: resolution.clashes, popups: resolution.popups })
+    setAnimation({
+      bullets,
+      orbits,
+      clashes: resolution.clashes,
+      popups: resolution.popups,
+      deaths,
+      bossView,
+    })
     setPendingState(after)
     playSfx('fire')
   }
@@ -755,6 +789,7 @@ export default function App() {
               allies={battle.allies}
               enemies={battle.enemies}
               obstacles={battle.obstacles}
+              rField={battle.rField}
               activeAllyId={composing ? activeAllyId : null}
               playerPaths={composing ? playerPaths : undefined}
               misfirePoints={composing ? misfirePoints : undefined}

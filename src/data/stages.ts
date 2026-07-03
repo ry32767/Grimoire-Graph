@@ -44,6 +44,10 @@ interface EnemyOpts {
   slipThrough?: boolean
   /** 守護型高難度：交互張り（05b §5.4） */
   alternatingAura?: boolean
+  /** 守護型：方向づけられた場（05b §5.4・#47・LVL4〜5） */
+  directedAura?: boolean
+  /** 種族（05c 図鑑・#46）。描画専用。ボスは未設定でよい */
+  species?: Enemy['species']
 }
 
 let seq = 0
@@ -83,6 +87,9 @@ function enemy(
     boss: opts.boss,
     slipThrough: opts.slipThrough,
     alternatingAura: opts.alternatingAura,
+    directedAura: opts.directedAura,
+    species: opts.species,
+    level, // ティア演出用（05c・描画専用）
   }
 }
 
@@ -166,6 +173,14 @@ function wall(
   const step = R * 1.4
   return obRect(element, [{ x: x0 - R, y: y0 - R, w: x1 - x0 + 2 * R, h: (rows - 1) * step + 2 * R }], kind)
 }
+/**
+ * 翼壁（#50・06b §5.6）：壁の帯の端 x0 から境界近くの x1 まで側面を塞ぐ unbreakable の壁。
+ * 迂回型AIが帯の外側（境界ぎわ）を回り込んで壁を素通りするのを防ぐ。左右対称に置く。
+ */
+function wingWall(x0: number, x1: number, y0: number, rows: number): Obstacle {
+  return wall(x0, x1, y0, rows, 'neutral', 'unbreakable')
+}
+
 /** 列柱：x0→x1 を step 間隔で、各柱は縦 n 段のブロブ。elems を順に割り当てて光闇を交互にできる。 */
 function colonnade(
   x0: number,
@@ -182,7 +197,7 @@ function colonnade(
 const stage1: Stage = {
   id: 'stage-1',
   name: '第一の間 ― 門',
-  enemies: [enemy('石像の番人', { x: 0, y: 19 }, 'dark', 1, 'line', { hp: 90 })],
+  enemies: [enemy('石像の番人', { x: 0, y: 19 }, 'dark', 1, 'line', { hp: 90, species: 'proto' })],
   obstacles: [],
   introText: [
     '苔むした門をくぐると、円形の広間。中央で、古びた石像の番人がゆっくりと目を開ける。',
@@ -200,14 +215,18 @@ const stage1: Stage = {
 const stage2: Stage = {
   id: 'stage-2',
   name: '第二の間 ― 通路',
+  rField: 32, // #49：翼壁を境界近くまで伸ばせるようやや広め
   enemies: [
-    enemy('回廊の衛士', { x: -12, y: 19 }, 'dark', 2, 'arc'),
-    enemy('影の射手', { x: 12, y: 20 }, 'dark', 2, 'wave'),
+    // 亡霊魔術師 I（迂回型・05c §2）。family は abs/arc のみ（#46）
+    enemy('回廊の衛士', { x: -12, y: 19 }, 'dark', 2, 'arc', { hp: 110, species: 'wraith' }),
+    enemy('影の射手', { x: 12, y: 20 }, 'dark', 2, 'abs', { hp: 105, species: 'wraith' }),
   ],
-  // 列柱（属性混在）＋中央にもろい瓦礫（一撃で崩せる体験・06b §6）
+  // 列柱（属性混在）＋中央にもろい瓦礫（一撃で崩せる体験・06b §6）＋翼壁（#50）
   obstacles: [
     ...colonnade(-18, 18, 3.6, -1, 4, ['dark', 'light']),
     wall(-6, 6, -1, 1, 'neutral', 'fragile'), // もろい瓦礫（fragile：一撃で大きく崩れる）
+    wingWall(18, 27, -1, 4), // 翼壁・右（列柱の端から境界近くまで・#50）
+    wingWall(-27, -18, -1, 4), // 翼壁・左
   ],
   introText: [
     'ゆるやかに下る回廊。柱が密に連なって、まっすぐな道を塞ぐ。回廊の衛士と影の射手が、闇の弾を撃ってくる。',
@@ -225,19 +244,24 @@ const stage2: Stage = {
 const stage3: Stage = {
   id: 'stage-3',
   name: '第三の間 ― 踊り場',
+  rField: 34, // #49：翼壁で障害物帯のy範囲を覆えるよう広め
   enemies: [
-    enemy('白の祭司', { x: -13, y: 19 }, 'light', 3, 'line', { families: ['arc'], role: 'breaker' }),
-    enemy('黒の祭司', { x: 13, y: 19 }, 'dark', 3, 'line', { families: ['arc'], role: 'breaker' }),
-    enemy('祭壇の影', { x: 0, y: 23 }, 'dark', 2, 'wave'),
+    // 鋼鬼 I（火力型・05c §1）。family は line/arc
+    enemy('白の祭司', { x: -13, y: 19 }, 'light', 3, 'line', { families: ['arc'], role: 'breaker', hp: 130, species: 'oni' }),
+    enemy('黒の祭司', { x: 13, y: 19 }, 'dark', 3, 'line', { families: ['arc'], role: 'breaker', hp: 130, species: 'oni' }),
+    // 亡霊魔術師 II（迂回型・護衛）。family=abs（#46）
+    enemy('祭壇の影', { x: 0, y: 23 }, 'dark', 2, 'abs', { hp: 110, species: 'wraith' }),
   ],
-  // 全幅の normal 壁＋左右の塔＋砕けぬ芯柱（迂回強制）＋もろい囲い（06b §6）
+  // 全幅の normal 壁（2段に厚み増）＋左右の塔＋砕けぬ芯柱（迂回強制）＋もろい囲い＋翼壁（06b §6・#50）
   obstacles: [
-    wall(-18, 18, 5, 1, 'light'), // 全幅の光の仕切り壁（闇で安く削れる）
+    wall(-18, 18, 5, 2, 'light'), // 全幅の光の仕切り壁（2段：上下の回り込みも防ぐ）
     pillar(-13, -3, 5, 'dark'), // 左の塔
     pillar(13, -3, 5, 'dark'), // 右の塔
     pillar(-7, 9, 2, 'neutral', 'unbreakable'), // 砕けぬ芯柱・左（迂回強制）
     pillar(7, 9, 2, 'neutral', 'unbreakable'), // 砕けぬ芯柱・右
     wall(-9, -3, -17, 1, 'neutral', 'fragile'), // もろい祭具の囲い
+    wingWall(20, 26, -14, 8), // 翼壁・右（障害物帯のy範囲を覆い側面を塞ぐ・#50）
+    wingWall(-26, -20, -14, 8), // 翼壁・左
   ],
   introText: [
     '階段の途中、広い踊り場に、白と黒の双子の祭壇。白の祭司は光を、黒の祭司は闇をまとい、その奥に祭壇の影が控える。',
@@ -255,22 +279,27 @@ const stage3: Stage = {
 const stage4: Stage = {
   id: 'stage-4',
   name: '第四の間 ― 螺旋',
+  rField: 32, // #49：包囲を成立させるため全方位に敵を置ける余地を確保
+  // 包囲構成（#49）：味方重心≈(0,-21) を軸に、敵を正面（上方）・左斜め後方・右斜め後方に配置
   enemies: [
-    enemy('渦の番兵', { x: -14, y: 18 }, 'dark', 4, 'spiral', { role: 'guardian' }), // 基礎：闇オーラのみ
-    enemy('坑道の弓手', { x: 0, y: 23 }, 'light', 3, 'spiral', { families: ['arc'] }),
-    // 暴発デモ（06b/04b）：低頻度・岩壁を狙って暴発を「見せる」個体。z 場は極（1/x型）
-    enemy('崩し手', { x: 14, y: 18 }, 'dark', 5, 'wave', {
+    // ゴーレム I（守護型・基礎・闇オーラのみ）＝正面（上方）
+    enemy('渦の番兵', { x: 0, y: 19 }, 'dark', 4, 'spiral', { role: 'guardian', hp: 140, species: 'golem' }),
+    // 亡霊魔術師 II（迂回型）＝左斜め後方。family=abs/arc（#46）
+    enemy('坑道の弓手', { x: -16, y: -25 }, 'light', 3, 'abs', { families: ['arc'], hp: 125, species: 'wraith' }),
+    // 紅亡霊 I（暴発デモ・06b/04b）＝右斜め後方。低頻度・岩壁を狙って暴発を「見せる」個体。z 場は極（1/x型）
+    enemy('崩し手', { x: 16, y: -25 }, 'dark', 5, 'arc', {
       role: 'ruptor',
       ruptorTarget: 'obstacles',
       fireEvery: 2,
       fireOffset: 1, // 1ターン目から撃つ＝最低1回は必ず暴発を見せる
+      species: 'redWraith',
     }),
   ],
-  // 全幅の瓦礫壁＋光と闇の渦（06b §6）
+  // 背後の全幅壁（退路を意識・維持）＋味方重心を軸にした光と闇の渦（演出・06b §6）
   obstacles: [
     wall(-18, 18, 1, 1, 'dark'), // 崩落した瓦礫の壁（全幅・光で安く削れる）
-    spiralArm(0, 7, 8, 1.2, 0, 'light'), // 渦（光）
-    spiralArm(0, 7, 8, 1.2, Math.PI, 'dark'), // 渦（闇）
+    spiralArm(0, -21, 8, 1.2, 0, 'light'), // 渦（光）：味方重心 (0,-21) を軸に
+    spiralArm(0, -21, 8, 1.2, Math.PI, 'dark'), // 渦（闇）
   ],
   introText: [
     '螺旋を成す坑道。壁には光と闇の渦が逆向きに回っている。渦の番兵が防御の輪を張り、坑道の弓手が頭上から射かけてくる。',
@@ -288,26 +317,42 @@ const stage4: Stage = {
 const stage5: Stage = {
   id: 'stage-5',
   name: '第五の間 ― 深層の広間',
+  rField: 36, // #49：poly34 の高次うねりと複雑な壁配置に余地を与える広め
   enemies: [
-    enemy('鏡像の衛士（光）', { x: -15, y: 18 }, 'light', 4, 'line', { families: ['exp'], role: 'breaker' }),
-    enemy('鏡像の衛士（闇）', { x: 15, y: 18 }, 'dark', 4, 'line', { families: ['exp'], role: 'breaker' }),
-    enemy('鏡像の射手（闇）', { x: -7, y: 23 }, 'dark', 5, 'wave', {
+    // 鋼鬼 II（火力型）。family=line/exp
+    enemy('鏡像の衛士（光）', { x: -15, y: 18 }, 'light', 4, 'line', { families: ['exp'], role: 'breaker', hp: 125, species: 'oni' }),
+    enemy('鏡像の衛士（闇）', { x: 15, y: 18 }, 'dark', 4, 'line', { families: ['exp'], role: 'breaker', hp: 125, species: 'oni' }),
+    // 亡霊魔術師 III（迂回型・高難度：同極すり抜け）。family=abs/poly34（#46）
+    enemy('鏡像の射手（闇）', { x: -7, y: 23 }, 'dark', 5, 'abs', {
       families: ['poly34'],
       slipThrough: true, // 高難度：結界と同極に合わせてすり抜ける
       castZField: sinCosZ(-1),
+      hp: 120,
+      species: 'wraith',
     }),
-    enemy('鏡像の射手（光）', { x: 7, y: 23 }, 'light', 5, 'wave', {
+    enemy('鏡像の射手（光）', { x: 7, y: 23 }, 'light', 5, 'abs', {
       families: ['poly34'],
       slipThrough: true,
       castZField: sinCosZ(1),
+      hp: 120,
+      species: 'wraith',
+    }),
+    // ゴーレム II（守護型・中難度：方向づけられた場を初導入・単色）＝新設。LVL5 相当 HP
+    enemy('鏡守のゴーレム', { x: 0, y: 26 }, 'light', 5, 'spiral', {
+      role: 'guardian',
+      directedAura: true, // 脅威方向に強度を偏らせる（#47・全周 |z|≤zRef）
+      hp: 160,
+      species: 'golem',
     }),
   ],
-  // 鏡像の列柱（左＝光/右＝闇）＋割れない鏡枠（06b §6）
+  // 鏡像の列柱（左＝光/右＝闇）＋割れない鏡枠＋翼壁（06b §6・#50）
   obstacles: [
     ...colonnade(-18, 0, 3.6, -1, 4, ['light']),
     ...colonnade(3.6, 18, 3.6, -1, 4, ['dark']),
     pillar(-18, 8, 3, 'neutral', 'unbreakable'), // 割れない鏡枠・左
     pillar(18, 8, 3, 'neutral', 'unbreakable'), // 割れない鏡枠・右
+    wingWall(21, 30, -1, 4), // 翼壁・右（鏡枠の外側から境界近くまで・#50）
+    wingWall(-30, -21, -1, 4), // 翼壁・左
   ],
   introText: [
     '磨かれた深層の広間。左半分は光、右半分は闇――自分たちを映したような鏡像の衛士と射手が、四方から迫る。',
@@ -325,20 +370,29 @@ const stage5: Stage = {
 const stage6: Stage = {
   id: 'stage-6',
   name: '第六の間 ― 封印帯',
+  rField: 36, // #49：翼壁で3段壁と光柱のy範囲を覆う広め
   enemies: [
-    // 高難度守護型：交互張り（ターンごとに光⇔闇のオーラを張り替える）
-    enemy('封印の番人', { x: 0, y: 23 }, 'light', 6, 'wave', { role: 'guardian', alternatingAura: true }),
-    // 崩し手3体（04b §4b.4b：結界で防がなければ instability が確実に積む）。family と位相を変えて撃たせる
-    enemy('崩し手・弧', { x: -13, y: 19 }, 'dark', 6, 'arc', { role: 'ruptor', fireEvery: 2, fireOffset: 1 }),
-    enemy('崩し手・波', { x: 13, y: 19 }, 'light', 6, 'wave', { role: 'ruptor', fireEvery: 2, fireOffset: 0 }),
-    enemy('崩し手・捻れ', { x: 0, y: 16 }, 'dark', 6, 'poly34', { role: 'ruptor', fireEvery: 2, fireOffset: 1 }),
+    // ゴーレム III（守護型・最上位：交互張り＋方向づけ併用）。HP180
+    enemy('封印の番人', { x: 0, y: 23 }, 'light', 6, 'spiral', {
+      role: 'guardian',
+      alternatingAura: true, // ターンごとに光⇔闇のオーラを張り替える
+      directedAura: true, // 脅威方向に強度偏重（併用・#47）
+      hp: 180,
+      species: 'golem',
+    }),
+    // 紅亡霊 II（崩し手3体・誘発）。family を個体ごとに abs/arc/poly34 と変える（#46）。位相もずらす
+    enemy('崩し手・弧', { x: -13, y: 19 }, 'dark', 6, 'arc', { role: 'ruptor', fireEvery: 2, fireOffset: 1, hp: 130, species: 'redWraith' }),
+    enemy('崩し手・折れ', { x: 13, y: 19 }, 'light', 6, 'abs', { role: 'ruptor', fireEvery: 2, fireOffset: 0, hp: 130, species: 'redWraith' }),
+    enemy('崩し手・捻れ', { x: 0, y: 16 }, 'dark', 6, 'poly34', { role: 'ruptor', fireEvery: 2, fireOffset: 1, hp: 130, species: 'redWraith' }),
   ],
-  // 3段重ねの封印壁＋砕けぬ封印核＋取っ掛かりの光柱（06b §6）
+  // 3段重ねの封印壁＋砕けぬ封印核＋取っ掛かりの光柱＋翼壁（06b §6・#50）
   obstacles: [
     wall(-18, 18, 1, 3, 'dark'), // 分厚い封印壁（3段・光で崩せる）
     block(-2, 1, 3, 2, 'neutral', 'unbreakable'), // 砕けぬ封印核（正面突破不可）
     pillar(-17, -3, 2, 'light'), // 左の光柱
     pillar(17, -3, 2, 'light'), // 右の光柱
+    wingWall(21, 30, -6, 6), // 翼壁・右（光柱(x=±17)と重ならず境界近くまで・#50）
+    wingWall(-30, -21, -6, 6), // 翼壁・左
   ],
   introText: [
     '三段重ねの封印壁が回廊を塞ぎ、中央には決して砕けぬ封印核。封印の番人と、様子のおかしい崩し手が三体。',
@@ -359,9 +413,10 @@ const stage7: Stage = {
   id: 'stage-7',
   name: '第七の間 ― 大広間',
   boss: true,
+  rField: 35, // #49：上層は広く（翼壁を境界近くまで）。フェーズで縮小
   enemies: [
-    // 多重詠唱（#44）：火力型/迂回型のプールから2本（フェーズ3で3本）を独立に計画して同時発射
-    enemy('魔導書の守護者', { x: 0, y: 23 }, 'light', 7, 'wave', {
+    // 多重詠唱（#44）：火力型枠 line/arc/exp・迂回型枠 abs/arc/poly34 を弾ごとに独立選択（#46）。families に集約
+    enemy('魔導書の守護者', { x: 0, y: 23 }, 'light', 7, 'abs', {
       hp: 380,
       hitboxRadius: 3.6,
       families: ['line', 'arc', 'exp', 'poly34'],
@@ -369,27 +424,34 @@ const stage7: Stage = {
       castCount: 2,
       patternPool: ['breaker', 'attacker'],
     }),
-    enemy('守護者の眷属（迂回）', { x: -15, y: 17 }, 'dark', 6, 'spiral', {
+    // 亡霊魔術師 IV（眷属・迂回型・高難度）。family=abs/poly34（#46）
+    enemy('守護者の眷属（迂回）', { x: -15, y: 17 }, 'dark', 6, 'abs', {
       hp: 130,
       families: ['poly34'],
       slipThrough: true,
       castZField: sinCosZ(-1),
+      species: 'wraith',
     }),
+    // 鋼鬼 III（眷属・火力型）。family=line/arc
     enemy('守護者の眷属（火力）', { x: 15, y: 17 }, 'light', 6, 'line', {
       hp: 130,
       families: ['arc'],
       role: 'breaker',
+      species: 'oni',
     }),
   ],
-  // 上層：列柱＋守護者の盾（広く、隠れる場所が多い）
+  // 上層：列柱＋守護者の盾＋翼壁（広く、隠れる場所が多い・#50）
   obstacles: [
     ...colonnade(-18, 18, 3.6, -2, 5, ['light', 'dark']),
     block(-4, -3, 4, 3, 'light'), // 守護者の盾（normal）
+    wingWall(18, 27, -4, 7), // 翼壁・右（列柱のy範囲を覆う・#50）
+    wingWall(-27, -18, -4, 7), // 翼壁・左
   ],
-  // HPフェーズ（#45）：66%/33% で床が崩れ、下の階層へ。最下層は障害物なし・ボス単独・3同時発射
+  // HPフェーズ（#45）：66%/33% で床が崩れ、下の階層へ。rField も段階的に縮小（#49・ボス y=23 を残すため下限は 24）。
+  // 最下層は障害物なし・ボス単独・3同時発射・翼壁不要（境界が近く迂回み抜けが自然に消える・§5.6）
   bossPhases: [
-    { hpBelow: 0.66, castCount: 2, obstacles: midArena() },
-    { hpBelow: 0.33, castCount: 3, obstacles: [], cullMinions: true },
+    { hpBelow: 0.66, castCount: 2, obstacles: midArena(), rField: 28 },
+    { hpBelow: 0.33, castCount: 3, obstacles: [], cullMinions: true, rField: 24 },
   ],
   introText: [
     '遺跡の最も深い大広間。列柱と巨大な盾。その中心に――古代式の魔導書を守る、守護者が浮かんでいた。両脇に二体の眷属を従えて。',

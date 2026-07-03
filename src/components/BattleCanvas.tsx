@@ -1,5 +1,16 @@
 import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react'
-import type { Ally, CarveBurst, DamagePopup, Disc, Enemy, Obstacle, Vec2, ZPoint } from '../game/types'
+import type {
+  Ally,
+  Attribute,
+  CarveBurst,
+  DamagePopup,
+  Disc,
+  Enemy,
+  EnemySpecies,
+  Obstacle,
+  Vec2,
+  ZPoint,
+} from '../game/types'
 import { FIELD } from '../data/constants'
 import { toScreen, toMath, type Viewport } from '../game/coords'
 import {
@@ -17,8 +28,11 @@ import {
   drawBulletDissipation,
   drawConcealVeil,
   drawEnemyConceal,
+  drawEnemyDeath,
+  drawBossCollapse,
   strokeZPath,
   powerSizeFrac,
+  type BossView,
   type SceneParams,
 } from '../render/draw'
 import { ringAverageAttr } from '../game/orbit'
@@ -95,6 +109,20 @@ const CLASH_DIST = 1.6
 /** 周回が壁/魔法に負けて霧散する演出の持続（ms・#34）。接触の瞬間から散り始める */
 const DISSIPATE_MS = 520
 
+/**
+ * このターンに撃破された敵の消滅演出（05c §6.5・#46）。当たり判定には影響しない描画情報のみ。
+ * 撃破された位置で species/element/tier 別の消滅アニメを再生する。boss は専用の最終崩壊。
+ */
+export interface EnemyDeath {
+  id: string
+  pos: Vec2
+  species: EnemySpecies
+  element: Attribute
+  tier: 1 | 2 | 3
+  hitboxRadius: number
+  boss?: boolean
+}
+
 export interface ResolveAnimation {
   bullets: AnimBullet[]
   orbits: AnimOrbit[]
@@ -102,7 +130,16 @@ export interface ResolveAnimation {
   clashes?: { pos: Vec2; power: number }[]
   /** ダメージ／回復の数値表示（#42） */
   popups?: DamagePopup[]
+  /** このターン撃破された敵の消滅演出（05c §6.5・#46） */
+  deaths?: EnemyDeath[]
+  /** ボスの多段外見（#51）に渡す状態（bossPhase・finale・outcome） */
+  bossView?: BossView
 }
+
+/** 撃破演出の持続（ms・#46）。被弾フラッシュの後に消滅アニメを見せる余韻。 */
+const DEATH_MS = 900
+/** ボスの最終崩壊の持続（ms・#51）。装甲落下→粒子ほどけ→天秤水平まで長めに引き伸ばす。 */
+const BOSS_COLLAPSE_MS = 2200
 
 /** 数値ポップの色（属性色／暴発=白／回復=緑・#42）。 */
 function popupColor(kind: DamagePopup['kind']): string {
@@ -128,6 +165,8 @@ interface Props {
   allies: Ally[]
   enemies: Enemy[]
   obstacles: Obstacle[]
+  /** 現在の場の半径（#49・06b §5.5）。面/ボスフェーズで可変。ビューポート倍率に使う。未指定は既定 rField */
+  rField?: number
   activeAllyId?: string | null
   playerPaths?: (ZPoint[] | null)[]
   /** 各味方の暴発（関数エラー）点。プレビューで赤い✕として可視化する（#30） */
@@ -228,13 +267,13 @@ function ptSpeed(pt: ZPoint, fallback: number): number {
 }
 
 /** 持続中の周回（#39）：薄いリング＋ゆっくり周回する粒で常時表示する。 */
-function drawStandingOrbit(ctx: CanvasRenderingContext2D, o: StandingOrbit, trailPhase: number): void {
+function drawStandingOrbit(ctx: CanvasRenderingContext2D, o: StandingOrbit, trailPhase: number, vp: Viewport): void {
   const ring = o.ring
   const len = ring.length
   if (len < 2) return
   ctx.save()
   ctx.globalAlpha = 0.26
-  strokeZPath(ctx, ring, VP)
+  strokeZPath(ctx, ring, vp)
   ctx.restore()
   const tl = ringTimeline(ring) // #60：点ごとの速度で粒の進みを変える
   const N = 16
@@ -242,7 +281,7 @@ function drawStandingOrbit(ctx: CanvasRenderingContext2D, o: StandingOrbit, trai
     const idx = phaseToIndex(tl, n / N + trailPhase * 0.03)
     const pt = ring[idx]
     if (!pt) continue
-    drawParticle(ctx, pt.pos, zColor(pt.z), VP, trailPhase * 2 + n, powerSizeFrac(ptSpeed(pt, o.speed), pt.z))
+    drawParticle(ctx, pt.pos, zColor(pt.z), vp, trailPhase * 2 + n, powerSizeFrac(ptSpeed(pt, o.speed), pt.z))
   }
 }
 
@@ -256,8 +295,11 @@ export default function BattleCanvas(props: Props) {
   const doneRef = useRef(props.onAnimationDone)
   doneRef.current = props.onAnimationDone
 
+  // ビューポート（#49・06b §5.5）：場の半径 props.rField で倍率が決まる。面/フェーズで可変。
+  const vp: Viewport = { ...VP, unitsRadius: props.rField ?? FIELD.rField }
+
   const staticParams: SceneParams = {
-    vp: VP,
+    vp,
     allies: props.allies,
     enemies: props.enemies,
     obstacles: props.obstacles,
@@ -284,25 +326,25 @@ export default function BattleCanvas(props: Props) {
       const drawComposeFrame = (trailPhase: number) => {
         lastTrailRef.current = trailPhase
         drawScene(ctx, { ...staticParams, trailPhase })
-        for (const o of standing) drawStandingOrbit(ctx, o, trailPhase)
+        for (const o of standing) drawStandingOrbit(ctx, o, trailPhase, vp)
         // 自陣の闇結界は内側を暗くぼかす（自己視認低下・#39）
         for (const o of standing) {
-          if (o.owner !== 'enemy' && ringAverageAttr(o.ring) === 'dark') drawConcealVeil(ctx, o.ring, VP)
+          if (o.owner !== 'enemy' && ringAverageAttr(o.ring) === 'dark') drawConcealVeil(ctx, o.ring, vp)
         }
         // 敵の闇結界の視認阻害（#61/#62）：1枚=ギリギリ見える／2枚重なり=全く見えない黒。まとめて処理
         const enemyDarkRings = standing
           .filter((o) => o.owner === 'enemy' && ringAverageAttr(o.ring) === 'dark')
           .map((o) => o.ring)
-        drawEnemyConceal(ctx, enemyDarkRings, VP)
+        drawEnemyConceal(ctx, enemyDarkRings, vp)
         // 発射方向インジケータ（#47）：active ally から θ 方向へ矢印
         if (props.aimAngle !== undefined && props.activeAllyId) {
           const a = props.allies.find((al) => al.id === props.activeAllyId)
-          if (a && a.hp > 0) drawAimArrow(ctx, a.pos, props.aimAngle)
+          if (a && a.hp > 0) drawAimArrow(ctx, a.pos, props.aimAngle, vp)
         }
         // 通過点フィットの選択点を✛で表示（#46）
-        drawFitPoints(ctx, props.fitPoints)
+        drawFitPoints(ctx, props.fitPoints, vp)
         // 点ピック中は指の上に拡大鏡（ルーペ）を出す（#49：指で点が隠れない）
-        if (pickPosRef.current) drawPickLoupe(ctx, pickPosRef.current)
+        if (pickPosRef.current) drawPickLoupe(ctx, pickPosRef.current, vp)
       }
       // ポインタ移動時に手動で再描画できるよう関数を保持
       composeDrawRef.current = () => drawComposeFrame(lastTrailRef.current)
@@ -353,7 +395,14 @@ export default function BattleCanvas(props: Props) {
           : 0
     // ダメージ／回復の数値を最後まで見せる余韻を確保する（#42）
     const hasPopups = (anim.popups?.length ?? 0) > 0
-    const tailMs = hasPopups ? Math.max(baseTail, POPUP_MS + 300) : baseTail
+    const popupTail = hasPopups ? Math.max(baseTail, POPUP_MS + 300) : baseTail
+    // 撃破演出（#46/#51）の余韻：フラッシュ（余韻の頭）に続けて消滅アニメを見せる。
+    const deaths = anim.deaths ?? []
+    const hasBossDeath = deaths.some((d) => d.boss)
+    const deathTail = deaths.length
+      ? Math.max(popupTail, IMPACT_TAIL_MS + (hasBossDeath ? BOSS_COLLAPSE_MS : DEATH_MS))
+      : popupTail
+    const tailMs = deathTail
     const realMs = flightMs + tailMs
 
     // 被弾フラッシュ：対象IDごとに「反応を開始した実時刻」を記録し、以後減衰させる（#20）
@@ -365,6 +414,8 @@ export default function BattleCanvas(props: Props) {
     // 壁を削った破片：carve ごとに「弾が到達した実時刻」を記録し、一定時間で散って消す（#45）。
     // 弧長だけで判定すると弾が壁で止まった地点に破片が永久に残る不具合があった。
     const carveStartByKey: Record<string, number> = {}
+    // 撃破演出（#46/#51）：敵IDごとに「消滅を開始した実時刻」を記録し、以後 progress で進める。
+    const deathStartById: Record<string, number> = {}
 
     // ダメージ／回復の数値（#42）：同じ対象・契機のポップは縦に積む（重なり防止）
     const popups = anim.popups ?? []
@@ -446,6 +497,17 @@ export default function BattleCanvas(props: Props) {
         if (t >= 0 && t < 1) flash[id] = 1 - t
       }
 
+      // 撃破演出（#46/#51）：致命弾が届いた瞬間（フラッシュ開始）に消滅アニメを開始する。
+      // フラッシュが取れない（掃射など）撃破は、飛行終盤（e>=0.9）を保険に開始する。
+      for (const d of deaths) {
+        if (deathStartById[d.id] !== undefined) continue
+        const flashStart = flashStartByTarget[d.id]
+        if (flashStart !== undefined) deathStartById[d.id] = flashStart
+        else if (e >= 0.9) deathStartById[d.id] = elapsed
+      }
+      // 消滅が始まった敵は生存スプライトを隠す（消滅アニメへ譲る・#46）
+      const hideEnemyIds = new Set<string>(Object.keys(deathStartById))
+
       // 暴発のステージ全体演出（#41）：揺れの強さ（爆発直後が最強→減衰）と破片の落下進行
       let mfShake = 0
       let mfProgress = 0
@@ -478,11 +540,24 @@ export default function BattleCanvas(props: Props) {
         showZField: false,
         flash,
         shakePhase: elapsed * 0.05,
+        bossView: anim.bossView,
+        hideEnemyIds,
       })
+
+      // 撃破演出（05c §6.5・#46/#51）：開始済みの敵を消滅アニメで描く（当たり判定には無関係）
+      for (const d of deaths) {
+        const dStart = deathStartById[d.id]
+        if (dStart === undefined) continue
+        const dur = d.boss ? BOSS_COLLAPSE_MS : DEATH_MS
+        const dp = (elapsed - dStart) / dur
+        if (dp < 0 || dp >= 1) continue
+        if (d.boss) drawBossCollapse(ctx, d.pos, d.hitboxRadius, dp, vp)
+        else drawEnemyDeath(ctx, d.pos, d.hitboxRadius, d.species, d.element, d.tier, dp, vp)
+      }
 
       // 闇の周回は内側を暗くぼかす（#39：プレイヤー視点の視認性低下）。霧散した周回は幕を外す
       for (const o of anim.orbits) {
-        if (!o.broken && ringAverageAttr(o.ring) === 'dark') drawConcealVeil(ctx, o.ring, VP)
+        if (!o.broken && ringAverageAttr(o.ring) === 'dark') drawConcealVeil(ctx, o.ring, vp)
       }
 
       // 軌道型リング：ゆっくり周回（#24）。壁/魔法に負けた周回は接触の瞬間から霧散（#34）
@@ -512,9 +587,9 @@ export default function BattleCanvas(props: Props) {
           if (dStart !== undefined) {
             // 接触後：周回せず、一度きり外へ散って消える
             const dp = Math.min(0.999, (elapsed - dStart) / DISSIPATE_MS)
-            drawOrbitDissipation(ctx, ring, dp, VP)
+            drawOrbitDissipation(ctx, ring, dp, vp)
             for (const cv of o.carves) {
-              if (dp < 0.6) drawCarveBurst(ctx, cv.pos, cv.r + 1.2, cv.attr, dp / 0.6, VP)
+              if (dp < 0.6) drawCarveBurst(ctx, cv.pos, cv.r + 1.2, cv.attr, dp / 0.6, vp)
             }
             continue
           }
@@ -524,7 +599,7 @@ export default function BattleCanvas(props: Props) {
         // 通常の周回（存続中／霧散前）
         ctx.save()
         ctx.globalAlpha = 0.28
-        strokeZPath(ctx, ring, VP)
+        strokeZPath(ctx, ring, vp)
         ctx.restore()
         // 複数パーティクルを並べて周回する。点ごとの速度で進みを変える（#60：速い区間は素早く抜ける）
         const N = 18
@@ -551,11 +626,11 @@ export default function BattleCanvas(props: Props) {
             if (tp) trail.push(tp.pos)
           }
           ctx.globalAlpha = 0.5
-          drawTrail(ctx, trail, col, VP)
+          drawTrail(ctx, trail, col, vp)
           ctx.globalAlpha = 1
           // 威力（=その点のリング速度×強度×累積倍率）で粒の大きさを変える（#21/#60/#63）
           const sizeScale = powerSizeFrac(ptSpeed(pt, o.speed ?? 0) * mult, pt.z)
-          drawParticle(ctx, pt.pos, col, VP, trailPhase * 2 + n, sizeScale)
+          drawParticle(ctx, pt.pos, col, vp, trailPhase * 2 + n, sizeScale)
         }
       }
 
@@ -577,20 +652,20 @@ export default function BattleCanvas(props: Props) {
           const traveled: ZPoint[] = b.samples
             .slice(0, idx + 1)
             .map((s) => ({ pos: s.pos, z: s.z }))
-          drawWaveTrail(ctx, traveled, VP, trailPhase, 0.95)
-          drawBullet(ctx, pos, z, VP, phase, b.samples[idx]?.speed ?? 0)
+          drawWaveTrail(ctx, traveled, vp, trailPhase, 0.95)
+          drawBullet(ctx, pos, z, vp, phase, b.samples[idx]?.speed ?? 0)
         }
         if (vanishing) {
           const last = b.samples[b.samples.length - 1]
           const traveled: ZPoint[] = b.samples.map((s) => ({ pos: s.pos, z: s.z }))
-          drawWaveTrail(ctx, traveled, VP, trailPhase, 0.6)
+          drawWaveTrail(ctx, traveled, vp, trailPhase, 0.6)
           const dp = Math.min(0.999, (elapsed - arrivalMs) / DISSIPATE_MS)
           const sizeFrac = Math.max(0.35, powerSizeFrac(0, last?.z ?? 0) || Math.min(1, Math.abs(last?.z ?? 0) / FIELD.sMax))
-          drawBulletDissipation(ctx, last?.pos ?? pos, last?.z ?? 0, dp, VP, sizeFrac)
+          drawBulletDissipation(ctx, last?.pos ?? pos, last?.z ?? 0, dp, vp, sizeFrac)
         }
         if (b.misfirePos && exploding) {
           const mp = Math.min(1, (elapsed - arrivalMs) / Math.max(1, realMs - arrivalMs))
-          drawMisfire(ctx, b.misfirePos, mp, VP)
+          drawMisfire(ctx, b.misfirePos, mp, vp)
         }
       })
 
@@ -605,7 +680,7 @@ export default function BattleCanvas(props: Props) {
           const key = `${i}-${j}`
           if (carveStartByKey[key] === undefined) carveStartByKey[key] = elapsed
           const cp = (elapsed - carveStartByKey[key]) / CARVE_BURST_MS
-          if (cp >= 0 && cp < 1) drawCarveBurst(ctx, cv.pos, cv.r, cv.attr, cp, VP)
+          if (cp >= 0 && cp < 1) drawCarveBurst(ctx, cv.pos, cv.r, cv.attr, cp, vp)
         }
       })
 
@@ -626,12 +701,12 @@ export default function BattleCanvas(props: Props) {
           if (start0 === undefined) return
           const cp = (elapsed - start0) / CLASH_MS
           const sizeFrac = Math.min(1, clash.power / (FIELD.sMax * FIELD.maxFlightSpeed))
-          if (cp >= 0 && cp < 1) drawClashSpark(ctx, pos, cp, VP, sizeFrac)
+          if (cp >= 0 && cp < 1) drawClashSpark(ctx, pos, cp, vp, sizeFrac)
         })
       }
 
       // 暴発：上空から遺跡の破片が降ってくる（ステージ全体・揺れの中で・#41）
-      if (mfProgress > 0 && mfProgress < 1) drawFallingDebris(ctx, VP, mfProgress)
+      if (mfProgress > 0 && mfProgress < 1) drawFallingDebris(ctx, vp, mfProgress)
 
       ctx.restore() // ステージ全体シェイクの translate を戻す
 
@@ -646,7 +721,7 @@ export default function BattleCanvas(props: Props) {
         start += popupOrd[i] * 110 // 積み重ねは少し遅らせて出す
         const t = (elapsed - start) / POPUP_MS
         if (t < 0 || t >= 1) continue
-        const sp = toScreen(p.pos, VP)
+        const sp = toScreen(p.pos, vp)
         const rise = t * 40 + popupOrd[i] * 6 // 上へ昇る
         const alpha = t < 0.15 ? t / 0.15 : 1 - (t - 0.15) / 0.85 // フェードイン→アウト
         const size = Math.min(40, 14 + p.amount * 0.22) // 大きさは量に依存
@@ -679,6 +754,7 @@ export default function BattleCanvas(props: Props) {
     props.standingOrbits,
     props.fitPoints,
     props.aimAngle,
+    props.rField,
   ])
 
   // ポインタ位置を数学座標へ変換（内部解像度と表示サイズの差を補正）
@@ -689,7 +765,7 @@ export default function BattleCanvas(props: Props) {
     if (rect.width === 0 || rect.height === 0) return null
     const px = ((e.clientX - rect.left) * INTERNAL) / rect.width
     const py = ((e.clientY - rect.top) * INTERNAL) / rect.height
-    return toMath({ x: px, y: py }, VP)
+    return toMath({ x: px, y: py }, vp)
   }
   const redrawCompose = () => composeDrawRef.current?.()
 
@@ -746,8 +822,8 @@ export default function BattleCanvas(props: Props) {
 }
 
 /** 点ピック中の拡大鏡（ルーペ・#49）。指の少し上に、指の下の盤面を拡大して見せる。 */
-function drawPickLoupe(ctx: CanvasRenderingContext2D, pos: Vec2): void {
-  const fs = toScreen(pos, VP)
+function drawPickLoupe(ctx: CanvasRenderingContext2D, pos: Vec2, vp: Viewport): void {
+  const fs = toScreen(pos, vp)
   const R = 70
   const zoom = 2.6
   const gap = 40
@@ -806,11 +882,11 @@ function drawPickLoupe(ctx: CanvasRenderingContext2D, pos: Vec2): void {
 }
 
 /** 発射方向（θ）の矢印を active ally から伸ばす（#47）。 */
-function drawAimArrow(ctx: CanvasRenderingContext2D, from: Vec2, angle: number): void {
+function drawAimArrow(ctx: CanvasRenderingContext2D, from: Vec2, angle: number, vp: Viewport): void {
   const LEN = 7 // 数学ユニット
   const tip = { x: from.x + Math.cos(angle) * LEN, y: from.y + Math.sin(angle) * LEN }
-  const a = toScreen(from, VP)
-  const b = toScreen(tip, VP)
+  const a = toScreen(from, vp)
+  const b = toScreen(tip, vp)
   ctx.save()
   ctx.strokeStyle = '#ffd56b'
   ctx.fillStyle = '#ffd56b'
@@ -835,11 +911,11 @@ function drawAimArrow(ctx: CanvasRenderingContext2D, from: Vec2, angle: number):
 }
 
 /** 通過点フィットで選んだ点を✛＋連番で表示する（#46）。 */
-function drawFitPoints(ctx: CanvasRenderingContext2D, points?: Vec2[]): void {
+function drawFitPoints(ctx: CanvasRenderingContext2D, points: Vec2[] | undefined, vp: Viewport): void {
   if (!points || points.length === 0) return
   ctx.save()
   for (let i = 0; i < points.length; i++) {
-    const s = toScreen(points[i], VP)
+    const s = toScreen(points[i], vp)
     ctx.strokeStyle = '#5ad1ff'
     ctx.lineWidth = 2
     ctx.shadowColor = '#5ad1ff'

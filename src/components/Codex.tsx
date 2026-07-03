@@ -3,7 +3,32 @@ import { ROTATE_PRESETS, POLAR_PRESETS, defaultCoeffs, buildTrajectory, type Pre
 import { sampleTrajectory, validPrefix } from '../game/coords'
 import { COLORS } from '../render/theme'
 import { STAGES } from '../data/stages'
-import type { Enemy } from '../game/types'
+import { speciesOf } from '../render/species'
+import type { Enemy, EnemySpecies } from '../game/types'
+
+/** 種族の説明（05c §0/§6：モチーフ・見分け方・ティアで変わる点の一言）。 */
+const SPECIES_INFO: Record<EnemySpecies, { name: string; desc: string }> = {
+  proto: {
+    name: '原型（石像）',
+    desc: 'まだどの種族にも分化していない共通の祖先。無装飾の石塊。第1面のみ。',
+  },
+  oni: {
+    name: '鋼鬼（こうき）',
+    desc: '武骨な鎧と破城槌の実体。直線的で機動力が高い。ティアで装甲・角・得物が大型化する。',
+  },
+  wraith: {
+    name: '亡霊魔術師',
+    desc: '半透明ローブの幽体。ふわり曲がって進む。ティアで輪郭が濃く・紋様が複雑になる。',
+  },
+  redWraith: {
+    name: '紅亡霊（こうぼうれい）',
+    desc: '亡霊の亜種。体に紅い亀裂が走り明滅する＝暴発の危険。ティアで亀裂が増え明滅が速まる。',
+  },
+  golem: {
+    name: 'ゴーレム',
+    desc: '同心円紋様の石塊。目が現在の結界の属性色（光=金／闇=紫）に光る。ティアで輪が一重→三重に増える。',
+  },
+}
 
 /** 敵の得意関数（系統）ラベル（#23） */
 const FAMILY_LABEL: Record<Enemy['family'], string> = {
@@ -13,6 +38,7 @@ const FAMILY_LABEL: Record<Enemy['family'], string> = {
   spiral: '渦',
   exp: '昇り',
   poly34: '捻れ',
+  abs: '折れ',
 }
 
 /** 図鑑の敵カタログ：全ステージの敵を名前で一意化（出現順）。 */
@@ -22,6 +48,8 @@ interface EnemyEntry {
   family: Enemy['family']
   maxHp: number
   role?: Enemy['role']
+  species: EnemySpecies
+  boss?: boolean
 }
 const ENEMY_CATALOG: EnemyEntry[] = (() => {
   const seen = new Set<string>()
@@ -30,7 +58,15 @@ const ENEMY_CATALOG: EnemyEntry[] = (() => {
     for (const e of s.enemies) {
       if (seen.has(e.name)) continue
       seen.add(e.name)
-      out.push({ name: e.name, element: e.element, family: e.family, maxHp: e.maxHp, role: e.role })
+      out.push({
+        name: e.name,
+        element: e.element,
+        family: e.family,
+        maxHp: e.maxHp,
+        role: e.role,
+        species: speciesOf(e),
+        boss: e.boss,
+      })
     }
   }
   return out
@@ -55,15 +91,18 @@ function EnemyCard({ entry, seen }: { entry: EnemyEntry; seen: boolean }) {
       </div>
     )
   }
+  const sp = entry.boss ? null : SPECIES_INFO[entry.species]
   return (
     <div className={`codex-card enemy-card ${entry.element}`}>
       <div>
         <strong>{entry.name}</strong>
+        {sp && <span className="formula">{sp.name}</span>}
       </div>
       <div className="desc">
         属性：{elementLabel(entry.element)}／得意：{FAMILY_LABEL[entry.family]}／戦：
         {roleLabel(entry.role)}／HP {entry.maxHp}
       </div>
+      {sp && <div className="desc">{sp.desc}</div>}
     </div>
   )
 }
