@@ -201,12 +201,15 @@ export function parametrizeConstants(expr: string): { template: string; original
     return null
   }
   if (!analyze(node)) return null
-  // べき指数の位置にある定数（`^` の右側）は係数化から除外する
+  // べき指数の位置にある定数（`^` の右側の部分木すべて）は係数化から除外する。
+  // 直下の定数だけでなく `x^(2)`（括弧）や `x^-1`（単項マイナス）内の定数も対象にする
   const exponentConsts = new Set<MathNode>()
-  node.traverse((n: MathNode, _path: string, parent: MathNode | null) => {
-    if (parent && opOf(parent) === '^') {
-      const args = (parent as unknown as { args: MathNode[] }).args
-      if (args && args[1] === n && n.type === 'ConstantNode') exponentConsts.add(n)
+  node.traverse((n: MathNode) => {
+    if (opOf(n) === '^') {
+      const args = (n as unknown as { args: MathNode[] }).args
+      args?.[1]?.traverse((inner: MathNode) => {
+        if (inner.type === 'ConstantNode') exponentConsts.add(inner)
+      })
     }
   })
   const originals: number[] = []

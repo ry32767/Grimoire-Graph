@@ -674,11 +674,14 @@ export default function BattleCanvas(props: Props) {
     props.playerPaths,
     props.misfirePoints,
     props.ghostPaths,
+    props.ghostMisfires,
     props.zField,
     props.showZField,
     props.standingOrbits,
     props.fitPoints,
     props.aimAngle,
+    props.anomaly,
+    props.misfireBand,
   ])
 
   // ポインタ位置を数学座標へ変換（内部解像度と表示サイズの差を補正）

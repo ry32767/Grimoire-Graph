@@ -67,7 +67,7 @@
 |---|---|---|---|---|---|---|---|
 | 渦の番兵 | dark | 4 | 150 | spiral | guardian（基礎・闇オーラ） | (-14, 18) | |
 | 坑道の弓手 | light | 3 | 130 | spiral＋arc | attacker | (0, 23) | |
-| 崩し手 | dark | 5 | 165 | wave | **ruptor** | (14, 18) | `ruptorTarget='obstacles'`（壁狙い）・`fireEvery=2, fireOffset=1`（1・3・5…ターン目） |
+| 崩し手 | dark | 5 | 165 | wave | **ruptor** | (14, 18) | `ruptorTarget='obstacles'`（**最初の1発のみ壁狙い**・解決後は味方狙いへ・05b §5.3）・`fireEvery=2, fireOffset=1`（1・3・5…ターン目） |
 
 - 初の敵暴発が解決すると、RUPTOR_DEMO＋図鑑補足のオーバーレイが一度だけ出る（[04b](04b-misfire-instability.md) §4b.4b）。
 

@@ -230,6 +230,7 @@ export default function App() {
           battle.allies,
           battle.obstacles,
           (battle.orbits ?? []).filter((o) => o.owner === 'player').map((o) => o.ring),
+          battle.enemies,
         ).map((plan) => ({
           path: enemyFlight(plan.trajectory, e.castInitialSpeed).path,
           misfire: plan.misfirePos ?? null,
@@ -761,7 +762,7 @@ export default function App() {
               zField={composing ? activeZField ?? undefined : undefined}
               showZField={composing}
               standingOrbits={composing ? standingOrbits : undefined}
-              ghostPaths={ghostPaths}
+              ghostPaths={composing ? ghostPaths : undefined}
               ghostMisfires={composing ? ghostMisfires : undefined}
               anomaly={anomalyLevel(instability)}
               misfireBand={varianceOf(instability) > 0 ? misfireRadiusBand(instability) : undefined}

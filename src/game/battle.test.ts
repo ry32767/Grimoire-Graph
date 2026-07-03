@@ -104,3 +104,22 @@ describe('状態異常のターン処理', () => {
     expect(prep.impairedAllyIds).toContain('a')
   })
 })
+
+describe('壁狙いデモの崩し手（#42・06 第4面）', () => {
+  it('最初の1発を解決したら以後は味方狙い（ruptorTarget が allies へ切り替わる）', () => {
+    const demo: Enemy = {
+      ...enemy('r', { x: 0, y: 12 }, 100),
+      role: 'ruptor',
+      family: 'wave',
+      ruptorTarget: 'obstacles',
+    }
+    const s0 = createBattleState(stage([demo]), 0, party(ally('a', { x: 0, y: -12 })))
+    // 1ターン目：壁狙いのまま発射 → 解決後に allies へ切り替わる
+    const r1 = resolveAllyCasts(s0, [], ['r'])
+    expect(r1.state.enemies[0].ruptorTarget).toBe('allies')
+    // 発射しなかったターンでは切り替わらない
+    const s1 = createBattleState(stage([demo]), 0, party(ally('a', { x: 0, y: -12 })))
+    const r2 = resolveAllyCasts(s1, [], [])
+    expect(r2.state.enemies[0].ruptorTarget).toBe('obstacles')
+  })
+})

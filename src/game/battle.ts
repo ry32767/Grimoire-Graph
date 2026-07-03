@@ -162,10 +162,18 @@ export function resolveAllyCasts(
     misfireRoll: opts?.misfireRoll,
   })
 
+  // 暴発デモ（#42／06 第4面）：壁狙いの崩し手は「最初の1発だけ」壁を狙い、
+  // 発射を解決したら以後は通常の味方狙いへ切り替える（初出ステージの顔見せ演出）。
+  const enemies = resolution.enemies.map((e) =>
+    e.ruptorTarget === 'obstacles' && castingEnemyIds.includes(e.id)
+      ? { ...e, ruptorTarget: 'allies' as const }
+      : e,
+  )
+
   let next: BattleState = {
     ...state,
     allies: resolution.allies,
-    enemies: resolution.enemies,
+    enemies,
     obstacles: resolution.obstacles,
     orbits: resolution.orbits,
     turn: state.turn + 1,

@@ -55,6 +55,15 @@ describe('係数の自動検出（数値リテラル）', () => {
     expect(spec.params.length).toBe(0)
   })
 
+  it('括弧つき・符号つきのべき指数も係数化しない（x^(2)・x^-1）', () => {
+    // x^(2)：括弧の内側の 2 も指数として除外する
+    const paren = detectParams('3*x^(2)', 'x')!
+    expect(paren.params.map((p) => p.value)).toEqual([3])
+    // x^-1（=1/x 型）：単項マイナスの内側の 1 も除外する
+    const negExp = detectParams('2*x^-1', 'x')!
+    expect(negExp.params.map((p) => p.value)).toEqual([2])
+  })
+
   it('不正な式は null', () => {
     expect(detectParams('2*sin(', 'x')).toBeNull()
   })
