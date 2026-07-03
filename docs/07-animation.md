@@ -83,8 +83,10 @@ intensity = 1 − (elapsed − flashStart)/FLASH_MS    // 1→0 に減衰
 |---|---|---|
 | 暴発予告（崩し手） | `drawRuptureWarning` | 対詠の晒しフェーズで、計画された暴発点に赤い✕＋AoE 見込み範囲の**不安定に揺れる破線円**。予告がある間は作成フェーズもアニメーションループを回す |
 | 崩し手のロール記号 | `drawRoleMarker`（role='ruptor'） | 縁から外へ走る赤い稲妻状のひび×3本（family glyph とは別の専用警告） |
-| ステージの異変（04b 第1幕） | `drawAnomaly` | instability 段階に応じて：背景の横縞が波打つ（1）→床のひび（2）→画面周縁が赤黒く脈動（3）。数値は見せない |
-| 暴発半径のブレ帯 | `drawMisfireBand` | プレビューの暴発✕の周囲に min–max の二重破線リング（04b §4b.3） |
+| ステージの異変（04b） | `drawAnomaly` | 崩壊まで**残り1/3**（count≥misfireLimit×2/3）から開始。段階に応じて：亀裂＋背景の波打ち（1）→崩れかけ（2）→ひび増加＋画面周縁が赤黒く脈動（3）。数値は見せない |
+| 暴発半径のブレ帯 | `drawMisfireBand` | 崩壊まで**残り2/3**（count≥vStart）から、プレビューの暴発✕の周囲に min–max の二重破線リング（04b §4b.3） |
+| 暴発の激化（04b） | `BattleCanvas`（doom） | 崩壊へ近づくほど（doom=count/misfireLimit）暴発時の**画面の揺れ**（×(1+doom×1.5)）と**降る瓦礫の量**（×(1+doom×2)）が増える |
+| 破局（致死崩壊） | `BattleCanvas`（collapse） | **暴発の効果範囲がステージ全体を覆う**：原点中心・半径 rField の暴発渦（`drawMisfire`）＋強まる揺れ＋最大量の瓦礫＋終盤の白熱フェード（約3秒）→ ゲームオーバーへ |
 | 膜メーター | `Hud.tsx InstabilityMeter` | 初回崩壊後のみ表示。12 目盛り＋「あと N 回で崩壊」。残り2回以下で赤点滅 |
 | 物語オーバーレイ | `App.tsx storyOverlay` | RUPTOR_DEMO／COLLAPSE_FIRST／COLLAPSE_PHASE／COLLAPSE_FINAL をモーダルで一度ずつ表示 |
 | 敵の暴発爆発 | 既存 `drawMisfire` を敵弾にも適用 | `EnemyShot.misfired` のとき弾の終端で爆発（味方の暴発と同じ演出） |

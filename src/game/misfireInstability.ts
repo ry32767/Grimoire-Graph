@@ -32,14 +32,24 @@ export function misfireRadiusBand(count: number): { min: number; max: number } {
 }
 
 /**
- * ステージの異変の段階（第1幕・04b §4b.2）。0=静か／1=背景が波打つ／2=床のひび・ノイズ／3=崩壊目前。
- * 初回崩壊後もそのまま演出強度として使える（count 単調増）。
+ * ステージの異変の段階（04b §4b.2）。0=静か／1=亀裂が入り背景が波打つ／2=崩れかけ／3=崩壊目前。
+ * 崩壊（misfireLimit）まで**残り1/3**（count ≥ misfireLimit×2/3）でステージ表示の異変が始まり、
+ * 崩壊へ近づくほど段階が上がる（count 単調増）。それ以前の予兆は暴発半径のブレ（varianceOf）が担う。
  */
 export function anomalyLevel(count: number): 0 | 1 | 2 | 3 {
-  if (count <= 1) return 0
-  if (count <= 3) return 1
-  if (count <= INSTABILITY.firstCollapseThreshold - 1) return 2
-  return 3
+  const start = Math.ceil((INSTABILITY.misfireLimit * 2) / 3) // 残り1/3（既定=8）
+  if (count < start) return 0
+  if (count < INSTABILITY.misfireLimit - 2) return 1 // 亀裂（既定=8〜9）
+  if (count < INSTABILITY.misfireLimit - 1) return 2 // 崩れかけ（既定=10）
+  return 3 // 崩壊目前（既定=11〜）
+}
+
+/**
+ * 崩壊への接近度 0..1（count / misfireLimit・04b §4b.3）。
+ * 暴発時の画面の揺れ・降ってくる瓦礫の量は、崩壊へ近づくほどこの値でスケールする。
+ */
+export function collapseProximity(count: number): number {
+  return clamp01(count / INSTABILITY.misfireLimit)
 }
 
 /**
