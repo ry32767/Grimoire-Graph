@@ -676,6 +676,93 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     }
   }
 
+  // 暴発 AoE が範囲内の結界（周回リング）に与える最大威力（§3.5）。削り量はパリィと同じ係数
+  // （相手威力×parryLossScale）を暴発の最大威力＝Smax×maxFlightSpeed に適用する。
+  // 暴発は光闇両極を最大で帯びるため、相手属性に関係なく必ず作用する（敵味方の結界いずれも）。
+  const AOE_ORBIT_LOSS = FIELD.sMax * FIELD.maxFlightSpeed * COMBAT.parryLossScale
+  const AOE_CLASH_POWER = FIELD.sMax * FIELD.maxFlightSpeed
+  /**
+   * 暴発 AoE 内の結界（味方の新規／永続・敵の新規／永続）へパリィ相当の減速を最大威力で与える（§3.5）。
+   * AoE 内で最も速いリング点の速度を基準に AOE_ORBIT_LOSS を差し引き、残れば全体を同率で失速、0 なら霧散。
+   * 味方・敵どちらの暴発からも同じ処理で呼ぶ（敵味方無差別の AoE・#42）。
+   */
+  const blastOrbits = (center: Vec2, radius: number): void => {
+    const evalRing = (ring: RingPoint[]): { destroyed: boolean; factor: number; pos: Vec2 } | null => {
+      let vMax = -1
+      let pos: Vec2 | null = null
+      for (const rp of ring) {
+        if (dist(rp.pos, center) <= radius) {
+          const v = rp.speed ?? 0
+          if (v > vMax) {
+            vMax = v
+            pos = rp.pos
+          }
+        }
+      }
+      if (pos === null) return null // AoE 圏外
+      if (vMax <= 0) return { destroyed: true, factor: 0, pos } // 既に停止した結界も巻き込んで霧散
+      const newV = vMax - AOE_ORBIT_LOSS
+      return newV <= 0 ? { destroyed: true, factor: 0, pos } : { destroyed: false, factor: newV / vMax, pos }
+    }
+    // 味方の新規結界（今ターン張ったリング）
+    for (const p of plans) {
+      if (p.kind !== 'orbit' || !p.ring || p.ringBroken) continue
+      const r = evalRing(p.ring)
+      if (!r) continue
+      clashes.push({ pos: r.pos, power: AOE_CLASH_POWER })
+      if (r.destroyed) {
+        p.ringBroken = true
+        p.carves.push({ pos: r.pos, r: 1, arcLen: 0, attr: attributeOf(zfieldAt(p.cast.trajectory, r.pos)), obstacleId: '' })
+        log.push({ kind: 'orbit', text: `${nameOf(allies, p.cast.allyId)}の周回結界は暴発に呑まれて霧散した` })
+      } else {
+        p.ring = scaleRingSpeeds(p.ring, r.factor)
+        p.ringSpeed *= r.factor
+      }
+    }
+    // 味方の永続結界（張り直しでない持続分。同IDの新規は上で処理済み）
+    for (const ao of activeOrbits) {
+      if (ao.owner !== 'player' || destroyedOrbitIds.has(ao.id) || recastPlayerOrbitIds.has(ao.id)) continue
+      const r = evalRing(ao.ring as RingPoint[])
+      if (!r) continue
+      clashes.push({ pos: r.pos, power: AOE_CLASH_POWER })
+      if (r.destroyed) {
+        destroyedOrbitIds.add(ao.id)
+        log.push({ kind: 'orbit', text: `${nameOf(allies, ao.ownerId)}の結界は暴発に呑まれて消滅した` })
+      } else {
+        ao.ring = scaleRingSpeeds(ao.ring as RingPoint[], r.factor)
+        ao.ringSpeed *= r.factor
+      }
+    }
+    // 敵 guardian の新規結界
+    for (const gr of enemyRings) {
+      if (gr.broken) continue
+      const r = evalRing(gr.ring)
+      if (!r) continue
+      clashes.push({ pos: r.pos, power: AOE_CLASH_POWER })
+      if (r.destroyed) {
+        gr.broken = true
+        log.push({ kind: 'orbit', text: `${nameOf(enemies, gr.enemyId)}の結界は暴発に呑まれて霧散した` })
+      } else {
+        gr.ring = scaleRingSpeeds(gr.ring, r.factor)
+        gr.ringSpeed *= r.factor
+      }
+    }
+    // 敵の永続結界（張り直しでない持続分）
+    for (const ao of activeOrbits) {
+      if (ao.owner !== 'enemy' || destroyedOrbitIds.has(ao.id) || recastOrbitIds.has(ao.id)) continue
+      const r = evalRing(ao.ring as RingPoint[])
+      if (!r) continue
+      clashes.push({ pos: r.pos, power: AOE_CLASH_POWER })
+      if (r.destroyed) {
+        destroyedOrbitIds.add(ao.id)
+        log.push({ kind: 'orbit', text: `敵の結界は暴発に呑まれて消滅した` })
+      } else {
+        ao.ring = scaleRingSpeeds(ao.ring as RingPoint[], r.factor)
+        ao.ringSpeed *= r.factor
+      }
+    }
+  }
+
   // === 5. 攻撃：命中（発射型）／掃射（軌道型）／暴発 ===
   const allyShots: AllyShot[] = []
   for (const p of plans) {
@@ -789,6 +876,8 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
         const misArc = flight.samples[flight.samples.length - 1]?.arcLen ?? 0
         misfireCarveWalls(misfirePos, obstacles, p.carves, misArc, radius)
       }
+      // 暴発は AoE 内の結界にも最大威力でパリィ相当の減速を与える（§3.5）。敵味方の結界を問わず
+      blastOrbits(misfirePos, radius)
       misfires.push({ pos: misfirePos, owner: 'player' }) // 解決した暴発は膜を削る（04b §4b.1）
       log.push({
         kind: 'misfire',
@@ -978,6 +1067,8 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       const misArc = shot.flight.samples[shot.flight.samples.length - 1]?.arcLen ?? 0
       misfireCarveWalls(center, obstacles, shot.carves, misArc, radius)
     }
+    // 暴発は AoE 内の結界にも最大威力でパリィ相当の減速を与える（§3.5・敵味方問わず）
+    blastOrbits(center, radius)
     shot.misfired = true
     misfires.push({ pos: center, owner: 'enemy' })
     log.push({

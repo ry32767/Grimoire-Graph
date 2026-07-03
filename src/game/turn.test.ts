@@ -3,7 +3,7 @@ import { resolveTurn, traverseObstacles } from './turn'
 import { simulateFlight } from './physics'
 import { isSolidAt } from './obstacle'
 import { FIELD } from '../data/constants'
-import type { Ally, AllyCast, Enemy, Mechanics, Obstacle, Trajectory } from './types'
+import type { ActiveOrbit, Ally, AllyCast, Enemy, Mechanics, Obstacle, Trajectory } from './types'
 
 // 新モデル（#30）：属性は z 場（位置の関数）。テスト用の一定 z 場。
 const zLight: (x: number, y: number) => number = () => FIELD.zPeak // 光・最強（|z|>zRef＝減速して失速する）
@@ -661,5 +661,77 @@ describe('暴発の壁破壊（#41）', () => {
     const w2 = res.obstacles.find((o) => o.id === 'u')!
     expect(w2.carves.length).toBe(0)
     expect(isSolidAt(w2, { x: 0, y: 9 })).toBe(true) // 残る
+  })
+})
+
+describe('暴発は AoE 内の結界も最大威力で削る（§3.5）', () => {
+  // 真上へ直進し (0,~7) で暴発する軌道（AoE 半径5）
+  const upMisfire: Trajectory = {
+    mode: 'rotate',
+    g: () => 0,
+    angle: Math.PI / 2,
+    origin: { x: 0, y: 0 },
+    z: (_x, y) => (y > 7 ? NaN : FIELD.zRef),
+  }
+  // center を中心とする円リングの持続結界（点ごとに speed つき）。owner=味方（ownerId で持続判定）。
+  const ringAround = (center: { x: number; y: number }, r: number, z: number, speed: number, ownerId = 'm'): ActiveOrbit => {
+    const ring = []
+    const N = 24
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * Math.PI * 2
+      ring.push({ pos: { x: center.x + r * Math.cos(a), y: center.y + r * Math.sin(a) }, z, speed })
+    }
+    return { id: 'ring1', ownerId, owner: 'player', ring, ringSpeed: speed }
+  }
+
+  it('AoE 内の味方持続結界は暴発に呑まれて霧散する（次ターンへ持ち越さない）', () => {
+    const orbit = ringAround({ x: 0, y: 7 }, 2, FIELD.zRef, 12) // 暴発点(0,~7)の内側
+    const res = resolveTurn({
+      allies: [ally('m', { x: 0, y: 0 })],
+      casts: [cast('m', upMisfire)],
+      enemies: [],
+      castingEnemyIds: [],
+      obstacles: [],
+      mechanics: onlyHit,
+      activeOrbits: [orbit],
+    })
+    expect(res.orbits.some((o) => o.id === 'ring1')).toBe(false) // 消滅
+    expect(res.log.some((l) => l.text.includes('暴発に呑まれて'))).toBe(true)
+  })
+
+  it('AoE 圏外の結界は無傷で残る', () => {
+    const orbit = ringAround({ x: 0, y: 22 }, 2, FIELD.zRef, 12) // 遠方（AoE 圏外）
+    const res = resolveTurn({
+      allies: [ally('m', { x: 0, y: 0 })],
+      casts: [cast('m', upMisfire)],
+      enemies: [],
+      castingEnemyIds: [],
+      obstacles: [],
+      mechanics: onlyHit,
+      activeOrbits: [orbit],
+    })
+    expect(res.orbits.some((o) => o.id === 'ring1')).toBe(true) // 残る
+  })
+
+  it('敵の暴発（崩し手）も AoE 内の味方結界を削る（敵味方無差別・#42）', () => {
+    // 崩し手が (0,0) の味方近傍で暴発。その AoE 内に味方の持続結界を置く
+    const rupt: Enemy = {
+      ...enemy('r', { x: 0, y: 12 }, 'dark', 100, 8),
+      role: 'ruptor',
+      family: 'arc',
+    }
+    const orbit = ringAround({ x: 0, y: -1 }, 2, FIELD.zRef, 12, 'a')
+    const res = resolveTurn({
+      allies: [ally('a', { x: 0, y: -1 }, 'light')],
+      casts: [],
+      enemies: [rupt],
+      castingEnemyIds: ['r'],
+      obstacles: [],
+      mechanics: withFire,
+      activeOrbits: [orbit],
+    })
+    // 崩し手の暴発が解決し、AoE 内の味方結界が霧散している
+    expect(res.misfires.some((m) => m.owner === 'enemy')).toBe(true)
+    expect(res.orbits.some((o) => o.id === 'ring1')).toBe(false)
   })
 })
