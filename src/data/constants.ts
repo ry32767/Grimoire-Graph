@@ -116,8 +116,8 @@ export const INSTABILITY = {
   firstCollapseStage: 6,
   /** 致死しきい：この暴発回数で破局（ステージ全体暴発＝ゲームオーバー・救済なし） */
   misfireLimit: 12,
-  /** 半径ばらつきの開始 count：これ未満はブレなし */
-  vStart: 2,
+  /** 半径ばらつきの開始 count：これ未満はブレなし（崩壊まで残り2/3＝misfireLimit×1/3 から） */
+  vStart: 4,
   /** 半径ばらつきの最大：実半径 = aoeRadius×(1±v)、v は count 単調増でこの値まで */
   vMax: 0.6,
   /** 自制の緩和：暴発ゼロでステージクリア時に −1（下限0） */
