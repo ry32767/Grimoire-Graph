@@ -76,7 +76,7 @@
 |---|---|---|---|---|---|---|---|---|
 | 渦の番兵 | dark | 4 | 140 | golem | `spiral` | guardian（基礎・闇オーラのみ） | (0, 19) 正面 | |
 | 坑道の弓手 | light | 3 | 125 | wraith | `abs`＋`arc` | attacker（迂回型） | (-16, -25) 左斜め後方 | |
-| 崩し手 | dark | 5 | 165（LVL5倍率） | redWraith | `arc` | **ruptor** | (16, -25) 右斜め後方 | `ruptorTarget='obstacles'`（壁狙い）・`fireEvery=2, fireOffset=1`（1・3・5…ターン目＝最低1回は必ず暴発を見せる） |
+| 崩し手 | dark | 5 | 165（LVL5倍率） | redWraith | `arc` | **ruptor** | (16, -25) 右斜め後方 | `ruptorTarget='obstacles'`（**最初の1発のみ壁狙い**・解決後は味方狙いへ・05b §5.3）・`fireEvery=2, fireOffset=1`（1・3・5…ターン目＝最低1回は必ず暴発を見せる） |
 
 - 初の敵暴発が解決すると、RUPTOR_DEMO のオーバーレイが一度だけ出る（[04b](04b-misfire-instability.md) §4b.4b）。
 

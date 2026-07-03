@@ -25,6 +25,7 @@ import {
 import {
   anomalyLevel,
   applyStageClearRelief,
+  collapseProximity,
   isLethal,
   misfireRadiusBand,
   shouldFirstCollapse,
@@ -176,6 +177,8 @@ export default function App() {
   const [demoSeen, setDemoSeen] = useState(false)
   // 破局（instability 上限到達）でのゲームオーバーか（専用テキスト）
   const [collapseGameover, setCollapseGameover] = useState(false)
+  /** 破局（致死崩壊）演出の再生中（04b §4b.2：ステージ全体を覆う暴発 → gameover へ） */
+  const [collapsePlaying, setCollapsePlaying] = useState(false)
   // 物語オーバーレイ（RUPTOR_DEMO／COLLAPSE_FIRST）：戦闘の上に一度だけ挟む
   const [storyOverlay, setStoryOverlay] = useState<{ title: string; lines: string[] } | null>(null)
   // 確認ゲート（04b §4b.2）：崩壊につながる暴発を含む発射は、一度警告してから撃つ
@@ -241,6 +244,7 @@ export default function App() {
           battle.allies,
           battle.obstacles,
           (battle.orbits ?? []).filter((o) => o.owner === 'player').map((o) => o.ring),
+          battle.enemies,
           battle.rField,
         ).map((plan) => ({
           path: enemyFlight(plan.trajectory, e.castInitialSpeed).path,
@@ -306,6 +310,7 @@ export default function App() {
     setInstability(stageStartInstability)
     setStageMisfires(0)
     setCollapseGameover(false)
+    setCollapsePlaying(false)
     setConfirmArmed(false)
     pendingEventsRef.current = null
     const party = makeParty()
@@ -619,12 +624,13 @@ export default function App() {
       setInstability(count)
       setStageMisfires((s) => s + ev.gained)
       if (ev.enemyMisfired && !demoSeen) setDemoSeen(true)
-      // 破局（致死期・04b §4b.2）：初回崩壊済みで上限到達＝ステージ全体暴発。勝敗に関わらずゲームオーバー
+      // 破局（致死期・04b §4b.2）：初回崩壊済みで上限到達＝ステージ全体暴発。勝敗に関わらずゲームオーバー。
+      // 暴発の効果範囲がステージ全体を覆う崩壊演出を再生してから、ゲームオーバー画面へ遷移する
       if (collapseSeen && isLethal(count)) {
         setCollapseGameover(true)
-        playSfx('gameover')
         setBattle(after)
-        setScreen('gameover')
+        playSfx('misfire')
+        setCollapsePlaying(true)
         return
       }
       // 初回崩壊（閾値到達 or 保証面・一度きり）：グリモワールの介入で救済し、以後メーターを開示
@@ -716,6 +722,7 @@ export default function App() {
             setCollapseSeen(false)
             setDemoSeen(false)
             setCollapseGameover(false)
+            setCollapsePlaying(false)
             setStoryOverlay(null)
             setScreen('prologue')
           }}
@@ -852,10 +859,17 @@ export default function App() {
               zField={composing ? activeZField ?? undefined : undefined}
               showZField={composing}
               standingOrbits={composing ? standingOrbits : undefined}
-              ghostPaths={ghostPaths}
+              ghostPaths={composing ? ghostPaths : undefined}
               ghostMisfires={composing ? ghostMisfires : undefined}
               anomaly={anomalyLevel(instability)}
               misfireBand={varianceOf(instability) > 0 ? misfireRadiusBand(instability) : undefined}
+              doom={collapseProximity(instability)}
+              collapse={collapsePlaying}
+              onCollapseDone={() => {
+                setCollapsePlaying(false)
+                playSfx('gameover')
+                setScreen('gameover')
+              }}
               animation={animation}
               onAnimationDone={onAnimationDone}
               fitPoints={composing ? fitPoints : undefined}

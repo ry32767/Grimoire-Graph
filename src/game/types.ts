@@ -160,6 +160,7 @@ export interface Enemy {
   /**
    * 崩し手（#42）の狙い先。'obstacles' は味方でなく障害物（壁）を狙って暴発させる
    * （第4面の暴発デモ個体用：岩壁を吹き飛ばして見せる）。未指定は 'allies'。
+   * 壁狙いは**最初の1発だけ**：発射を解決したら battle 側で 'allies' へ切り替わる（05b §5.3）。
    */
   ruptorTarget?: 'allies' | 'obstacles'
   /**

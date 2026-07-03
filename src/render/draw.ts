@@ -1478,23 +1478,33 @@ export function drawAnomaly(
     ctx.fillStyle = `rgba(180,140,255,${Math.max(0, alpha)})`
     ctx.fillRect(0, y, vp.width, 3 + level)
   }
-  // level2+：床のひび（画面下部から走る暗い稲妻線・決定的な形＝ちらつかない）
-  if (level >= 2) {
-    ctx.strokeStyle = `rgba(20,12,30,${level >= 3 ? 0.85 : 0.6})`
-    ctx.lineWidth = 1.6
-    const cracks = level >= 3 ? 5 : 3
-    for (let c = 0; c < cracks; c++) {
-      const x0 = ((c * 2654435761) % 1000) / 1000 * vp.width
-      ctx.beginPath()
-      ctx.moveTo(x0, vp.height)
-      let x = x0
-      let y = vp.height
-      for (let s = 0; s < 6; s++) {
-        x += Math.sin(c * 3.1 + s * 2.3) * 22
-        y -= vp.height * (0.05 + 0.03 * ((c + s) % 3))
-        ctx.lineTo(x, y)
+  // level1+：床の亀裂（画面下部から走る暗い稲妻線・決定的な形＝ちらつかない）。段階で本数・濃さが増す
+  const cracks = level >= 3 ? 6 : level >= 2 ? 4 : 2
+  ctx.strokeStyle = `rgba(20,12,30,${level >= 3 ? 0.85 : level >= 2 ? 0.7 : 0.5})`
+  ctx.lineWidth = level >= 2 ? 2 : 1.6
+  for (let c = 0; c < cracks; c++) {
+    const x0 = ((c * 2654435761) % 1000) / 1000 * vp.width
+    ctx.beginPath()
+    ctx.moveTo(x0, vp.height)
+    let x = x0
+    let y = vp.height
+    const pts: { x: number; y: number }[] = []
+    for (let s = 0; s < 6; s++) {
+      x += Math.sin(c * 3.1 + s * 2.3) * 22
+      y -= vp.height * (0.05 + 0.03 * ((c + s) % 3))
+      ctx.lineTo(x, y)
+      pts.push({ x, y })
+    }
+    ctx.stroke()
+    // level2+：亀裂の縁が崩れかける（暗い欠けらが亀裂沿いに散る・決定的な配置）
+    if (level >= 2) {
+      ctx.fillStyle = 'rgba(15,10,24,0.75)'
+      for (let s = 0; s < pts.length; s++) {
+        const sz = 2 + ((c * 7 + s * 5) % 4)
+        const ox = Math.sin(c * 5.3 + s * 3.7) * 7
+        ctx.fillRect(pts[s].x + ox - sz / 2, pts[s].y - sz / 2, sz, sz)
+        if (level >= 3) ctx.fillRect(pts[s].x - ox - sz / 2, pts[s].y + 4 - sz / 2, sz, sz)
       }
-      ctx.stroke()
     }
   }
   // level3：画面周縁が赤黒く脈動する（崩壊目前）
@@ -1904,10 +1914,11 @@ export function drawMisfire(
   pos: Vec2,
   progress: number,
   vp: Viewport,
+  radiusUnits: number = FIELD.aoeRadius,
 ): void {
   const c = toScreen(pos, vp)
   const s = scaleOf(vp)
-  const maxR = FIELD.aoeRadius * s // AoE 半径（実ダメージ範囲・#29）
+  const maxR = radiusUnits * s // AoE 半径（実ダメージ範囲・#29。致死崩壊はステージ全体＝rField を渡す）
   const effR = maxR * 1.18 // 渦は AoE を少しだけはみ出す
   const px = Math.max(3, Math.round(s * 0.28))
   const TAU = Math.PI * 2
@@ -2044,12 +2055,18 @@ export function drawDamageNumber(
 /**
  * 暴発に伴いステージ上空から降ってくる遺跡の破片（#41）。
  * 画面全体の演出。progress 0→1 で上から下へ落ち、フィールド円内にクリップする。
+ * intensity は瓦礫の量の倍率（04b：崩壊へ近づくほど 1→大きくして降らせる。上限あり）。
  */
-export function drawFallingDebris(ctx: CanvasRenderingContext2D, vp: Viewport, progress: number): void {
+export function drawFallingDebris(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  progress: number,
+  intensity = 1,
+): void {
   const s = scaleOf(vp)
   const W = vp.width
   const H = vp.height
-  const N = 18
+  const N = Math.min(64, Math.round(18 * Math.max(1, intensity)))
   const COLS = ['#6b5a44', '#544a5e', '#7a6f86', '#8a7350']
   ctx.save()
   // フィールド円内にクリップ（盤面の外へはみ出さない）

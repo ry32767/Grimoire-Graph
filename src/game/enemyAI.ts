@@ -7,9 +7,16 @@ import { simulatePath } from './physics'
 import { firstHit } from './collision'
 import { isSolidAt, materialCells } from './obstacle'
 import { attributeOf, strengthOf, affinityMultiplier, zfieldAt } from './attribute'
-import { ringEncloses, ringAverageAttr, ringCentroid, ringRadius, type RingPoint } from './orbit'
+import { ringEncloses, ringAverageAttr, ringCentroid, ringRadius, ringInterception, type RingPoint } from './orbit'
 import { constZField } from './zfields'
 import { COMBAT, FIELD, GAME, RUPTOR } from '../data/constants'
+
+/** 敵チームの味方（守護型が囲む対象・05b §5.4）。Enemy をそのまま渡せる最小形。 */
+export interface TeamMate {
+  id: string
+  pos: Vec2
+  hp: number
+}
 
 /** 闇の周回1重あたり、敵が見誤る距離（ユニット・#35）。ヒットボックスより大きく外す。 */
 const CONCEAL_JITTER = 3.5
@@ -286,6 +293,37 @@ export function enemyFlight(traj: Trajectory, speed: number): { path: Vec2[]; fl
   return { path, flight }
 }
 
+/**
+ * 候補弾道が持続結界（プレイヤーの周回）を横切るときの減速を見込んだ「命中時の速度」（05b §1）。
+ * 反対極の横断だけが相互相殺で減速する（同極・中立は透過＝実解決 turn.ts と同じルール）。
+ * 0 以下＝結界に阻まれて届かない。迂回型・暴発型はこれで結界を「避け」、火力型は減速込みで押し通る。
+ */
+function ringAdjustedSpeed(
+  traj: Trajectory,
+  path: Vec2[],
+  flight: Flight,
+  hitArc: number,
+  hitSpeed: number,
+  standingRings: RingPoint[][],
+): number {
+  let speed = hitSpeed
+  if (standingRings.length === 0 || path.length < 2) return speed
+  for (const ring of standingRings) {
+    if (ring.length < 3) continue
+    const inter = ringInterception(ring, path)
+    if (!inter.crossed || inter.enemyIndex === undefined || inter.ringZ === undefined) continue
+    const sample = flight.samples[Math.min(inter.enemyIndex, flight.samples.length - 1)]
+    if (!sample || sample.arcLen >= hitArc) continue // 命中後の交差は無関係
+    const bAttr = attributeOf(zfieldAt(traj, inter.pos ?? sample.pos))
+    const rAttr = attributeOf(inter.ringZ)
+    const opposite = (bAttr === 'light' && rAttr === 'dark') || (bAttr === 'dark' && rAttr === 'light')
+    if (!opposite) continue // 同極・中立は透過（削られない）
+    speed -= (inter.ringSpeed ?? 0) * strengthOf(inter.ringZ) * COMBAT.parryLossScale
+    if (speed <= 0) return 0
+  }
+  return speed
+}
+
 /** 敵AIの選択結果 */
 export interface EnemyPlan {
   trajectory: Trajectory
@@ -348,21 +386,41 @@ function buildGuardZField(enemy: Enemy, sign: 1 | -1, threatPhi: number | null):
  * directedAura 個体は脅威方向に強度を偏らせた非一様場を張る（#47・全周で |z|≤zRef を維持）。
  * 半径は障害物の素材に触れないものを選ぶ（触れると orbitWallBreak で即霧散するため・05b §5.4）。
  */
-function planGuardianOrbit(enemy: Enemy, allies: Ally[] = [], obstacles: Obstacle[] = [], fieldR?: number): EnemyPlan {
+function planGuardianOrbit(
+  enemy: Enemy,
+  allies: Ally[] = [],
+  obstacles: Obstacle[] = [],
+  teammates: TeamMate[] = [],
+  fieldR?: number,
+): EnemyPlan {
   const sign = enemy.guardZSign ?? (enemy.element === 'dark' ? -1 : 1)
-  // 大きい順に試し、リング上のどの点も素材に触れない半径を選ぶ（全て触れるなら最小で張る）
-  const radii = [GAME.enemyGuardRadius, GAME.enemyGuardRadius * 0.75, GAME.enemyGuardRadius * 0.55]
-  let radius = radii[radii.length - 1]
-  for (const r of radii) {
-    let touches = false
-    for (let i = 0; i < 24 && !touches; i++) {
+  const touches = (r: number): boolean => {
+    for (let i = 0; i < 24; i++) {
       const a = (i / 24) * Math.PI * 2
       const p = { x: enemy.pos.x + r * Math.cos(a), y: enemy.pos.y + r * Math.sin(a) }
-      touches = obstacles.some((ob) => isSolidAt(ob, p))
+      if (obstacles.some((ob) => isSolidAt(ob, p))) return true
     }
-    if (!touches) {
+    return false
+  }
+  // 半径 r の結界が囲える味方の数（自分＋余裕をもって内側に入る生存味方・05b §5.4）
+  const coverOf = (r: number): number =>
+    1 + teammates.filter((t) => t.id !== enemy.id && t.hp > 0 && dist(t.pos, enemy.pos) <= r - 1).length
+  // 候補半径：既定 → 縮小2段（壁回避）→ 拡大1段（自分だけでなく味方も囲む・05b §5.4）。
+  // 壁に触れない候補のうち、囲える味方が最多のものを選ぶ（同数なら既定寄りの大きい方＝従来動作）。
+  const radii = [
+    GAME.enemyGuardRadius,
+    GAME.enemyGuardRadius * 0.75,
+    GAME.enemyGuardRadius * 0.55,
+    GAME.enemyGuardRadius * 1.3,
+  ]
+  let radius = GAME.enemyGuardRadius * 0.55 // 全候補が壁に触れるときの既定（最小）
+  let bestCover = -1
+  for (const r of radii) {
+    if (touches(r)) continue
+    const c = coverOf(r)
+    if (c > bestCover) {
+      bestCover = c
       radius = r
-      break
     }
   }
   const threatPhi = threatDirection(enemy, allies)
@@ -429,8 +487,18 @@ export function planRuptorShot(
   const target = candidates.reduce((best, a) => (threatScore(a) > threatScore(best) ? a : best))
 
   // 弾の極性は自陣の element（無属性なら対象の反対極）
-  const polarity: 1 | -1 =
+  let polarity: 1 | -1 =
     enemy.element === 'light' ? 1 : enemy.element === 'dark' ? -1 : target.element === 'light' ? -1 : 1
+  // 高難度個体（slipThrough・05b §5.2/§5.3）：狙う相手が結界に守られていれば、
+  // 結界の平均属性と同極に極性を合わせてすり抜け、極（暴発点）を内側へ届ける
+  if (enemy.slipThrough && standingRings.length > 0) {
+    const slipAim = aimOverride?.pos ?? perceivedPos(target)
+    const enclosing = standingRings.find((r) => r.length >= 3 && ringEncloses(r, slipAim))
+    if (enclosing) {
+      const rAttr = ringAverageAttr(enclosing)
+      if (rAttr !== 'neutral') polarity = rAttr === 'light' ? 1 : -1
+    }
+  }
 
   // 迂回型と同じ family 制約（#46・05b §2/§5.3）：abs/arc/poly34 のみ。
   // 個体が有効な family を1つも持たない（wave/exp/line 素の個体等）なら、
@@ -438,18 +506,19 @@ export function planRuptorShot(
   const own = avoiderFamiliesOf(enemy).filter((f) => AVOIDER_FAMILIES.includes(f))
   const fams = own.length > 0 ? own : [...AVOIDER_FAMILIES]
 
-  type AimResult = { traj: Trajectory; d: number; rank: number; end: Vec2 }
+  // rank＝(暴発到達 4)＋(壁クリーン 2)＋(結界に阻まれない 1)。ruptured/ringOk は misfirePos の確定に使う
+  type RuptorCandidate = { traj: Trajectory; d: number; rank: number; end: Vec2; ruptured: boolean; ringOk: boolean }
 
   /**
    * 指定の狙点に極を仕込み、与えた family 集合の中で最良の軌道を探す。
    * 「極に到達して暴発する（ruptured）」かつ「途中で壁の素材に触れない（clear）」候補を最優先し、
    * その中で暴発点が狙点に最も近いものを選ぶ（暴発型の立ち回りは迂回型と同じ・05b §5.3）。
    */
-  const searchAimWith = (aim: Vec2, tryFams: readonly EnemyFamily[]): AimResult | null => {
+  const searchAimWith = (aim: Vec2, tryFams: readonly EnemyFamily[]): RuptorCandidate | null => {
     const z = buildRuptorZField(enemy.pos, aim, polarity)
     const base = aimAt(enemy.pos, aim)
     const hFold = dist(enemy.pos, aim) * ABS_H_RATIO
-    let best: AimResult | null = null
+    let best: RuptorCandidate | null = null
     const consider = (traj: Trajectory) => {
       const { path, flight } = enemyFlight(traj, enemy.castInitialSpeed)
       if (path.length < 2 || flight.end === 'vanished') return // 失速する候補は捨てる
@@ -458,9 +527,13 @@ export function planRuptorShot(
       const ruptured = pathTermination(sampleTrajectory(traj)).end === 'invalid'
       // 経路が素材に触れると弾が削られ極に届かないことがある → 触れない候補を優先
       const clear = !path.some((p) => obstacles.some((ob) => isSolidAt(ob, p)))
-      const rank = (ruptured ? 2 : 0) + (clear ? 1 : 0)
+      // 結界（前ターンまでの周回）に反対極で阻まれると極まで届かず暴発しない → 避けられる候補を優先。
+      // どの候補も届かないときは最良候補で結界そのものに当てる（相互相殺で削る・05b §1）
+      const ringOk =
+        ringAdjustedSpeed(traj, path, flight, Infinity, flight.endSpeed || enemy.castInitialSpeed, standingRings) > 0
+      const rank = (ruptured ? 4 : 0) + (clear ? 2 : 0) + (ringOk ? 1 : 0)
       if (!best || rank > best.rank || (rank === best.rank && d < best.d)) {
-        best = { traj, d, rank, end }
+        best = { traj, d, rank, end, ruptured, ringOk }
       }
     }
     for (const fam of tryFams) {
@@ -478,10 +551,10 @@ export function planRuptorShot(
    * 再探索し、より正確に極を置ける方を採る。arc 単独個体（第6面の崩し手・弧）が壁の無い盤面で
    * 極を対象から大きく外し「暴発するのに無害」になる不具合を防ぐ（05b §4／§5.3）。
    */
-  const searchAim = (aim: Vec2): AimResult | null => {
+  const searchAim = (aim: Vec2): RuptorCandidate | null => {
     const best = searchAimWith(aim, fams)
     // 圏内に置けている（暴発が対象へ届く）ならそのまま採用＝個体の family 個性を保つ
-    if (best && best.rank >= 2 && best.d < FIELD.aoeRadius) return best
+    if (best && best.ruptured && best.d < FIELD.aoeRadius) return best
     // 圏外（無害）になる／暴発候補すら無いなら、主力 family 一式で最も正確な極を探す
     const isFull = AVOIDER_FAMILIES.every((f) => fams.includes(f))
     if (isFull) return best
@@ -553,7 +626,7 @@ export function planRuptorShot(
       }
     }
     discs.sort((a, b) => a.d - b.d)
-    let fallback: { traj: Trajectory; d: number; rank: number; end: Vec2 } | null = null
+    let fallback: RuptorCandidate | null = null
     for (const disc of discs.slice(0, 6)) {
       // 極（g の零点）は中心でなく壁「面」の近傍（05b §4）＝素材の外に出るまで敵側へ引く
       const L = disc.d || 1
@@ -565,14 +638,15 @@ export function planRuptorShot(
       while (t > 0 && obstacles.some((ob) => isSolidAt(ob, pt(t)))) t -= 0.4 / L
       const aim = pt(Math.max(0, t - 1.2 / L))
       const found = searchAim(aim)
-      if (found && found.rank >= 3) {
+      if (found && found.rank >= 7) {
+        // 確実に暴発できる（極到達・壁/結界に阻まれない）狙い
         return { trajectory: found.traj, targetId: '', expectedDamage: 0, misfirePos: found.end }
       }
       if (found && (!fallback || found.rank > fallback.rank)) fallback = found
     }
     if (fallback) {
-      const fb: { traj: Trajectory; d: number; rank: number; end: Vec2 } = fallback
-      return { trajectory: fb.traj, targetId: '', expectedDamage: 0, misfirePos: fb.rank >= 2 ? fb.end : null }
+      const fb: RuptorCandidate = fallback
+      return { trajectory: fb.traj, targetId: '', expectedDamage: 0, misfirePos: fb.ruptured && fb.ringOk ? fb.end : null }
     }
     // 壁が全て崩れた等：以後は通常の味方狙いへフォールバック
   }
@@ -588,7 +662,8 @@ export function planRuptorShot(
     trajectory: best.traj,
     targetId,
     expectedDamage: 0,
-    misfirePos: best.rank >= 2 ? best.end : null, // rank≥2 ＝極に到達して暴発する候補
+    // 極に到達し、結界に阻まれない候補だけが実際に暴発する（予告もそれに合わせる）
+    misfirePos: best.ruptured && best.ringOk ? best.end : null,
   }
 }
 
@@ -611,11 +686,12 @@ export function planEnemyShots(
   allies: Ally[],
   obstacles: Obstacle[] = [],
   standingRings: RingPoint[][] = [],
+  teammates: TeamMate[] = [],
   fieldR?: number,
 ): EnemyPlan[] {
   const count = Math.max(1, enemy.castCount ?? 1)
   if (count === 1) {
-    const p = planEnemyShot(enemy, allies, obstacles, standingRings, fieldR)
+    const p = planEnemyShot(enemy, allies, obstacles, standingRings, teammates, fieldR)
     return p ? [p] : []
   }
   const pool: EnemyRole[] =
@@ -636,7 +712,7 @@ export function planEnemyShots(
     }
     const remaining = alive.filter((a) => !taken.has(a.id))
     const pickFrom = remaining.length > 0 ? remaining : alive
-    const plan = planEnemyShot(variant, pickFrom, obstacles, standingRings, fieldR)
+    const plan = planEnemyShot(variant, pickFrom, obstacles, standingRings, teammates, fieldR)
     if (!plan) continue
     if (plan.targetId) taken.add(plan.targetId)
     plans.push(plan)
@@ -653,15 +729,17 @@ export function planEnemyShot(
   allies: Ally[],
   obstacles: Obstacle[] = [],
   standingRings: RingPoint[][] = [],
+  teammates: TeamMate[] = [],
   fieldR?: number,
 ): EnemyPlan | null {
   const alive = allies.filter((a) => a.hp > 0)
   if (alive.length === 0) return null
 
-  // 防御ロール：自陣を守る周回結界を張る（#28）。方向づけ場は脅威（味方）方向へ強度を偏らせる（#47）
-  if (enemy.role === 'guardian') return planGuardianOrbit(enemy, allies, obstacles, fieldR)
+  // 防御ロール：自陣（自分＋味方）を守る周回結界を張る（#28/05b §5.4）。
+  // 方向づけ場（directedAura・#47）は脅威（味方）方向へ強度を偏らせる
+  if (enemy.role === 'guardian') return planGuardianOrbit(enemy, allies, obstacles, teammates, fieldR)
 
-  // 崩し手（#42）：狙った対象の近傍で暴発させる専用計画（結界対処は standingRings を渡す・#48）
+  // 崩し手（#42）：狙った対象の近傍で暴発させる専用計画（結界の回避/すり抜けも迂回型と同じ・#48）
   if (enemy.role === 'ruptor') return planRuptorShot(enemy, allies, obstacles, undefined, standingRings, fieldR)
 
   // 闇の周回で完全に隠れた味方は視認不可＝狙えない（#35）。全員隠れていれば見えないなりに撃つ。
@@ -680,10 +758,15 @@ export function planEnemyShot(
   // 候補軌道を1つ評価して best を更新する（#28：直進系も迂回系も同じ採点）。
   // maneuver は迂回の取り回しコスト（1=直進・<1=遠回り）。同条件なら直進/貫通が勝つ。
   const consider = (traj: Trajectory, ally: Ally, aimPos: Vec2, bAttr: ReturnType<typeof attributeOf>, bStr: number, maneuver: number) => {
-    const { flight } = enemyFlight(traj, enemy.castInitialSpeed)
+    const { path, flight } = enemyFlight(traj, enemy.castInitialSpeed)
     const hit = firstHit(flight.samples, aimPos, GAME.allyHitbox)
     if (!hit || hit.speed <= 0) return // 失速して届かない（速度0）候補は捨てる（#31）
-    // 経路上の素材チェック：unbreakable を横切る候補は棄却（breaker でも貫けない）。
+    // 結界（前ターンまでの周回）の相殺を見込む（05b §1）：反対極の横断で減速し、
+    // 0 以下＝阻まれて届かない候補は捨てる（迂回型・暴発型はこれで結界を「避ける」。
+    // 火力型も同じ採点＝減速込みで最大ダメージの弾を選ぶ＝破壊して押し通る）
+    const effSpeed = ringAdjustedSpeed(traj, path, flight, hit.arcLen, hit.speed, standingRings)
+    if (effSpeed <= 0) return
+    // 経路上の素材チェック：unbreakable を横切る候補は棄却（breaker でも貫けない・バグ修正）。
     // 削れる壁に触れる候補は blocked（迂回型は「回り込めるルートが無いとき」だけ採用する）
     let blocked = false
     for (const sm of flight.samples) {
@@ -693,7 +776,7 @@ export function planEnemyShot(
     }
     // 障害物（素材）が手前にあると弾が削れる＝評価を下げる（breaker は貫くので無視）
     const penalty = blocked && !breaker ? 0.55 : 1
-    const baseDmg = hit.speed * bStr * affinityMultiplier(bAttr, ally.element) * penalty * maneuver
+    const baseDmg = effSpeed * bStr * affinityMultiplier(bAttr, ally.element) * penalty * maneuver
     // とどめを刺せる相手を最優先、次に手負い（割合）を優先
     const killBonus = baseDmg >= ally.hp ? 2.2 : 1
     const woundFocus = 1 + (1 - ally.hp / ally.maxHp) * 0.5
@@ -735,6 +818,21 @@ export function planEnemyShot(
           if ((ally.concealed ?? 0) > 0) aimPos = ringCentroid(enclosing)
         }
       }
+    } else if (breaker && !enemy.castZField && standingRings.length > 0) {
+      // 火力型（05b §1）：狙う相手が結界に守られていれば、結界の反対極の候補も加えて
+      // 「結界を破壊して押し通る」選択肢を採点に載せる（採用は最大ダメージ基準）
+      const enclosing = standingRings.find((ring) => ring.length >= 3 && ringEncloses(ring, aimPos))
+      if (enclosing) {
+        const ringAttr = ringAverageAttr(enclosing)
+        if (ringAttr !== 'neutral') {
+          const sign = ringAttr === 'light' ? -1 : 1 // 反対極で当てて相殺（破壊）する
+          for (const m of ATTACK_Z_MAGS) {
+            if (!zCands.some((c) => c.zVal === sign * m)) {
+              zCands = [...zCands, { z: constZField(sign * m), zVal: sign * m }]
+            }
+          }
+        }
+      }
     }
     // 火力型のランプ z 場（05b §3 指数系・バグ修正）：飛行中は |z|≈0（中庸＝最大加速）を保ち、
     // 命中直前に |z|→zPeak へ立ち上げる。「速度を出しつつ最大強度で当てる」火力型らしい候補。
@@ -772,12 +870,48 @@ export function planEnemyShot(
   // 回り込めるクリーンな経路が1つも無いときだけ、削れる壁を貫く候補を採用する（バグ修正）
   if (bestBlocked) return bestBlocked
 
-  // 命中見込みなし：最もHPが低い味方へ直進で牽制（見える相手・見かけ位置へ・#35）。
-  // 牽制弾も失速しないよう、減速しない zRef（反対極）で撃つ（#31）。
+  // 命中見込みなし：最もHPが低い味方へ牽制（見える相手・見かけ位置へ・#35）。
+  // family は得意関数から選ぶ（line を持たない個体＝迂回型/暴発型は曲線で牽制・05b §2）。
   const target = candidates.reduce((lo, a) => (a.hp < lo.hp ? a : lo))
+  const aim = perceivedPos(target)
+  const fbFam = families.includes('line') ? 'line' : families[0]
+  const fbShape =
+    fbFam === 'line' ? 0 : shapeCandidates(fbFam).slice().sort((a, b) => Math.abs(a) - Math.abs(b))[0]
+  // 狙う相手が結界に囲まれて突破できない場合は、結界そのものに反対極を当てて削る
+  // （迂回型・暴発型：避けられないなら結界に当てる／火力型：破壊して道を開ける・05b §1）。
+  // 得意関数の候補から「実際に結界の境界を横切る」軌道を選ぶ（曲がる family でも確実に当てる）
+  const enclosing = standingRings.find((ring) => ring.length >= 3 && ringEncloses(ring, aim))
+  const enclosingAttr = enclosing ? ringAverageAttr(enclosing) : 'neutral'
+  if (enclosing && !enemy.castZField && enclosingAttr !== 'neutral') {
+    const sign = enclosingAttr === 'light' ? -1 : 1 // 結界の反対極＝横断点で相殺して結界を削る
+    const z = constZField(sign * FIELD.zRef)
+    const base = aimAt(enemy.pos, aim)
+    for (const fam of families) {
+      for (const shape of shapeCandidates(fam)) {
+        // 曲がる family は終点が狙いから大きく逸れる → 終点方向との差で狙い角を補正しながら試す
+        let angle = base
+        for (let iter = 0; iter < 3; iter++) {
+          const traj = buildEnemyTrajectory(fam, enemy.pos, angle, shape, z, 20, 3, fieldR)
+          const { path, flight } = enemyFlight(traj, enemy.castInitialSpeed)
+          if (path.length < 2) break
+          const inter = ringInterception(enclosing, path)
+          if (inter.crossed && inter.enemyIndex !== undefined) {
+            // 横断点まで失速せず届く候補だけ採用（届けば相互相殺で結界が削れる）
+            const sample = flight.samples[Math.min(inter.enemyIndex, flight.samples.length - 1)]
+            if (sample && sample.speed > 0) return { trajectory: traj, targetId: target.id, expectedDamage: 0 }
+          }
+          const end = path[path.length - 1]
+          const err = base - aimAt(enemy.pos, end)
+          if (!Number.isFinite(err) || Math.abs(err) < 1e-3) break
+          angle += err
+        }
+      }
+    }
+  }
+  // 通常の牽制：失速しないよう、減速しない zRef（対象の反対極）で撃つ（#31）
   const fallbackZ = enemy.castZField ?? constZField((target.element === 'light' ? -1 : 1) * FIELD.zRef)
   return {
-    trajectory: buildEnemyTrajectory('line', enemy.pos, aimAt(enemy.pos, perceivedPos(target)), 0, fallbackZ, 20, 3, fieldR),
+    trajectory: buildEnemyTrajectory(fbFam, enemy.pos, aimAt(enemy.pos, aim), fbShape, fallbackZ, 20, 3, fieldR),
     targetId: target.id,
     expectedDamage: 0,
   }

@@ -383,7 +383,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     .map((ao) => ao.ring as RingPoint[])
   for (const e of enemies) {
     if (!input.castingEnemyIds.includes(e.id)) continue
-    for (const plan of planEnemyShots(e, allies, obstacles, visibleRings, input.fieldR)) {
+    for (const plan of planEnemyShots(e, allies, obstacles, visibleRings, enemies, input.fieldR)) {
       if (classifyTrajectory(plan.trajectory) === 'orbit') {
         // 敵の周回結界も壁/失速で丸ごと霧散する（#34/#31：敵が使った場合も同様）。形状は霧散演出のため残す
         const ring = attachRingSpeeds(buildRing(plan.trajectory), e.castInitialSpeed) // 点ごとの速度（#60）
@@ -450,6 +450,13 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       plans.push({ cast, kind, ring: null, ringSpeed: 0, freeFlight, carves: [], ringBroken: false, pLosses: [] })
     }
   }
+
+  // 同じ場所へ張り直された持続周回（同ID）は新リング側だけを使い、迎撃・オーラを二重に数えない（#39）
+  const recastPlayerOrbitIds = new Set(
+    plans
+      .filter((p) => p.kind === 'orbit' && p.ring && p.ring.length >= 3)
+      .map((p) => orbitId(p.cast.allyId, p.ring as ZPoint[])),
+  )
 
   // === 3. 防御：軌道型リングの迎撃 → 発射型のパリィ（敵弾を削る） ===
   // 減衰イベントは shot ごとに蓄積し、毎回「元の初速＋全減衰」で再シミュレートする
@@ -546,7 +553,8 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     }
     // 永続周回（#39）：前ターンから残る結界も迎撃・減速する。速度0で消滅（次ターンへ持ち越さない）
     for (const ao of activeOrbits) {
-      if (ao.owner !== 'player' || destroyedOrbitIds.has(ao.id) || shot.blocked) continue
+      if (ao.owner !== 'player' || destroyedOrbitIds.has(ao.id) || recastPlayerOrbitIds.has(ao.id) || shot.blocked)
+        continue
       const r = tryRingIntercept(ao.ring as RingPoint[])
       const aName = nameOf(allies, ao.ownerId)
       if (r.result === 'slow') {
@@ -610,45 +618,161 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     for (const l of res.logs) log.push(l)
   }
 
-  // 敵 guardian の防御結界（今ターン新規＋前ターンからの持続・#39/#61）を1つのリストに束ねる。
-  // 味方弾の迎撃（§5）・回復オーラ（§5.5）の両方が、新規結界と持続結界を区別なく処理できるようにする。
-  // broken を立てると、持続結界は destroyedOrbitIds へ記録して次ターンへ持ち越さない（丸ごと霧散）。
-  interface EnemyGuardRing {
-    enemyId: string
-    ring: RingPoint[]
-    ringSpeed: number
-    broken: boolean
-    /** ring/ringSpeed/broken の変更を元データ（enemyRings 要素 or 持続 activeOrbit）へ書き戻す */
-    commit(): void
-  }
-  const enemyGuardRings: EnemyGuardRing[] = [
-    ...enemyRings.map((gr) => ({
-      enemyId: gr.enemyId,
-      ring: gr.ring,
-      ringSpeed: gr.ringSpeed,
-      broken: gr.broken,
-      commit(this: EnemyGuardRing) {
-        gr.ring = this.ring
-        gr.ringSpeed = this.ringSpeed
-        gr.broken = this.broken
-      },
-    })),
+  // === 4.5 敵結界（guardian）と味方発射型の相互相殺（#59/#61） ===
+  // 今ターン新規に張られたリングと、前ターンから持続する敵結界（owner='enemy'）の両方が対象。
+  // 交差点でパリィ（resolveParry）と同じ相互相殺を行い、自弾の減速は減衰イベントとして
+  // 飛行へ反映する（命中しない弾が横切っても結界は減速・破壊される）。反対極のみ・同極/中立は透過。
+  // 同じ場所に張り直された持続結界（同ID）は新リング側だけを使い、二重に迎撃しない。
+  const recastOrbitIds = new Set(enemyRings.map((r) => orbitId(r.enemyId, r.ring as ZPoint[])))
+  type EnemyBarrier =
+    | { kind: 'new'; gr: (typeof enemyRings)[number] }
+    | { kind: 'persistent'; ao: ActiveOrbit }
+  const enemyBarriers: EnemyBarrier[] = [
+    ...enemyRings.map((gr) => ({ kind: 'new' as const, gr })),
     ...activeOrbits
-      .filter((ao) => ao.owner === 'enemy' && !destroyedOrbitIds.has(ao.id) && ao.ring.length >= 3)
-      .map((ao) => ({
-        enemyId: ao.ownerId,
-        ring: ao.ring as RingPoint[],
-        ringSpeed: ao.ringSpeed,
-        broken: false,
-        commit(this: EnemyGuardRing) {
-          if (this.broken) destroyedOrbitIds.add(ao.id) // 破れた持続結界は持ち越さない
-          else {
-            ao.ring = this.ring
-            ao.ringSpeed = this.ringSpeed
-          }
-        },
-      })),
+      .filter((ao) => ao.owner === 'enemy' && !destroyedOrbitIds.has(ao.id) && !recastOrbitIds.has(ao.id))
+      .map((ao) => ({ kind: 'persistent' as const, ao })),
   ]
+  const barrierRing = (b: EnemyBarrier): RingPoint[] =>
+    b.kind === 'new' ? b.gr.ring : (b.ao.ring as RingPoint[])
+  const barrierBroken = (b: EnemyBarrier): boolean =>
+    b.kind === 'new' ? b.gr.broken : destroyedOrbitIds.has(b.ao.id)
+  const slowBarrier = (b: EnemyBarrier, f: number): void => {
+    if (b.kind === 'new') {
+      b.gr.ring = scaleRingSpeeds(b.gr.ring, f)
+      b.gr.ringSpeed *= f
+    } else {
+      b.ao.ring = scaleRingSpeeds(b.ao.ring as RingPoint[], f)
+      b.ao.ringSpeed *= f
+    }
+  }
+  const breakBarrier = (b: EnemyBarrier): void => {
+    if (b.kind === 'new') b.gr.broken = true
+    else destroyedOrbitIds.add(b.ao.id)
+  }
+  for (const p of plans) {
+    if (p.kind !== 'projectile' || !p.freeFlight) continue
+    for (const b of enemyBarriers) {
+      if (barrierBroken(b)) continue
+      const flight = p.freeFlight
+      if (!flight || flight.samples.length < 2) break
+      const playerPath = flight.samples.map((s) => s.pos)
+      const inter = ringInterception(barrierRing(b), playerPath)
+      if (!inter.crossed || inter.enemyIndex === undefined || inter.ringZ === undefined) continue
+      const pSample = flight.samples[Math.min(inter.enemyIndex, flight.samples.length - 1)]
+      if (!pSample || pSample.speed <= 0) continue
+      // 命中後の交差は無視（敵に当たって解決する弾は、その先の結界と相互作用しない）
+      const hitNow = firstHitAmong(flight.samples, enemyTargets())
+      if (hitNow && pSample.arcLen >= hitNow.arcLen) continue
+      const vCross = inter.ringSpeed ?? 0 // 横断点での結界速度（#60：平均でない）
+      if (vCross <= 0) continue
+      const bZ = zfieldAt(p.cast.trajectory, inter.pos ?? pSample.pos)
+      const bStr = strengthOf(bZ)
+      const ringStr = strengthOf(inter.ringZ)
+      // A=結界（速度=横断点の vCross）、B=自弾
+      const parry = resolveParry(attributeOf(inter.ringZ), vCross, vCross * ringStr, attributeOf(bZ), pSample.speed, pSample.speed * bStr)
+      if (parry.passthrough) continue // 同極・中立は透過
+      // 威力＝結界威力(強度×横断点速度)＋自弾威力(速度×強度)（#38）
+      if (inter.pos) clashes.push({ pos: inter.pos, power: ringStr * vCross + pSample.speed * bStr })
+      // 結界も減速（#59/#60）：横断点の減速率で全体を失速。0 なら霧散
+      if (parry.vanishA) breakBarrier(b)
+      else slowBarrier(b, parry.speedA / vCross)
+      // 自弾は相互相殺ぶん減速し、以後の命中・霧散判定へ引き継ぐ
+      p.pLosses.push({ arcLen: pSample.arcLen, deltaV: pSample.speed - parry.speedB })
+      p.freeFlight = simulateWithLosses(p.cast.trajectory, p.cast.initialSpeed, p.pLosses)
+      if (p.freeFlight.end === 'vanished') {
+        log.push({ kind: 'orbit', text: `敵の結界が${nameOf(allies, p.cast.allyId)}の弾を阻んだ` })
+        break
+      }
+    }
+  }
+
+  // 暴発 AoE が範囲内の結界（周回リング）に与える最大威力（§3.5）。削り量はパリィと同じ係数
+  // （相手威力×parryLossScale）を暴発の最大威力＝Smax×maxFlightSpeed に適用する。
+  // 暴発は光闇両極を最大で帯びるため、相手属性に関係なく必ず作用する（敵味方の結界いずれも）。
+  const AOE_ORBIT_LOSS = FIELD.sMax * FIELD.maxFlightSpeed * COMBAT.parryLossScale
+  const AOE_CLASH_POWER = FIELD.sMax * FIELD.maxFlightSpeed
+  /**
+   * 暴発 AoE 内の結界（味方の新規／永続・敵の新規／永続）へパリィ相当の減速を最大威力で与える（§3.5）。
+   * AoE 内で最も速いリング点の速度を基準に AOE_ORBIT_LOSS を差し引き、残れば全体を同率で失速、0 なら霧散。
+   * 味方・敵どちらの暴発からも同じ処理で呼ぶ（敵味方無差別の AoE・#42）。
+   */
+  const blastOrbits = (center: Vec2, radius: number): void => {
+    const evalRing = (ring: RingPoint[]): { destroyed: boolean; factor: number; pos: Vec2 } | null => {
+      let vMax = -1
+      let pos: Vec2 | null = null
+      for (const rp of ring) {
+        if (dist(rp.pos, center) <= radius) {
+          const v = rp.speed ?? 0
+          if (v > vMax) {
+            vMax = v
+            pos = rp.pos
+          }
+        }
+      }
+      if (pos === null) return null // AoE 圏外
+      if (vMax <= 0) return { destroyed: true, factor: 0, pos } // 既に停止した結界も巻き込んで霧散
+      const newV = vMax - AOE_ORBIT_LOSS
+      return newV <= 0 ? { destroyed: true, factor: 0, pos } : { destroyed: false, factor: newV / vMax, pos }
+    }
+    // 味方の新規結界（今ターン張ったリング）
+    for (const p of plans) {
+      if (p.kind !== 'orbit' || !p.ring || p.ringBroken) continue
+      const r = evalRing(p.ring)
+      if (!r) continue
+      clashes.push({ pos: r.pos, power: AOE_CLASH_POWER })
+      if (r.destroyed) {
+        p.ringBroken = true
+        p.carves.push({ pos: r.pos, r: 1, arcLen: 0, attr: attributeOf(zfieldAt(p.cast.trajectory, r.pos)), obstacleId: '' })
+        log.push({ kind: 'orbit', text: `${nameOf(allies, p.cast.allyId)}の周回結界は暴発に呑まれて霧散した` })
+      } else {
+        p.ring = scaleRingSpeeds(p.ring, r.factor)
+        p.ringSpeed *= r.factor
+      }
+    }
+    // 味方の永続結界（張り直しでない持続分。同IDの新規は上で処理済み）
+    for (const ao of activeOrbits) {
+      if (ao.owner !== 'player' || destroyedOrbitIds.has(ao.id) || recastPlayerOrbitIds.has(ao.id)) continue
+      const r = evalRing(ao.ring as RingPoint[])
+      if (!r) continue
+      clashes.push({ pos: r.pos, power: AOE_CLASH_POWER })
+      if (r.destroyed) {
+        destroyedOrbitIds.add(ao.id)
+        log.push({ kind: 'orbit', text: `${nameOf(allies, ao.ownerId)}の結界は暴発に呑まれて消滅した` })
+      } else {
+        ao.ring = scaleRingSpeeds(ao.ring as RingPoint[], r.factor)
+        ao.ringSpeed *= r.factor
+      }
+    }
+    // 敵 guardian の新規結界
+    for (const gr of enemyRings) {
+      if (gr.broken) continue
+      const r = evalRing(gr.ring)
+      if (!r) continue
+      clashes.push({ pos: r.pos, power: AOE_CLASH_POWER })
+      if (r.destroyed) {
+        gr.broken = true
+        log.push({ kind: 'orbit', text: `${nameOf(enemies, gr.enemyId)}の結界は暴発に呑まれて霧散した` })
+      } else {
+        gr.ring = scaleRingSpeeds(gr.ring, r.factor)
+        gr.ringSpeed *= r.factor
+      }
+    }
+    // 敵の永続結界（張り直しでない持続分）
+    for (const ao of activeOrbits) {
+      if (ao.owner !== 'enemy' || destroyedOrbitIds.has(ao.id) || recastOrbitIds.has(ao.id)) continue
+      const r = evalRing(ao.ring as RingPoint[])
+      if (!r) continue
+      clashes.push({ pos: r.pos, power: AOE_CLASH_POWER })
+      if (r.destroyed) {
+        destroyedOrbitIds.add(ao.id)
+        log.push({ kind: 'orbit', text: `敵の結界は暴発に呑まれて消滅した` })
+      } else {
+        ao.ring = scaleRingSpeeds(ao.ring as RingPoint[], r.factor)
+        ao.ringSpeed *= r.factor
+      }
+    }
+  }
 
   // === 5. 攻撃：命中（発射型）／掃射（軌道型）／暴発 ===
   const allyShots: AllyShot[] = []
@@ -703,60 +827,16 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     let misfirePos: Vec2 | null = null
     let hitEnemyId: string | null = null
     let hitArcLen = 0
+    // 敵結界による減速・霧散はセクション 4.5 で飛行（減衰イベント）へ反映済み。
+    // ここでは更新済みの飛行に対して素直に命中判定する（hit.speed は結界の減速を含む）。
     const hit = firstHitAmong(flight.samples, enemyTargets())
-    // guardian の防御結界による減速（#28/#59）：命中までに敵の周回結界を横切ると、
-    // 交差点でパリィ（resolveParry）と同じ相互相殺を行う。自弾は削られ、結界も減速する
-    // （残れば新速度で回り続け、0 なら霧散）。反対極のみ相殺、同極・中立は透過。
-    let effSpeed = hit ? hit.speed : 0
-    if (hit && enemyGuardRings.length > 0) {
-      const playerPath = flight.samples.map((s) => s.pos)
-      for (const gr of enemyGuardRings) {
-        if (gr.broken || effSpeed <= 0) continue
-        const inter = ringInterception(gr.ring, playerPath)
-        if (!inter.crossed || inter.enemyIndex === undefined || inter.ringZ === undefined) continue
-        const crossArc = flight.samples[Math.min(inter.enemyIndex, flight.samples.length - 1)]?.arcLen ?? 0
-        if (crossArc >= hit.arcLen) continue // 命中後の交差は無視
-        const vCross = inter.ringSpeed ?? 0 // 横断点での結界速度（#60：平均でない）
-        if (vCross <= 0) continue
-        const bZ = zfieldAt(traj, inter.pos ?? hit.pos)
-        const bStr = strengthOf(bZ)
-        const ringStr = strengthOf(inter.ringZ)
-        // A=結界（速度=横断点の vCross）、B=自弾（速度=effSpeed）
-        const parry = resolveParry(attributeOf(inter.ringZ), vCross, vCross * ringStr, attributeOf(bZ), effSpeed, effSpeed * bStr)
-        if (parry.passthrough) continue // 同極・中立は透過
-        if (inter.pos) {
-          // 威力＝結界威力(強度×横断点速度)＋自弾威力(速度×強度)（#38）
-          clashes.push({ pos: inter.pos, power: ringStr * vCross + effSpeed * bStr })
-        }
-        // 結界も減速（#59/#60）：横断点の減速率で全体を失速。0 なら霧散
-        if (parry.vanishA) {
-          gr.broken = true
-        } else {
-          const f = parry.speedA / vCross
-          gr.ring = scaleRingSpeeds(gr.ring, f)
-          gr.ringSpeed *= f // 代表速度も同率で更新（描画フォールバック用）
-        }
-        gr.commit() // 減速/破れを元データ（新規結界 or 持続結界）へ書き戻す
-        effSpeed = parry.speedB // 自弾は相互相殺ぶん減速
-        if (effSpeed <= 0) {
-          effSpeed = 0
-          break
-        }
-      }
-    }
-    if (hit && effSpeed <= 0) {
-      // 結界に阻まれて弾が散った（命中扱いにしない）
-      log.push({
-        kind: 'orbit',
-        text: `${nameOf(enemies, hit.id)}の結界が${nameOf(allies, p.cast.allyId)}の弾を阻んだ`,
-      })
-    } else if (hit) {
+    if (hit && hit.speed > 0) {
       hitEnemyId = hit.id
       hitArcLen = hit.arcLen
       const idx = enemies.findIndex((e) => e.id === hit.id)
       const enemy = enemies[idx]
       const z = zfieldAt(traj, hit.pos)
-      const dmg = computeDamage(effSpeed, z, enemy.element)
+      const dmg = computeDamage(hit.speed, z, enemy.element)
       enemies[idx] = {
         ...enemy,
         hp: Math.max(0, enemy.hp - dmg.damage),
@@ -779,6 +859,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
         speed,
         enemies.filter((e) => e.hp > 0).map((e) => ({ id: e.id, pos: e.pos })),
         radius,
+        traj.origin ?? { x: 0, y: 0 }, // 自爆判定は術者（発射元）位置を基準にする
       )
       for (const id of mis.hitIds) {
         const idx = enemies.findIndex((e) => e.id === id)
@@ -806,6 +887,8 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
         const misArc = flight.samples[flight.samples.length - 1]?.arcLen ?? 0
         misfireCarveWalls(misfirePos, obstacles, p.carves, misArc, radius)
       }
+      // 暴発は AoE 内の結界にも最大威力でパリィ相当の減速を与える（§3.5）。敵味方の結界を問わず
+      blastOrbits(misfirePos, radius)
       misfires.push({ pos: misfirePos, owner: 'player' }) // 解決した暴発は膜を削る（04b §4b.1）
       log.push({
         kind: 'misfire',
@@ -840,9 +923,16 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
         const ring = p.ring as RingPoint[]
         return { ring, attr: ringAverageAttr(ring), radius: ringRadius(ring) }
       }),
-    // 永続周回も毎ターン内側へ効果を及ぼす（#39：破壊されるまで回復・隠蔽が続く）
+    // 永続周回も毎ターン内側へ効果を及ぼす（#39：破壊されるまで回復・隠蔽が続く）。
+    // 同IDで張り直された周回は新リング側で数える（二重カウント防止）
     ...activeOrbits
-      .filter((ao) => ao.owner === 'player' && !destroyedOrbitIds.has(ao.id) && ao.ring.length >= 3)
+      .filter(
+        (ao) =>
+          ao.owner === 'player' &&
+          !destroyedOrbitIds.has(ao.id) &&
+          !recastPlayerOrbitIds.has(ao.id) &&
+          ao.ring.length >= 3,
+      )
       .map((ao) => {
         const ring = ao.ring as RingPoint[]
         return { ring, attr: ringAverageAttr(ring), radius: ringRadius(ring) }
@@ -884,10 +974,24 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
 
   // 敵 guardian の結界も内側の敵へ効果を及ぼす（#61）：光=毎ターン固定回復。
   // 闇=視認阻害はゲーム数値でなく作成フェーズの描画（ぼかし＋z場/予測経路を隠す）で表現する。
-  // 新規結界＋持続する敵結界（#61）の両方が内側の敵を回復させる
-  const enemyAuras = enemyGuardRings
-    .filter((r) => !r.broken && r.ring.length >= 3)
-    .map((r) => ({ ring: r.ring, attr: ringAverageAttr(r.ring), radius: ringRadius(r.ring) }))
+  // 持続している敵結界（前ターン展開・owner='enemy'）も破壊されるまで毎ターン効果を持つ（#61）。
+  const enemyAuras = [
+    ...enemyRings
+      .filter((r) => !r.broken && r.ring.length >= 3)
+      .map((r) => ({ ring: r.ring, attr: ringAverageAttr(r.ring), radius: ringRadius(r.ring) })),
+    ...activeOrbits
+      .filter(
+        (ao) =>
+          ao.owner === 'enemy' &&
+          !destroyedOrbitIds.has(ao.id) &&
+          !recastOrbitIds.has(ao.id) &&
+          ao.ring.length >= 3,
+      )
+      .map((ao) => {
+        const ring = ao.ring as RingPoint[]
+        return { ring, attr: ringAverageAttr(ring), radius: ringRadius(ring) }
+      }),
+  ]
   if (enemyAuras.length > 0) {
     for (let i = 0; i < enemies.length; i++) {
       if (enemies[i].hp <= 0) continue
@@ -947,7 +1051,8 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       ...allies.filter((a) => a.hp > 0).map((a) => ({ id: a.id, pos: a.pos })),
     ]
     const radius = nextMisfireRadius() // instability による半径ばらつき（04b §4b.3）
-    const mis = resolveMisfire({ type: 'invalid', pos: center }, shot.flight.endSpeed, targets, radius)
+    const casterPos = enemies.find((e) => e.id === shot.enemyId)?.pos ?? { x: 0, y: 0 }
+    const mis = resolveMisfire({ type: 'invalid', pos: center }, shot.flight.endSpeed, targets, radius, casterPos)
     for (const id of mis.hitIds) {
       const ei = enemies.findIndex((e) => e.id === id)
       if (ei >= 0) {
@@ -973,6 +1078,8 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       const misArc = shot.flight.samples[shot.flight.samples.length - 1]?.arcLen ?? 0
       misfireCarveWalls(center, obstacles, shot.carves, misArc, radius)
     }
+    // 暴発は AoE 内の結界にも最大威力でパリィ相当の減速を与える（§3.5・敵味方問わず）
+    blastOrbits(center, radius)
     shot.misfired = true
     misfires.push({ pos: center, owner: 'enemy' })
     log.push({
@@ -981,14 +1088,17 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     })
   }
 
-  // 永続周回の更新（#39）：相殺されなかった既存周回＋今ターン新規に張った（壊れていない）周回を持ち越す。
-  // 所有者が倒れた周回は残さない（張り手を失えば結界も消える）。味方所有は生存味方、敵所有（#61）は生存敵で存続判定する。
+  // 永続周回の更新（#39/#61）：相殺されなかった既存周回＋今ターン新規に張った（壊れていない）周回を持ち越す。
+  // 所有者が倒れた周回は残さない（張り手を失えば結界も消える）。敵結界（owner='enemy'）も同様に持続する。
   const aliveAllyIds = new Set(allies.filter((a) => a.hp > 0).map((a) => a.id))
   const aliveEnemyIds = new Set(enemies.filter((e) => e.hp > 0).map((e) => e.id))
+  // 同IDで張り直された古い周回は新リング側の結果に置き換える（新リングが壊れたら結界は失われる）
   const survivingPersistent = activeOrbits.filter(
     (ao) =>
       !destroyedOrbitIds.has(ao.id) &&
-      (ao.owner === 'enemy' ? aliveEnemyIds.has(ao.ownerId) : aliveAllyIds.has(ao.ownerId)),
+      !recastPlayerOrbitIds.has(ao.id) &&
+      !recastOrbitIds.has(ao.id) &&
+      (ao.owner === 'player' ? aliveAllyIds : aliveEnemyIds).has(ao.ownerId),
   )
   const newOrbits: ActiveOrbit[] = plans
     .filter((p) => p.kind === 'orbit' && p.ring && p.ring.length >= 3 && !p.ringBroken && aliveAllyIds.has(p.cast.allyId))

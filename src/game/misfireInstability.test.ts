@@ -5,6 +5,7 @@ import {
   misfireRadius,
   misfireRadiusBand,
   anomalyLevel,
+  collapseProximity,
   shouldFirstCollapse,
   isLethal,
   remainingMisfires,
@@ -50,11 +51,27 @@ describe('半径ばらつき v(count)（04b §4b.3）', () => {
 })
 
 describe('三段階の開示（04b §4b.2）', () => {
-  it('異変の段階は count 単調増', () => {
+  it('異変は崩壊まで残り1/3（misfireLimit×2/3）から始まり、count 単調増', () => {
+    const start = Math.ceil((INSTABILITY.misfireLimit * 2) / 3) // 既定=8
     expect(anomalyLevel(0)).toBe(0)
-    expect(anomalyLevel(2)).toBe(1)
-    expect(anomalyLevel(4)).toBe(2)
-    expect(anomalyLevel(5)).toBe(3)
+    expect(anomalyLevel(start - 1)).toBe(0) // 残り1/3 より手前は静か（予兆は半径ブレのみ）
+    expect(anomalyLevel(start)).toBe(1) // 亀裂が入り背景が波打つ
+    expect(anomalyLevel(INSTABILITY.misfireLimit - 2)).toBe(2) // 崩れかけ
+    expect(anomalyLevel(INSTABILITY.misfireLimit - 1)).toBe(3) // 崩壊目前
+    expect(anomalyLevel(INSTABILITY.misfireLimit)).toBe(3)
+  })
+
+  it('半径ブレは崩壊まで残り2/3（misfireLimit×1/3）から始まる', () => {
+    expect(INSTABILITY.vStart).toBe(Math.ceil(INSTABILITY.misfireLimit / 3))
+    expect(varianceOf(INSTABILITY.vStart - 1)).toBe(0)
+    expect(varianceOf(INSTABILITY.vStart + 1)).toBeGreaterThan(0)
+  })
+
+  it('崩壊への接近度 collapseProximity は 0..1（揺れ・瓦礫のスケールに使う）', () => {
+    expect(collapseProximity(0)).toBe(0)
+    expect(collapseProximity(INSTABILITY.misfireLimit / 2)).toBeCloseTo(0.5, 10)
+    expect(collapseProximity(INSTABILITY.misfireLimit)).toBe(1)
+    expect(collapseProximity(99)).toBe(1)
   })
 
   it('初回崩壊：閾値到達で起きる（閾値優先）', () => {

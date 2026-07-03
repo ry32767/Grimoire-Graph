@@ -112,8 +112,10 @@ intensity = 1 − (elapsed − flashStart)/FLASH_MS    // 1→0 に減衰
 |---|---|---|
 | 暴発予告（崩し手） | `drawRuptureWarning` | 対詠の晒しフェーズで、計画された暴発点に赤い✕＋AoE 見込み範囲の**不安定に揺れる破線円**。予告がある間は作成フェーズもアニメーションループを回す |
 | 崩し手のロール記号 | `drawRoleMarker`（role='ruptor'） | 縁から外へ走る赤い稲妻状のひび×3本（family glyph とは別の専用警告） |
-| ステージの異変（04b 第1幕） | `drawAnomaly` | instability 段階に応じて：背景の横縞が波打つ（1）→床のひび（2）→画面周縁が赤黒く脈動（3）。数値は見せない |
-| 暴発半径のブレ帯 | `drawMisfireBand` | プレビューの暴発✕の周囲に min–max の二重破線リング（04b §4b.3） |
+| ステージの異変（04b） | `drawAnomaly` | 崩壊まで**残り1/3**（count≥misfireLimit×2/3）から開始。段階に応じて：亀裂＋背景の波打ち（1）→崩れかけ（2）→ひび増加＋画面周縁が赤黒く脈動（3）。数値は見せない |
+| 暴発半径のブレ帯 | `drawMisfireBand` | 崩壊まで**残り2/3**（count≥vStart）から、プレビューの暴発✕の周囲に min–max の二重破線リング（04b §4b.3） |
+| 暴発の激化（04b） | `BattleCanvas`（doom） | 崩壊へ近づくほど（doom=count/misfireLimit）暴発時の**画面の揺れ**（×(1+doom×1.5)）と**降る瓦礫の量**（×(1+doom×2)）が増える |
+| 破局（致死崩壊） | `BattleCanvas`（collapse） | **暴発の効果範囲がステージ全体を覆う**：原点中心・半径 rField の暴発渦（`drawMisfire`）＋強まる揺れ＋最大量の瓦礫＋終盤の白熱フェード（約3秒）→ ゲームオーバーへ |
 | 膜メーター | `Hud.tsx InstabilityMeter` | 初回崩壊後のみ表示。12 目盛り＋「あと N 回で崩壊」。残り2回以下で赤点滅 |
 | 物語オーバーレイ | `App.tsx storyOverlay` | RUPTOR_DEMO／COLLAPSE_FIRST／COLLAPSE_PHASE／COLLAPSE_FINAL をモーダルで一度ずつ表示 |
 | 敵の暴発爆発 | 既存 `drawMisfire` を敵弾にも適用 | `EnemyShot.misfired` のとき弾の終端で爆発（味方の暴発と同じ演出） |
@@ -129,7 +131,7 @@ intensity = 1 − (elapsed − flashStart)/FLASH_MS    // 1→0 に減衰
 | 1b | z 場エラー overlay（編集時・#30） | 場がエラーになる地点を全て赤 `rgba(255,60,60,0.5)`（`drawZFieldErrors`）。極=赤い線（二分法 `isPoleBetween` で検出）、定義域外=赤い領域 |
 | 2 | 敵ゴースト軌道（予告） | `COLORS.ghost` の破線 `[5,4]` |
 | 3 | 障害物 | solids（円）＋rects（四角・#56）を描き carves を `destination-out` で打ち抜き、種別ごとのピクセルアート・タイルを `source-atop` で敷き詰める（石積み/亀裂/鋲/鋼板） |
-| 4 | 味方の予測軌道（編集時） | z で色分けした線（光=金/闇=紫/中立=淡）、強度で線幅 |
+| 4 | 味方の予測軌道（編集時） | 中立色の線（#21：プレビューでは z＝属性を線色で見せない。属性は z 場オーバーレイ側で読む） |
 | 4b | 暴発点マーカー（編集時・#30） | 関数（軌道 or z 場）がエラーで暴発する点に**赤い ✕**（`drawMisfireMarker`・`#ff4b4b`・最前面）。`Preview.misfirePos` 由来 |
 | 5 | 敵 | オーラ→暗い下地→属性枠→ロール印（guardian=二重破線/breaker=棘）→**種族別スプライト**（`drawSpeciesSprite`：oni/wraith/redWraith/golem/proto を species×tier で手続き描画。ボスは `drawBossSprite`・#46/#51）→系統 glyph→名前ラベル→被弾フラッシュ。撃破時は生存スプライトを隠し消滅アニメ（`drawEnemyDeath`/`drawBossCollapse`）へ譲る |
 | 6 | 味方術者 | オーラ→アクティブ強調リング（破線）→ドット絵スプライト→隠蔽ヴェール→名前→被弾フラッシュ |

@@ -176,6 +176,11 @@ interface Props {
   ghostMisfires?: (Vec2 | null)[]
   /** ステージの異変の段階（04b §4b.2：0=静か〜3=崩壊目前）。背景の歪み・ひびで危うさを示す */
   anomaly?: number
+  /** 崩壊への接近度 0..1（04b §4b.3）。暴発時の画面の揺れ・瓦礫の量がこれでスケールする */
+  doom?: number
+  /** 破局（致死崩壊・04b §4b.2）：true でステージ全体を覆う暴発演出を再生し、完了で onCollapseDone */
+  collapse?: boolean
+  onCollapseDone?: () => void
   /** 暴発半径のブレ帯（04b §4b.3）。プレビューの✕の周りにぼやけた二重リングを描く */
   misfireBand?: { min: number; max: number }
   /** 編集中の z 場（#37）。showZField が真の間（作成フェーズは常時・#55）薄い場として表示する */
@@ -319,6 +324,7 @@ export default function BattleCanvas(props: Props) {
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
+    if (props.collapse) return // 破局（致死崩壊）演出中は専用エフェクトがキャンバスを占有する
 
     if (!props.animation) {
       // 作成フェーズ：持続周回があれば粒を回し続ける（#39）。無ければ1回だけ描画（z場プレビュー含む・#37）。
@@ -521,8 +527,10 @@ export default function BattleCanvas(props: Props) {
         const sh = Math.max(0, 1 - mp * 1.6) // 直後が最強
         if (sh > mfShake) mfShake = sh
       })
-      // ステージ全体をガタガタ揺らす（ズレで端に隙間が出ないよう、先に背景で塗りつぶす）
-      const gAmp = mfShake * 9
+      // ステージ全体をガタガタ揺らす（ズレで端に隙間が出ないよう、先に背景で塗りつぶす）。
+      // 崩壊へ近づくほど揺れが強くなる（04b §4b.3：doom=count/misfireLimit で最大 2.5 倍）
+      const doom = Math.max(0, Math.min(1, props.doom ?? 0))
+      const gAmp = mfShake * 9 * (1 + doom * 1.5)
       const gx = mfShake > 0 ? Math.sin(elapsed * 0.07) * gAmp : 0
       const gy = mfShake > 0 ? Math.cos(elapsed * 0.085) * gAmp : 0
       if (mfShake > 0) {
@@ -705,8 +713,9 @@ export default function BattleCanvas(props: Props) {
         })
       }
 
-      // 暴発：上空から遺跡の破片が降ってくる（ステージ全体・揺れの中で・#41）
-      if (mfProgress > 0 && mfProgress < 1) drawFallingDebris(ctx, vp, mfProgress)
+      // 暴発：上空から遺跡の破片が降ってくる（ステージ全体・揺れの中で・#41）。
+      // 崩壊へ近づくほど瓦礫が増える（04b §4b.3：doom で量をスケール・最大3倍）
+      if (mfProgress > 0 && mfProgress < 1) drawFallingDebris(ctx, vp, mfProgress, 1 + doom * 2)
 
       ctx.restore() // ステージ全体シェイクの translate を戻す
 
@@ -749,13 +758,84 @@ export default function BattleCanvas(props: Props) {
     props.playerPaths,
     props.misfirePoints,
     props.ghostPaths,
+    props.ghostMisfires,
     props.zField,
     props.showZField,
     props.standingOrbits,
     props.fitPoints,
     props.aimAngle,
     props.rField,
+    props.anomaly,
+    props.misfireBand,
+    props.doom,
+    props.collapse,
   ])
+
+  // 破局（致死崩壊・04b §4b.2）：暴発の効果範囲がステージ全体を覆い、場そのものが呑まれる演出。
+  // 揺れは進行とともに強まり、瓦礫は最大量で降り続け、最後は白熱へ溶けて onCollapseDone を呼ぶ。
+  const collapseDoneRef = useRef(props.onCollapseDone)
+  collapseDoneRef.current = props.onCollapseDone
+  useEffect(() => {
+    if (!props.collapse) return
+    const canvas = ref.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    const COLLAPSE_MS = 3000
+    let finished = false
+    const t0 = performance.now()
+    let raf = 0
+    const done = () => {
+      if (finished) return
+      finished = true
+      collapseDoneRef.current?.()
+    }
+    const frame = (now: number) => {
+      if (finished) return
+      const elapsed = now - t0
+      const progress = Math.min(1, elapsed / COLLAPSE_MS)
+      // 揺れ：進行とともに強く（通常の暴発より大きい）
+      const amp = 6 + progress * 16
+      const gx = Math.sin(elapsed * 0.07) * amp
+      const gy = Math.cos(elapsed * 0.085) * amp
+      ctx.fillStyle = COLORS.bg
+      ctx.fillRect(0, 0, INTERNAL, INTERNAL)
+      ctx.save()
+      ctx.translate(gx, gy)
+      drawScene(ctx, {
+        ...staticParams,
+        playerPaths: undefined,
+        misfirePoints: undefined,
+        ghostPaths: undefined,
+        ghostMisfires: undefined,
+        showZField: false,
+        anomaly: 3, // 崩壊目前の異変を最大で重ねる
+        shakePhase: elapsed * 0.05,
+      })
+      // ステージ全体を覆う暴発（AoE＝場外境界 rField・面/フェーズで可変）＝膜の破れが場を丸ごと呑む
+      drawMisfire(ctx, { x: 0, y: 0 }, progress, vp, props.rField ?? FIELD.rField)
+      // 瓦礫は最大量で繰り返し降り続ける
+      drawFallingDebris(ctx, vp, (elapsed % 1100) / 1100, 3.5)
+      ctx.restore()
+      // 終盤は白熱へ溶けていく（暴発の中心が白く埋まる質感と揃える・#41）
+      if (progress > 0.72) {
+        ctx.globalAlpha = Math.min(1, (progress - 0.72) / 0.28)
+        ctx.fillStyle = '#fff8e1'
+        ctx.fillRect(0, 0, INTERNAL, INTERNAL)
+        ctx.globalAlpha = 1
+      }
+      if (elapsed < COLLAPSE_MS) raf = requestAnimationFrame(frame)
+      else done()
+    }
+    raf = requestAnimationFrame(frame)
+    const timer = setTimeout(done, COLLAPSE_MS + 400)
+    return () => {
+      finished = true
+      cancelAnimationFrame(raf)
+      clearTimeout(timer)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.collapse])
 
   // ポインタ位置を数学座標へ変換（内部解像度と表示サイズの差を補正）
   const eventToMath = (e: { clientX: number; clientY: number }): Vec2 | null => {
