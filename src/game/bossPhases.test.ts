@@ -30,7 +30,8 @@ describe('多重詠唱（#44・05b §5.5）', () => {
   })
 
   it('多重詠唱のパターン別 family/z（06b §6 第7面・B.7）', () => {
-    // 火力型（breaker）弾＝family 制約なし＋一定 z（castZ）／迂回型（attacker）弾＝abs/arc/poly34 のみ＋castZField。
+    // 火力型（breaker）弾＝family 制約なし＋自前 z（一定 or ランプ。castZField は使わない）／
+    // 迂回型（attacker）弾＝abs/arc/poly34 のみ＋castZField（sin/cos）。
     const sinField: ZField = (x) => 2.0 * Math.sin(0.2 * x)
     const boss = baseEnemy({
       family: 'line', families: ['line', 'exp', 'abs', 'poly34'],
@@ -39,7 +40,7 @@ describe('多重詠唱（#44・05b §5.5）', () => {
     const allies = [ally('a', { x: -8, y: -14 }), ally('b', { x: 8, y: -14 })]
     const plans = planEnemyShots(boss, allies)
     expect(plans).toHaveLength(2)
-    // 各弾の曲率と、経路上2点での z のばらつき（一定場か非一様場か）を測る
+    // 各弾の曲率と、経路上の |z| の最大値（castZField の振幅 2.0 か、火力型の zPeak 級か）を測る
     const measure = (p: (typeof plans)[number]) => {
       const { path } = enemyFlight(p.trajectory, 8)
       const s = path[0]
@@ -47,17 +48,17 @@ describe('多重詠唱（#44・05b §5.5）', () => {
       const mid = path[Math.floor(path.length / 2)]
       const L = dist(e, s) || 1
       const curve = Math.abs((e.x - s.x) * (s.y - mid.y) - (s.x - mid.x) * (e.y - s.y)) / L
-      // 経路上の2点で z が変わるか（一定場なら差 0、sin/cos なら差あり）
-      const zSpread = Math.abs(zfieldAt(p.trajectory, mid) - zfieldAt(p.trajectory, path[Math.floor(path.length * 0.8)]))
-      return { curve, zSpread }
+      const zMax = Math.max(...path.map((pt) => Math.abs(zfieldAt(p.trajectory, pt))))
+      return { curve, zMax }
     }
     const [m0, m1] = plans.map(measure)
-    // 火力型弾：直進（line 可）で曲率ほぼ 0、z は一定場（castZField を使わない＝2点で同じ）
+    // 火力型弾：直進（line 可）で曲率ほぼ 0。castZField（振幅2.0）を使わず、
+    // 一定 zPeak/zRef またはランプで |z| が 2.0 を明確に超える点を持つ
     expect(m0.curve).toBeLessThan(0.5)
-    expect(m0.zSpread).toBeCloseTo(0, 6)
-    // 迂回型弾：line/exp 不可で必ず曲がる。z は sin/cos の castZField（経路上で変化する＝非一様）
+    expect(m0.zMax).toBeGreaterThan(2.2)
+    // 迂回型弾：line/exp 不可で必ず曲がる。z は sin/cos の castZField（|z|≤振幅2.0）
     expect(m1.curve).toBeGreaterThan(2)
-    expect(m1.zSpread).toBeGreaterThan(0)
+    expect(m1.zMax).toBeLessThanOrEqual(2.0 + 1e-9)
   })
 
   it('resolveTurn は castCount ぶんの敵弾を同時発射する', () => {

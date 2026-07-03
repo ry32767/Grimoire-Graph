@@ -54,11 +54,24 @@ describe('ステージ定義（機能14・#15）', () => {
         for (const r of rects) {
           expect(r.w).toBeGreaterThan(0)
           expect(r.h).toBeGreaterThan(0)
-          // 四隅とも場内（矩形の全4角）
-          expect(dist({ x: r.x, y: r.y })).toBeLessThan(rField)
-          expect(dist({ x: r.x + r.w, y: r.y })).toBeLessThan(rField)
-          expect(dist({ x: r.x, y: r.y + r.h })).toBeLessThan(rField)
-          expect(dist({ x: r.x + r.w, y: r.y + r.h })).toBeLessThan(rField)
+          // 翼壁（#50）は境界ぎわの回り込み抜けを塞ぐため、外側の縁を場境界まで（＝わずかに場外へ）
+          // 伸ばす必要がある。円形の場では矩形の外側の角が境界円を必ずはみ出すので、翼壁は例外扱い。
+          const isWingWall = o.kind === 'unbreakable' && o.element === 'neutral' && Math.max(Math.abs(r.x), Math.abs(r.x + r.w)) > 15
+          if (isWingWall) {
+            // 翼壁：内側の角は場内、外側の縁は境界へ到達（sealing）していること
+            const innerX = Math.abs(r.x) < Math.abs(r.x + r.w) ? r.x : r.x + r.w
+            const outerX = Math.abs(r.x) < Math.abs(r.x + r.w) ? r.x + r.w : r.x
+            expect(dist({ x: innerX, y: r.y })).toBeLessThan(rField)
+            expect(dist({ x: innerX, y: r.y + r.h })).toBeLessThan(rField)
+            // 外縁は場境界以上（|x| >= rField）まで伸び、帯の側面を塞ぐ
+            expect(Math.abs(outerX)).toBeGreaterThanOrEqual(rField)
+          } else {
+            // 通常の障害物は四隅とも場内（矩形の全4角）
+            expect(dist({ x: r.x, y: r.y })).toBeLessThan(rField)
+            expect(dist({ x: r.x + r.w, y: r.y })).toBeLessThan(rField)
+            expect(dist({ x: r.x, y: r.y + r.h })).toBeLessThan(rField)
+            expect(dist({ x: r.x + r.w, y: r.y + r.h })).toBeLessThan(rField)
+          }
         }
       }
     }

@@ -438,16 +438,18 @@ export function planRuptorShot(
   const own = avoiderFamiliesOf(enemy).filter((f) => AVOIDER_FAMILIES.includes(f))
   const fams = own.length > 0 ? own : [...AVOIDER_FAMILIES]
 
+  type AimResult = { traj: Trajectory; d: number; rank: number; end: Vec2 }
+
   /**
-   * 指定の狙点に極を仕込み、最良の軌道を探す。
+   * 指定の狙点に極を仕込み、与えた family 集合の中で最良の軌道を探す。
    * 「極に到達して暴発する（ruptured）」かつ「途中で壁の素材に触れない（clear）」候補を最優先し、
    * その中で暴発点が狙点に最も近いものを選ぶ（暴発型の立ち回りは迂回型と同じ・05b §5.3）。
    */
-  const searchAim = (aim: Vec2): { traj: Trajectory; d: number; rank: number; end: Vec2 } | null => {
+  const searchAimWith = (aim: Vec2, tryFams: readonly EnemyFamily[]): AimResult | null => {
     const z = buildRuptorZField(enemy.pos, aim, polarity)
     const base = aimAt(enemy.pos, aim)
     const hFold = dist(enemy.pos, aim) * ABS_H_RATIO
-    let best: { traj: Trajectory; d: number; rank: number; end: Vec2 } | null = null
+    let best: AimResult | null = null
     const consider = (traj: Trajectory) => {
       const { path, flight } = enemyFlight(traj, enemy.castInitialSpeed)
       if (path.length < 2 || flight.end === 'vanished') return // 失速する候補は捨てる
@@ -461,11 +463,33 @@ export function planRuptorShot(
         best = { traj, d, rank, end }
       }
     }
-    for (const fam of fams) {
+    for (const fam of tryFams) {
       for (const traj of familyTrajectories(fam, enemy.pos, base, z, hFold, fieldR)) consider(traj)
     }
     // 障害物があれば迂回軌道も試す（迂回型と同じ立ち回り・05b §5.3）
     for (const traj of avoiderTrajectories(enemy.pos, aim, z, obstacles, fieldR)) consider(traj)
+    return best
+  }
+
+  /**
+   * 指定の狙点に極を仕込み、最良の軌道を探す（AoE 到達圏ガードつき・バグ修正）。
+   * まず個体の得意 family（fams）で探す。暴発点が対象の AoE 到達圏（aoeRadius）から外れる
+   * ＝暴発しても対象へダメージが届かない場合は、暴発型の主力 family 一式（abs/arc/poly34）で
+   * 再探索し、より正確に極を置ける方を採る。arc 単独個体（第6面の崩し手・弧）が壁の無い盤面で
+   * 極を対象から大きく外し「暴発するのに無害」になる不具合を防ぐ（05b §4／§5.3）。
+   */
+  const searchAim = (aim: Vec2): AimResult | null => {
+    const best = searchAimWith(aim, fams)
+    // 圏内に置けている（暴発が対象へ届く）ならそのまま採用＝個体の family 個性を保つ
+    if (best && best.rank >= 2 && best.d < FIELD.aoeRadius) return best
+    // 圏外（無害）になる／暴発候補すら無いなら、主力 family 一式で最も正確な極を探す
+    const isFull = AVOIDER_FAMILIES.every((f) => fams.includes(f))
+    if (isFull) return best
+    const wide = searchAimWith(aim, AVOIDER_FAMILIES)
+    if (!wide) return best
+    if (!best) return wide
+    // rank（暴発到達＋クリーン）優先、同 rank なら暴発点が対象に近い方を採る
+    if (wide.rank > best.rank || (wide.rank === best.rank && wide.d < best.d)) return wide
     return best
   }
 
@@ -489,6 +513,33 @@ export function planRuptorShot(
     const D = Math.hypot(dir.x, dir.y) || 1
     const back = Math.max(0, D - stand) // 中心から stand だけ手前＝敵側
     return { x: enemy.pos.x + (dir.x / D) * back, y: enemy.pos.y + (dir.y / D) * back }
+  }
+
+  // 壁の手前に暴発点を引く補正（#48/#42・05b §4.6）：狙う味方が壁の奥に隠れているとき、
+  // 極（暴発点）を壁の敵側の面の手前に置く。手前で暴発させれば弾は壁に阻まれず極まで届き、
+  // 確実に暴発する（封印帯を「確実に積む」）。削れる壁なら AoE が壁も崩す。破壊不能壁でも、
+  // 手前で暴発させれば「暴発は必ず起こる」（崩せはしないが積みは成立する）。
+  // 敵→狙点の直線を細かく前進し、最初に素材へ触れる地点の手前に極を置く。
+  const wallFrontAim = (pos: Vec2): Vec2 => {
+    if (obstacles.length === 0) return pos
+    const dir = { x: pos.x - enemy.pos.x, y: pos.y - enemy.pos.y }
+    const L = Math.hypot(dir.x, dir.y)
+    if (L < 2) return pos
+    const ux = dir.x / L
+    const uy = dir.y / L
+    // 最初に素材（種別を問わず）へ触れる距離 s を探す
+    let sHit = -1
+    for (let s = 0.4; s <= L; s += 0.4) {
+      const p = { x: enemy.pos.x + ux * s, y: enemy.pos.y + uy * s }
+      if (obstacles.some((ob) => isSolidAt(ob, p))) {
+        sHit = s
+        break
+      }
+    }
+    if (sHit < 0) return pos // 壁に阻まれない＝補正不要（真位置を狙う）
+    // 壁の敵側の面より少し手前に極を置く（弾が壁へ触れる前に暴発させる）
+    const sFront = Math.max(0.5, sHit - RUPTOR.wallFrontMargin)
+    return { x: enemy.pos.x + ux * sFront, y: enemy.pos.y + uy * sFront }
   }
 
   // 障害物狙いの個体（第4面デモ・#42）：壁の素材（unbreakable 以外）の「面の手前」に暴発点を置く。
@@ -526,9 +577,10 @@ export function planRuptorShot(
     // 壁が全て崩れた等：以後は通常の味方狙いへフォールバック
   }
 
-  // 対象が結界に囲まれていれば、極をリング迎撃範囲の手前に置く（#48）。囲まれていなければ真位置を狙う
+  // 対象が結界に囲まれていれば、極をリング迎撃範囲の手前に置く（#48）。囲まれていなければ真位置を狙う。
+  // さらに、削れる壁の奥に隠れている対象なら極を壁面の手前へ引き、壁に阻まれず確実に暴発させる（#42）。
   const rawAim = aimOverride?.pos ?? perceivedPos(target)
-  const aimPos = aimOverride ? rawAim : ringFrontAim(rawAim)
+  const aimPos = aimOverride ? rawAim : wallFrontAim(ringFrontAim(rawAim))
   const targetId = aimOverride?.targetId ?? target.id
   const best = searchAim(aimPos)
   if (!best) return null
@@ -620,25 +672,27 @@ export function planEnemyShot(
   // 火力型は family 制約なし。迂回型（attacker）は abs/arc/poly34 のみに絞る（#46・05b §2）。
   const breaker = enemy.role === 'breaker'
   const families = breaker ? enemyFamilies(enemy) : avoiderFamiliesOf(enemy)
+  // 破壊不能壁（unbreakable）は削れず必ず弾を止める＝経路が横切る候補は全ロールで棄却（バグ修正）
+  const unbreakables = obstacles.filter((ob) => (ob.kind ?? 'normal') === 'unbreakable')
 
-  let best: EnemyPlan | null = null
+  let best: EnemyPlan | null = null // 素材に触れないクリーンな候補（迂回型はこちらを最優先）
+  let bestBlocked: EnemyPlan | null = null // 削れる壁を貫く候補（クリーンな経路が無いときの後段）
   // 候補軌道を1つ評価して best を更新する（#28：直進系も迂回系も同じ採点）。
   // maneuver は迂回の取り回しコスト（1=直進・<1=遠回り）。同条件なら直進/貫通が勝つ。
   const consider = (traj: Trajectory, ally: Ally, aimPos: Vec2, bAttr: ReturnType<typeof attributeOf>, bStr: number, maneuver: number) => {
     const { flight } = enemyFlight(traj, enemy.castInitialSpeed)
     const hit = firstHit(flight.samples, aimPos, GAME.allyHitbox)
     if (!hit || hit.speed <= 0) return // 失速して届かない（速度0）候補は捨てる（#31）
-    // 障害物（素材）が手前にあると弾が削れる＝評価を下げる（breaker は貫くので無視）
-    let penalty = 1
-    if (!breaker) {
-      for (const sm of flight.samples) {
-        if (sm.arcLen >= hit.arcLen) break
-        if (obstacles.some((ob) => isSolidAt(ob, sm.pos))) {
-          penalty = 0.55
-          break
-        }
-      }
+    // 経路上の素材チェック：unbreakable を横切る候補は棄却（breaker でも貫けない）。
+    // 削れる壁に触れる候補は blocked（迂回型は「回り込めるルートが無いとき」だけ採用する）
+    let blocked = false
+    for (const sm of flight.samples) {
+      if (sm.arcLen >= hit.arcLen) break
+      if (unbreakables.some((ob) => isSolidAt(ob, sm.pos))) return
+      if (!blocked && obstacles.some((ob) => isSolidAt(ob, sm.pos))) blocked = true
     }
+    // 障害物（素材）が手前にあると弾が削れる＝評価を下げる（breaker は貫くので無視）
+    const penalty = blocked && !breaker ? 0.55 : 1
     const baseDmg = hit.speed * bStr * affinityMultiplier(bAttr, ally.element) * penalty * maneuver
     // とどめを刺せる相手を最優先、次に手負い（割合）を優先
     const killBonus = baseDmg >= ally.hp ? 2.2 : 1
@@ -646,6 +700,13 @@ export function planEnemyShot(
     // 絶対HPが低い相手をわずかに優先（同割合なら低HPを狙う）
     const lowHpBias = 1 + Math.max(0, (60 - ally.hp) / 60) * 0.25
     const score = baseDmg * killBonus * woundFocus * lowHpBias
+    // 迂回型（非 breaker）は壁を貫く候補を別枠に落とす＝回り込める候補があれば必ずそちらを選ぶ（バグ修正）
+    if (blocked && !breaker) {
+      if (!bestBlocked || score > bestBlocked.expectedDamage) {
+        bestBlocked = { trajectory: traj, targetId: ally.id, expectedDamage: score }
+      }
+      return
+    }
     if (!best || score > best.expectedDamage) {
       best = { trajectory: traj, targetId: ally.id, expectedDamage: score }
     }
@@ -675,6 +736,18 @@ export function planEnemyShot(
         }
       }
     }
+    // 火力型のランプ z 場（05b §3 指数系・バグ修正）：飛行中は |z|≈0（中庸＝最大加速）を保ち、
+    // 命中直前に |z|→zPeak へ立ち上げる。「速度を出しつつ最大強度で当てる」火力型らしい候補。
+    // 採点は命中点の実速度×強度で行うので、一定場より有利なら自然に選ばれる。
+    if (breaker && !enemy.castZField) {
+      const Lr = dist(enemy.pos, aimPos) || 1
+      const sign = ally.element === 'light' ? -1 : 1 // 反対極を突く
+      const ramp: ZField = (x, y) => {
+        const t = Math.min(1, Math.hypot(x, y) / Lr)
+        return sign * FIELD.zPeak * Math.pow(t, COMBAT.breakerRampPow)
+      }
+      zCands = [...zCands, { z: ramp, zVal: sign * FIELD.zPeak }]
+    }
     const base = aimAt(enemy.pos, aimPos)
     const hFold = dist(enemy.pos, aimPos) * ABS_H_RATIO
     // 得意関数を1～2個すべて試す（#28：複数関数を組み合わせて戦う。poly34 の 3〜5 次・abs の折れ点は
@@ -696,6 +769,8 @@ export function planEnemyShot(
     }
   }
   if (best) return best
+  // 回り込めるクリーンな経路が1つも無いときだけ、削れる壁を貫く候補を採用する（バグ修正）
+  if (bestBlocked) return bestBlocked
 
   // 命中見込みなし：最もHPが低い味方へ直進で牽制（見える相手・見かけ位置へ・#35）。
   // 牽制弾も失速しないよう、減速しない zRef（反対極）で撃つ（#31）。

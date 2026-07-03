@@ -138,6 +138,11 @@ export default function App() {
   const [activeAllyId, setActiveAllyId] = useState<string>('')
   const [animation, setAnimation] = useState<ResolveAnimation | null>(null)
   const [pendingState, setPendingState] = useState<BattleState | null>(null)
+  // DoT（burn）撃破の消滅演出（バグ修正）：prepareTurn で継続ダメージにより倒れた敵の
+  // 撃破アニメを一度挟むあいだ、準備済みの次ターン状態をここへ退避しておき、演出後に適用する。
+  // これがある間の onAnimationDone は prepareTurn を再実行せず、退避した prep をそのまま反映する
+  // （DoT の二重適用を防ぐ＝ロジック不変・演出のみ）。
+  const pendingPrepRef = useRef<ReturnType<typeof prepareTurn> | null>(null)
   // #46：通過点フィット。点ピック中フラグと、選んだ通過点（数学座標）
   const [fitPickActive, setFitPickActive] = useState(false)
   const [fitPoints, setFitPoints] = useState<Vec2[]>([])
@@ -332,7 +337,7 @@ export default function App() {
         ? e
         : best,
     )
-    const r = recommendCast(ally.pos, target, battle?.mechanics.obstacles ? battle.obstacles : [])
+    const r = recommendCast(ally.pos, target, battle?.mechanics.obstacles ? battle.obstacles : [], battle?.rField)
     // z 場は敵の反対極を最強で当てる一定値（#21）。係数化フローに乗せる（#52）
     const zPatch = { zPresetId: 'const', zCoeffs: { c: r.zConst }, ...zParametricPatch(`${r.zConst}`) }
     const expr = r.line ? `${r.line.a}*x` : (r.freeExpr ?? '')
@@ -563,7 +568,39 @@ export default function App() {
 
   const snapshotTime = () => setClearSnapshotMs(performance.now() - (runStartMs ?? performance.now()))
 
+  /** 準備済みの次ターン状態を盤面へ反映する（onAnimationDone の後半・DoT撃破演出の後にも再利用）。 */
+  const applyPreparedTurn = (prep: ReturnType<typeof prepareTurn>) => {
+    setBattle(prep.state)
+    setCastingIds(prep.castingEnemyIds)
+    setImpairedIds(prep.impairedAllyIds)
+    setView('stage') // 次ターンは盤面（ステージ）画面から始める（#48）
+    setTouchedAllies(new Set()) // #49：準備状況は毎ターンリセット
+    const stillActive = prep.state.allies.find((a) => a.id === activeAllyId)
+    if (!stillActive || stillActive.hp <= 0) {
+      const firstAlive = prep.state.allies.find((a) => a.hp > 0)
+      if (firstAlive) setActiveAllyId(firstAlive.id)
+    }
+    if (prep.state.outcome === 'cleared') {
+      playSfx('clear')
+      snapshotTime()
+      setScreen('stageClear')
+    } else if (prep.state.outcome === 'gameover') {
+      playSfx('gameover')
+      setScreen('gameover')
+    }
+  }
+
   const onAnimationDone = () => {
+    // DoT（burn）撃破の消滅演出を挟んでいた場合は、準備済みの次ターンをそのまま反映して終える
+    // （prepareTurn は再実行しない＝継続ダメージの二重適用を防ぐ・演出のみ・バグ修正）。
+    if (pendingPrepRef.current) {
+      const prep = pendingPrepRef.current
+      pendingPrepRef.current = null
+      setAnimation(null)
+      setPendingState(null)
+      applyPreparedTurn(prep)
+      return
+    }
     const after = pendingState
     setAnimation(null)
     setPendingState(null)
@@ -624,24 +661,43 @@ export default function App() {
       return
     }
     const prep = prepareTurn(after)
-    setBattle(prep.state)
-    setCastingIds(prep.castingEnemyIds)
-    setImpairedIds(prep.impairedAllyIds)
-    setView('stage') // 次ターンは盤面（ステージ）画面から始める（#48）
-    setTouchedAllies(new Set()) // #49：準備状況は毎ターンリセット
-    const stillActive = prep.state.allies.find((a) => a.id === activeAllyId)
-    if (!stillActive || stillActive.hp <= 0) {
-      const firstAlive = prep.state.allies.find((a) => a.hp > 0)
-      if (firstAlive) setActiveAllyId(firstAlive.id)
+    // DoT（burn）撃破の消滅演出（バグ修正・05c §6.5）：prepareTurn の継続ダメージで hp>0→hp<=0 に
+    // なった敵は、通常命中・掃射・暴発と同じく種族別の撃破アニメで消す。位置・種族は撃破前（after）から取る。
+    // ボスは断末魔中は崩壊させない（通常撃破と同じ扱い）。演出のみでロジック（hp/勝敗）は不変。
+    const burnDeaths: EnemyDeath[] = []
+    for (const before of after.enemies) {
+      if (before.hp <= 0) continue
+      const now = prep.state.enemies.find((x) => x.id === before.id)
+      if (!now || now.hp > 0) continue
+      if (before.boss && prep.state.outcome !== 'cleared') continue
+      burnDeaths.push({
+        id: before.id,
+        pos: before.pos,
+        species: speciesOf(before),
+        element: before.element,
+        tier: tierOf(before.level),
+        hitboxRadius: before.hitboxRadius,
+        boss: before.boss,
+      })
     }
-    if (prep.state.outcome === 'cleared') {
-      playSfx('clear')
-      snapshotTime()
-      setScreen('stageClear')
-    } else if (prep.state.outcome === 'gameover') {
-      playSfx('gameover')
-      setScreen('gameover')
+    if (burnDeaths.length > 0) {
+      // 撃破演出を一度挟む：deaths だけのアニメを再生し、完了後に準備済みの次ターンを反映する。
+      // バグ修正：主解決（fireAll）で撃破済みの敵が burn 中間演出で生き返って見えないよう、
+      // 盤面を after（主解決後の敵配列）へ更新してから再生する。BattleCanvas は after.enemies を描くので、
+      // 主解決で hp<=0 の敵は隠れ、burnDeaths の敵だけが消滅アニメで消える。bossView も after 準拠にする。
+      pendingPrepRef.current = prep
+      setBattle({ ...after, phase: 'resolve' })
+      setAnimation({
+        bullets: [],
+        orbits: [],
+        clashes: [],
+        popups: [],
+        deaths: burnDeaths,
+        bossView: { phase: after.bossPhase, finale: after.finale, outcome: prep.state.outcome },
+      })
+      return
     }
+    applyPreparedTurn(prep)
   }
 
   // ===== 全画面（タイトル/物語/結果） =====

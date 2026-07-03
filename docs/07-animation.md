@@ -59,6 +59,9 @@ flightMs = min(MAX_MS, max(floorMs, maxTotal × MS_PER_GAMESEC(360)))
 
 敵 HP が 0 になった撃破を、種族ごとに描き分ける（**当たり判定・ダメージ計算には一切影響しない、描画タイムラインのみ**）。`ResolveAnimation.deaths[]`（`{id,pos,species,element,tier,hitboxRadius,boss}`）を App が「このターン hp>0→hp≤0 になった敵」から作り、`BattleCanvas` が `deathStartById[id]` に**そのフラッシュ開始時刻**（＝致命弾の到達）を記録して `progress` を進める。開始した敵は `hideEnemyIds` で生存スプライトを隠し、消滅アニメへ譲る。
 
+- **DoT（burn）撃破の消滅演出（バグ修正）**：継続ダメージ（闇属性が付与する `burn`）は解決フェーズ（`resolveAllyCasts`）ではなく**ターン開始の `prepareTurn`** で適用される（`turn.ts` には DoT 参照がない）。そのため通常命中・掃射・暴発と違い、解決直後の before/after 比較（`battle.enemies`→`after.enemies`）では DoT 撃破が拾えず、以前は**種族別の消滅アニメが一切再生されずに敵が無演出で消えていた**。現在は `onAnimationDone` で `prepareTurn(after)` を実行した直後に「`after` で hp>0→`prep.state` で hp≤0」になった敵を検出し（撃破前スナップショットは `after.enemies` から取る）、`deaths` だけの短いアニメを一度挟んでから次ターン盤面へ進む。この間は `pendingPrepRef` に準備済み状態を退避し、`onAnimationDone` が `prepareTurn` を**再実行しない**（DoT の二重適用を防ぐ）。ロジック（hp・勝敗）は不変で演出のみ追加。
+  - **同ターンに主解決の撃破と DoT 撃破が同居するときの盤面（バグ修正）**：burn 中間アニメを流す前に**盤面を `after`（主解決後の敵配列）へ更新**してから `setAnimation({deaths:burnDeaths, bossView})` する。これをしないと、`BattleCanvas` が主解決前の `battle.enemies`（全員 hp>0）を描き、`hideEnemyIds` は burnDeaths の ID しか含まないため、**主解決で撃破済みの敵が生存スプライトで一瞬“生き返って”見えた**。`after` を渡せば `drawEnemies` が hp≤0 の主解決撃破敵をそもそも描かず、burnDeaths の敵だけが消滅アニメで消える。ボスを burn で倒す場合の外見崩れも防ぐため `bossView`（phase/finale/outcome）も `after`/`prep` 準拠で渡す。
+
 | 種族 | 消滅の見た目 |
 |---|---|
 | 原型（proto） | ひび割れて光の粒になって崩れる（基準形） |

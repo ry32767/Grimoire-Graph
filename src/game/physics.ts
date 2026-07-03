@@ -165,6 +165,27 @@ export function simulatePath(
   return simulateProfile(buildPathProfile(points, initialSpeed, zAt), losses)
 }
 
+/**
+ * 弧長 arcLen の点に弾が達する「飛行時間」（Σ ds/v の台形積分・ゲーム秒）。
+ * 途中で失速（速度≈0）する・経路がそこまで届かない場合は Infinity（＝到達しない）。
+ * パリィの同時性判定（2弾が交点を同時刻に通過するか）に使う。
+ */
+export function timeToArc(samples: FlightSample[], arcLen: number): number {
+  if (samples.length === 0 || arcLen < 0) return Infinity
+  let t = 0
+  for (let i = 1; i < samples.length; i++) {
+    const prev = samples[i - 1]
+    const cur = samples[i]
+    const vAvg = (prev.speed + cur.speed) / 2
+    if (vAvg <= 1e-9) return Infinity // 失速区間＝この先へ進めない
+    if (arcLen <= cur.arcLen + 1e-9) {
+      return t + Math.max(0, arcLen - prev.arcLen) / vAvg
+    }
+    t += (cur.arcLen - prev.arcLen) / vAvg
+  }
+  return Infinity // 経路の終端より先＝到達しない
+}
+
 /** 飛行サンプルから、ある弧長以下で最後に到達した点（命中位置の補助）。 */
 export function sampleAtLength(flight: Flight, s: number): FlightSample | null {
   let found: FlightSample | null = null

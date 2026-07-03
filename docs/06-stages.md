@@ -13,7 +13,7 @@
 | `pillar(cx, y0, n, element, kind?)` | 縦の柱（上へ n 個の円・丸い） |
 | `block(x0, y0, cols, rows, element, kind?)` | 四角いブロック（cols×rows ぶんを覆う矩形・#56） |
 | `wall(x0, x1, y0, rows, element, kind?)` | 横一列の四角い壁（rows 段ぶんの厚みの矩形・#56） |
-| `wingWall(x0, x1, y0, rows)` | 翼壁（`unbreakable` 固定の `wall`・#50。壁の帯の端から境界近くまで側面を塞ぎ、迂回型の外周すり抜けを防ぐ） |
+| `wingWall(x0, x1, y0, rows)` | 翼壁（`unbreakable` 固定の `wall`・#50。壁の帯の端から**場境界（外縁 `|x|≥rField`）まで**側面を塞ぎ、迂回型の外周すり抜けを防ぐ。円形の場では矩形の外側の角が境界円を必ず超えるため、翼壁だけは四隅在場内の制約を免れる） |
 | `colonnade(x0, x1, step, y0, n, elems[])` | 列柱（step 間隔で縦 n 段の柱を並べ、elems を順に割当） |
 | `spiralArm(cx, cy, n, turns, phase, element)` | アルキメデス螺旋の腕 |
 
@@ -40,7 +40,7 @@
 
 - **rField**：`32`（#49：翼壁を境界近くまで伸ばせるようやや広め）。
 - **mechanics**：障害物あり・敵発射あり。
-- **障害物**：列柱 `colonnade(-18,18, 3.6, -1, 4, [dark,light])`＋中央にもろい瓦礫 `wall(-6,6,-1,1, neutral, fragile)`（「壊せる」を教える最初の壁）＋翼壁 `wingWall(18,27,-1,4)` / `wingWall(-27,-18,-1,4)`（列柱の端から境界近くまで・#50）。
+- **障害物**：列柱 `colonnade(-18,18, 3.6, -1, 4, [dark,light])`＋中央にもろい瓦礫 `wall(-6,6,-1,1, neutral, fragile)`（「壊せる」を教える最初の壁）＋翼壁 `wingWall(18,30,-1,4)` / `wingWall(-30,-18,-1,4)`（列柱の端から境界 rField=32 まで・#50）。
   - ![第2面 壁配置図](diagrams/stage2-walls.svg)
 
 | 敵 | 属性 | LVL | HP | species | 系統 | ロール | 配置 |
@@ -54,7 +54,7 @@
 
 - **rField**：`34`（#49：翼壁で障害物帯の y 範囲を覆う余地）。
 - **テーマ**：相性（反対極×1.5）と normal 壁。火力型の初登場。
-- **障害物**：全幅の光壁 `wall(-18,18,5,2,light)`（2段に厚み増）＋左右の闇の塔 `pillar(±13,-3,5,dark)`＋砕けぬ芯柱 `pillar(±7,9,2,neutral,unbreakable)`（迂回強制）＋もろい囲い `wall(-9,-3,-17,1,neutral,fragile)`＋翼壁 `wingWall(20,26,-14,8)` / `wingWall(-26,-20,-14,8)`（#50）。
+- **障害物**：全幅の光壁 `wall(-18,18,5,2,light)`（2段に厚み増）＋左右の闇の塔 `pillar(±13,-3,5,dark)`＋砕けぬ芯柱 `pillar(±7,9,2,neutral,unbreakable)`（迂回強制）＋もろい囲い `wall(-9,-3,-17,1,neutral,fragile)`＋翼壁 `wingWall(20,32,-14,8)` / `wingWall(-32,-20,-14,8)`（障害物帯の y 範囲を覆い外縁を境界 rField=34 まで・#50）。
   - ![第3面 壁配置図](diagrams/stage3-walls.svg)
 
 | 敵 | 属性 | LVL | HP | species | 系統 | ロール | 配置 |
@@ -86,7 +86,7 @@
 
 - **rField**：`36`（#49：poly34 の高次うねりと複雑な壁配置に余地）。
 - **テーマ**：数で攻める。左半分＝光・右半分＝闇の鏡像。**同極すり抜け**の初登場。守護型の**方向づけられた場**を前倒し導入。
-- **障害物**：左列柱 `colonnade(-18,0,3.6,-1,4,[light])`／右列柱 `colonnade(3.6,18,3.6,-1,4,[dark])`＋割れない鏡枠 `pillar(±18,8,3,neutral,unbreakable)`＋翼壁 `wingWall(21,30,-1,4)` / `wingWall(-30,-21,-1,4)`（鏡枠の外側から境界近くまで・#50）。
+- **障害物**：左列柱 `colonnade(-18,0,3.6,-1,4,[light])`／右列柱 `colonnade(3.6,18,3.6,-1,4,[dark])`＋割れない鏡枠 `pillar(±18,8,3,neutral,unbreakable)`＋翼壁 `wingWall(21,34,-1,4)` / `wingWall(-34,-21,-1,4)`（鏡枠の外側から境界 rField=36 まで・#50）。
   - ![第5面 壁配置図](diagrams/stage5-walls.svg)
 
 | 敵 | 属性 | LVL | HP | species | 系統 | ロール | 配置 | 特記 |
@@ -103,7 +103,7 @@
 
 - **rField**：`36`（#49：翼壁で3段壁と光柱の y 範囲を覆う）。
 - **テーマ**：暴発の**誘発**。崩し手3体＋交互張り・方向づけ併用の守護型。**初回崩壊（グリモワール救済）**がこの面で必ず起きる（[04b](04b-misfire-instability.md) §4b.2）。
-- **障害物**：3段重ねの封印壁 `wall(-18,18,1,3,dark)`＋砕けぬ封印核 `block(-2,1,3,2,neutral,unbreakable)`＋取っ掛かりの光柱 `pillar(±17,-3,2,light)`＋翼壁 `wingWall(21,30,-6,6)` / `wingWall(-30,-21,-6,6)`（光柱と重ならない位置から境界近くまで・#50）。
+- **障害物**：3段重ねの封印壁 `wall(-18,18,1,3,dark)`＋砕けぬ封印核 `block(-2,1,3,2,neutral,unbreakable)`＋取っ掛かりの光柱 `pillar(±17,-3,2,light)`＋翼壁 `wingWall(21,34,-6,6)` / `wingWall(-34,-21,-6,6)`（光柱と重ならない位置から境界 rField=36 まで・#50）。
   - ![第6面 壁配置図](diagrams/stage6-walls.svg)
 
 | 敵 | 属性 | LVL | HP | species | 系統 | ロール | 配置 | 特記 |
@@ -120,7 +120,7 @@
 ## ステージ 7 ― 第七の間・大広間（LVL 7・ボス戦・HPフェーズ制／#45）
 
 - **テーマ**：総力戦。ボスは**多重詠唱**（#44）。HP 66%／33% で**床が崩れ**、アリーナと `rField` が縮小する。撃破後に**断末魔の暴発3連**。
-- **上層（開始時）・rField=35**：列柱 `colonnade(-18,18,3.6,-2,5,[light,dark])`＋守護者の盾 `block(-4,-3,4,3,light)`＋翼壁 `wingWall(18,27,-4,7)` / `wingWall(-27,-18,-4,7)`（列柱の y 範囲を覆う・#50）。
+- **上層（開始時）・rField=35**：列柱 `colonnade(-18,18,3.6,-2,5,[light,dark])`＋守護者の盾 `block(-4,-3,4,3,light)`＋翼壁 `wingWall(18,33,-4,7)` / `wingWall(-33,-18,-4,7)`（列柱の y 範囲を覆い外縁を境界 rField=35 まで・#50）。
   - ![第7面 壁配置図（HPフェーズ3層）](diagrams/stage7-walls.svg)
 
 | 敵 | 属性 | LVL | HP | hitbox | species | 系統 | ロール | 配置 | 特記 |

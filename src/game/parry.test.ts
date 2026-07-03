@@ -24,6 +24,33 @@ describe('交差判定', () => {
     const c = firstCrossing(a, b)
     expect(c?.pos.x).toBeCloseTo(2, 6)
   })
+
+  // バグ修正：同一直線上を逆走して正面衝突する2線分（collinear・anti-parallel）を拾えなかった
+  it('同一直線上で逆向きに重なる線分は重なり中点を交点とする（正面撃ち返し）', () => {
+    const hit = segmentIntersect({ x: -1, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 0 }, { x: -1, y: 0 })
+    expect(hit).not.toBeNull()
+    expect(hit?.point.x).toBeCloseTo(0, 6)
+    expect(hit?.point.y).toBeCloseTo(0, 6)
+  })
+
+  it('同一直線だが区間が離れて重ならない平行線分は null', () => {
+    expect(segmentIntersect({ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 })).toBeNull()
+  })
+
+  it('同一直線でない平行線分（並走）は null', () => {
+    expect(segmentIntersect({ x: 0, y: 0 }, { x: 2, y: 0 }, { x: 0, y: 1 }, { x: 2, y: 1 })).toBeNull()
+  })
+
+  it('横向きに逆走する2パスは重なり区間の中点で合流する（firstCrossing）', () => {
+    // 味方 -12→+12 と敵 +12→-12 が同一直線上を逆走。重なり [-12,12] の中点 0 で合流。
+    const meet = firstCrossing(
+      [{ x: -12, y: 0 }, { x: 12, y: 0 }],
+      [{ x: 12, y: 0 }, { x: -12, y: 0 }],
+    )
+    expect(meet).not.toBeNull()
+    expect(meet?.pos.x).toBeCloseTo(0, 6)
+    expect(meet?.pos.y).toBeCloseTo(0, 6)
+  })
 })
 
 describe('パリィ解決（§3.8）', () => {

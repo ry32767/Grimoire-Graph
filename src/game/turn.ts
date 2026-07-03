@@ -31,6 +31,7 @@ import {
   simulatePath,
   polyFromPoints,
   sampleAtLength,
+  timeToArc,
   type LossEvent,
 } from './physics'
 import { firstHitAmong, type Target } from './collision'
@@ -570,6 +571,14 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       const crossArc = arcAt(cross.indexB)
       // 直前までの減衰を反映した現在の飛行から、交差点（弧長基準）の速度を引く
       const eSample = sampleAtLength(shot.flight, crossArc) ?? shot.flight.samples[shot.flight.samples.length - 1]
+      // 同時性（バグ修正）：経路が交わっても、両弾が交点を通る「時刻」がずれていれば
+      // すれ違い＝干渉しない。先に通過した弾の時刻に、遅い側がまだ parrySyncDist より
+      // 遠くに居る（時間差×交点速度 > 距離しきい）ならパリィ不成立。
+      const tP = timeToArc(p.freeFlight.samples, pSample.arcLen)
+      const tE = timeToArc(shot.flight.samples, crossArc)
+      if (!Number.isFinite(tP) || !Number.isFinite(tE)) continue // どちらかが交点まで届かない
+      const vLater = tP > tE ? pSample.speed : eSample.speed
+      if (Math.abs(tP - tE) * Math.max(vLater, 0.5) > COMBAT.parrySyncDist) continue
       const pZ = zfieldAt(p.cast.trajectory, pSample.pos)
       const pAttr = attributeOf(pZ)
       const pStr = strengthOf(pZ)
@@ -600,6 +609,46 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     p.carves = res.carves
     for (const l of res.logs) log.push(l)
   }
+
+  // 敵 guardian の防御結界（今ターン新規＋前ターンからの持続・#39/#61）を1つのリストに束ねる。
+  // 味方弾の迎撃（§5）・回復オーラ（§5.5）の両方が、新規結界と持続結界を区別なく処理できるようにする。
+  // broken を立てると、持続結界は destroyedOrbitIds へ記録して次ターンへ持ち越さない（丸ごと霧散）。
+  interface EnemyGuardRing {
+    enemyId: string
+    ring: RingPoint[]
+    ringSpeed: number
+    broken: boolean
+    /** ring/ringSpeed/broken の変更を元データ（enemyRings 要素 or 持続 activeOrbit）へ書き戻す */
+    commit(): void
+  }
+  const enemyGuardRings: EnemyGuardRing[] = [
+    ...enemyRings.map((gr) => ({
+      enemyId: gr.enemyId,
+      ring: gr.ring,
+      ringSpeed: gr.ringSpeed,
+      broken: gr.broken,
+      commit(this: EnemyGuardRing) {
+        gr.ring = this.ring
+        gr.ringSpeed = this.ringSpeed
+        gr.broken = this.broken
+      },
+    })),
+    ...activeOrbits
+      .filter((ao) => ao.owner === 'enemy' && !destroyedOrbitIds.has(ao.id) && ao.ring.length >= 3)
+      .map((ao) => ({
+        enemyId: ao.ownerId,
+        ring: ao.ring as RingPoint[],
+        ringSpeed: ao.ringSpeed,
+        broken: false,
+        commit(this: EnemyGuardRing) {
+          if (this.broken) destroyedOrbitIds.add(ao.id) // 破れた持続結界は持ち越さない
+          else {
+            ao.ring = this.ring
+            ao.ringSpeed = this.ringSpeed
+          }
+        },
+      })),
+  ]
 
   // === 5. 攻撃：命中（発射型）／掃射（軌道型）／暴発 ===
   const allyShots: AllyShot[] = []
@@ -659,9 +708,9 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     // 交差点でパリィ（resolveParry）と同じ相互相殺を行う。自弾は削られ、結界も減速する
     // （残れば新速度で回り続け、0 なら霧散）。反対極のみ相殺、同極・中立は透過。
     let effSpeed = hit ? hit.speed : 0
-    if (hit && enemyRings.length > 0) {
+    if (hit && enemyGuardRings.length > 0) {
       const playerPath = flight.samples.map((s) => s.pos)
-      for (const gr of enemyRings) {
+      for (const gr of enemyGuardRings) {
         if (gr.broken || effSpeed <= 0) continue
         const inter = ringInterception(gr.ring, playerPath)
         if (!inter.crossed || inter.enemyIndex === undefined || inter.ringZ === undefined) continue
@@ -687,6 +736,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
           gr.ring = scaleRingSpeeds(gr.ring, f)
           gr.ringSpeed *= f // 代表速度も同率で更新（描画フォールバック用）
         }
+        gr.commit() // 減速/破れを元データ（新規結界 or 持続結界）へ書き戻す
         effSpeed = parry.speedB // 自弾は相互相殺ぶん減速
         if (effSpeed <= 0) {
           effSpeed = 0
@@ -834,7 +884,8 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
 
   // 敵 guardian の結界も内側の敵へ効果を及ぼす（#61）：光=毎ターン固定回復。
   // 闇=視認阻害はゲーム数値でなく作成フェーズの描画（ぼかし＋z場/予測経路を隠す）で表現する。
-  const enemyAuras = enemyRings
+  // 新規結界＋持続する敵結界（#61）の両方が内側の敵を回復させる
+  const enemyAuras = enemyGuardRings
     .filter((r) => !r.broken && r.ring.length >= 3)
     .map((r) => ({ ring: r.ring, attr: ringAverageAttr(r.ring), radius: ringRadius(r.ring) }))
   if (enemyAuras.length > 0) {
@@ -931,10 +982,13 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
   }
 
   // 永続周回の更新（#39）：相殺されなかった既存周回＋今ターン新規に張った（壊れていない）周回を持ち越す。
-  // 所有者が倒れた周回は残さない（張り手を失えば結界も消える）。
+  // 所有者が倒れた周回は残さない（張り手を失えば結界も消える）。味方所有は生存味方、敵所有（#61）は生存敵で存続判定する。
   const aliveAllyIds = new Set(allies.filter((a) => a.hp > 0).map((a) => a.id))
+  const aliveEnemyIds = new Set(enemies.filter((e) => e.hp > 0).map((e) => e.id))
   const survivingPersistent = activeOrbits.filter(
-    (ao) => !destroyedOrbitIds.has(ao.id) && aliveAllyIds.has(ao.ownerId),
+    (ao) =>
+      !destroyedOrbitIds.has(ao.id) &&
+      (ao.owner === 'enemy' ? aliveEnemyIds.has(ao.ownerId) : aliveAllyIds.has(ao.ownerId)),
   )
   const newOrbits: ActiveOrbit[] = plans
     .filter((p) => p.kind === 'orbit' && p.ring && p.ring.length >= 3 && !p.ringBroken && aliveAllyIds.has(p.cast.allyId))
@@ -947,7 +1001,6 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     }))
   // 敵 guardian の防御結界も持続結界として残す（#61：作成フェーズで見え、効果＝光=回復/闇=視認阻害）。
   // 生存する敵が今ターン張った（壊れていない）結界を owner='enemy' で持ち越す。
-  const aliveEnemyIds = new Set(enemies.filter((e) => e.hp > 0).map((e) => e.id))
   const newEnemyOrbits: ActiveOrbit[] = enemyRings
     .filter((r) => !r.broken && r.ring.length >= 3 && aliveEnemyIds.has(r.enemyId))
     .map((r) => ({

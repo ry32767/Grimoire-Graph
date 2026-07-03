@@ -51,10 +51,14 @@ function applyBossPhases(state: BattleState, log: LogEntry[]): BattleState {
   const phases = state.bossPhases ?? []
   if (phases.length === 0) return state
   const boss = state.enemies.find((e) => e.boss)
-  if (!boss || boss.hp <= 0) return state
+  if (!boss) return state
   const ratio = boss.hp / boss.maxHp
   let target = 0
   for (let i = 0; i < phases.length; i++) if (ratio <= phases[i].hpBelow) target = i + 1
+  // ボスが倒れた（hp<=0）＝最下層まで一気に落ちたとみなし、最終フェーズを適用する（バグ修正）。
+  // これで、33%を跨がずにバーストで即死させても cullMinions/アリーナ差し替えが走り、
+  // 断末魔が眷属を従えたまま発生する不整合を防ぐ（06b §6 第7面：断末魔はボス単独の最後の一手）。
+  if (boss.hp <= 0) target = phases.length
   const current = state.bossPhase ?? 0
   if (target <= current) return state
   const ph = phases[target - 1]
