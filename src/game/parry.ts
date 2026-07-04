@@ -1,7 +1,8 @@
 // パリィ（クラッシュ解決・§3.8・機能12）：同極/中立はすり抜け、反対極のみ相殺。
 // 速度を削り合い、0 になった側は消滅。純粋関数。
-import type { Attribute, Vec2 } from './types'
-import { COMBAT } from '../data/constants'
+import type { Attribute, FlightSample, Vec2 } from './types'
+import { flightTimes } from './physics'
+import { COMBAT, FIELD } from '../data/constants'
 
 function cross(a: Vec2, b: Vec2): number {
   return a.x * b.y - a.y * b.x
@@ -125,6 +126,66 @@ export function firstCrossing(
         const meet = collinearPathMeeting(pathA, pathB)
         if (meet) return meet
         return { pos: hit.point, indexA: i, indexB: j }
+      }
+    }
+  }
+  return null
+}
+
+/** 時刻 τ における弾の位置・弧長（times は flightTimes の累積）。idxRef は前回位置から前進走査。 */
+function posAtTime(
+  samples: FlightSample[],
+  times: number[],
+  tau: number,
+  idxRef: { i: number },
+): { pos: Vec2; arcLen: number } {
+  let i = idxRef.i
+  while (i < times.length - 1 && times[i + 1] <= tau) i++
+  idxRef.i = i
+  const a = samples[i]
+  if (i >= times.length - 1 || !Number.isFinite(times[i + 1])) return { pos: a.pos, arcLen: a.arcLen }
+  const b = samples[i + 1]
+  const span = times[i + 1] - times[i]
+  const f = span > 0 ? (tau - times[i]) / span : 0
+  return {
+    pos: { x: a.pos.x + (b.pos.x - a.pos.x) * f, y: a.pos.y + (b.pos.y - a.pos.y) * f },
+    arcLen: a.arcLen + (b.arcLen - a.arcLen) * f,
+  }
+}
+
+/**
+ * 2弾の「実衝突」：同じゲーム時刻に collideDist 以下まで近づく最初の点（パリィ改善・#64）。
+ * 旧方式（幾何交差 firstCrossing＋通過時刻ゲート）は、最初の幾何交点の通過時刻が
+ * 大きくズレる正面撃ち返し・浅い交差で、実際にぶつかる2弾を不成立にしていた。
+ * 両弾を同時刻で進めて初めて近づいた点を衝突とする：すれ違い（時刻差あり）は自然に不成立、
+ * 撃ち返し（同一直線の逆走）は途中の合流点で必ず成立する。
+ */
+export function bulletCollision(
+  samplesA: FlightSample[],
+  samplesB: FlightSample[],
+  collideDist: number,
+): { pos: Vec2; arcA: number; arcB: number } | null {
+  if (samplesA.length < 2 || samplesB.length < 2) return null
+  const tA = flightTimes(samplesA)
+  const tB = flightTimes(samplesB)
+  const lastFinite = (t: number[]): number => {
+    for (let i = t.length - 1; i >= 0; i--) if (Number.isFinite(t[i])) return t[i]
+    return 0
+  }
+  // どちらかが消えた（終端に達した／失速した）後は衝突しない
+  const tEnd = Math.min(lastFinite(tA), lastFinite(tB))
+  const ia = { i: 0 }
+  const ib = { i: 0 }
+  for (let tau = 0; tau <= tEnd + 1e-9; tau += FIELD.dt) {
+    const pa = posAtTime(samplesA, tA, tau, ia)
+    const pb = posAtTime(samplesB, tB, tau, ib)
+    const dx = pa.pos.x - pb.pos.x
+    const dy = pa.pos.y - pb.pos.y
+    if (dx * dx + dy * dy <= collideDist * collideDist) {
+      return {
+        pos: { x: (pa.pos.x + pb.pos.x) / 2, y: (pa.pos.y + pb.pos.y) / 2 },
+        arcA: pa.arcLen,
+        arcB: pb.arcLen,
       }
     }
   }

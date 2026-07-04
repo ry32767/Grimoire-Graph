@@ -49,7 +49,7 @@ flightMs = min(MAX_MS, max(floorMs, maxTotal × MS_PER_GAMESEC(360)))
 | 障害物えぐり | 弾が `carve.arcLen` を通過 | `CARVE_BURST_MS=480`（到達時刻から実時間） | `drawCarveBurst`（岩片飛散・赤橙） |
 | 命中フラッシュ | `arcLen ≥ impact.arcLen` | `FLASH_MS=420` | 赤フラッシュ＋画面揺れ |
 | クラッシュ火花 | 2 弾が `CLASH_DIST=1.6` 以内 | `CLASH_MS=460` | `drawClashSpark`（青白い火花） |
-| 結界の霧散 | 壁/弾に負ける | `DISSIPATE_MS=520` | `drawOrbitDissipation`（リング消失・粒拡散） |
+| 結界の霧散 | 壁/弾に負ける。**弾が破壊点（`AnimOrbit.carves[0]`）へ到達した瞬間**から散り始める（#64：`resolveTurn` が記録する `enemyRings[].breakPos`／`orbitBreaks` を App が同期点として渡す。同期点が無いときの保険は `e≥0.4`） | `DISSIPATE_MS=520` | `drawOrbitDissipation`（リング消失・粒拡散） |
 | 弾の霧散 | 速度 0 | `DISSIPATE_MS=520` | `drawBulletDissipation`（コア収縮・粒拡散） |
 | 暴発 | `misfirePos` 到達 | `MISFIRE_TAIL_MS=1000` | `drawMisfire`（収縮→大爆発の 2 段） |
 | 撃破（雑魚・種族別） | 致命弾のフラッシュ開始（取れなければ `e≥0.9`） | `DEATH_MS=900` | `drawEnemyDeath`（種族ごとの消滅・05c §6.5） |

@@ -116,12 +116,22 @@ score = baseDmg × killBonus × woundFocus × lowHpBias
 
 `maneuver` は迂回の取り回しコスト：family 直接候補=1、経路探索フィット由来（clean/wallTunnel）=`MANEUVER=0.9`。同条件なら直進/貫通が勝つ。
 
+### 掘削フォールバック（火力型・#64）
+
+**breaker（火力型）**は、どの候補も命中しない＝壁が厚いとき、牽制でお茶を濁さず**壁を掘り進める**。命中判定に落ちた各候補（`consider` の不達候補）について「停止点（飛行の最終サンプル）が狙い（`aimPos`）に最も近い」＝**carve の速度損込みで1番奥まで掘れる**候補を記録し（`trackDrill`）、それを布石として選ぶ（`expectedDamage=0`）。ただし：
+
+- 素材を一度も削らない候補（失速・逸れただけ）は掘削でない＝対象外。
+- `unbreakable` に当たって止まった候補（停止点が `unbreakableArc` 近傍）は、掘っても道が開かない＝対象外。
+
+ランプ z 場（05b §5.1）は飛行中 |z|≈0＝最大加速で**高速のまま壁に当たり、えぐり半径（威力=速度×(強度+1) 比例）も大きい**ため、掘削の最深到達も自然にランプ候補が担う。毎ターン同じ狙いへ掘り足せば数ターンで貫通し、命中候補が成立した時点で通常の採点へ戻る。
+
 ### 牽制（フォールバック）
 
 どの候補も命中見込みなし（命中スコア無し）のとき：
 
-1. 狙う相手が**結界に囲まれて突破できない**場合は、**結界そのものに反対極（zRef）を当てて削る**（得意関数から実際に境界を横切る軌道を、終点方向の補正つきで選ぶ・05b §1「避けられないなら結界に当てる」）。
-2. それ以外は、最も HP の低い見える味方へ**得意関数で牽制**（減速しない zRef で撃つ。`line` を持たない個体＝迂回型/暴発型は曲線で撃つ）。
+1. **breaker** は上記の掘削候補があればそれを選ぶ（牽制より優先・#64）。
+2. 狙う相手が**結界に囲まれて突破できない**場合は、**結界そのものに反対極（zRef）を当てて削る**（得意関数から実際に境界を横切る軌道を、終点方向の補正つきで選ぶ・05b §1「避けられないなら結界に当てる」）。
+3. それ以外は、最も HP の低い見える味方へ**得意関数で牽制**（減速しない zRef で撃つ。`line` を持たない個体＝迂回型/暴発型は曲線で撃つ）。
 
 ---
 
@@ -138,7 +148,7 @@ target = 見える味方の中で最もスコアの高い者（脅威優先度�
 ```
 
 - 隠蔽（§5.5）の扱いは attacker と同じ：完全に隠れた味方は狙えない（`perceivedPos` を使う）。全員隠れていれば見かけ位置に対して計画する。
-- **壁狙い個体（`enemy.ruptorTarget==='obstacles'`）は上記と独立の専用経路**（第4面デモ用・#42）：削れる素材（円・矩形とも・`materialCells`）を敵に近い順へ最大 `maxGoalsPerEnemy(=6)` 件試し、各素材の**面の手前**（素材の外に出るまで敵側へ引いた点から、さらに敵側へ引いた点）へ極を仕込んで、確実に暴発できクリーンに（壁削り・結界横断なしで）届く狙いを探す。見つかり次第採用、無ければ全候補中で最良ランクのものを採用する。壁が全て崩れていれば通常の味方狙いへフォールバックする。
+- **壁狙い個体（`enemy.ruptorTarget==='obstacles'`）は上記と独立の専用経路**（第4面デモ用・#42）：削れる素材（円・矩形とも・`materialCells`）のうち、**自爆圏より遠いセルだけ**（`disc.d − disc.r − 1.2 > selfDanger + 0.3`・#65：面の手前に置く極が自分の AoE 危険圏に入るセルは候補から除外）を敵に近い順へ最大 `maxGoalsPerEnemy(=6)` 件試し、各素材の**面の手前**（素材の外に出るまで敵側へ引いた点から、さらに敵側へ引いた点）へ極を仕込んで、確実に暴発でき・クリーンに（壁削り・結界横断なしで）届き・**自爆も味方巻き込みも無い**狙いを探す。見つかり次第採用、無ければ全候補中で最良ランクのものを採用する（ただし自爆になる暴発は採用しない・#65）。壁が全て崩れた・安全な壁が無いときは通常の味方狙いへフォールバックする。
 
 ### 2. 軌道と z 場の構築（3層探索＋辞書式ランク・`enemyPlanning/ruptorPlanner.ts`、05b-enemy-archetypes.md §4 が正典）
 
@@ -182,17 +192,18 @@ type Cover = { kind: 'point'; pos: Vec2 } | { kind: 'material' }
 
 ```ts
 guaranteed = FIELD.aoeRadius × (1 − varianceOf(instability))  // instability 下振れ込みでも巻き込める半径（04b §4b.3）
+selfDanger = FIELD.aoeRadius × (1 + varianceOf(instability))  // 自爆・味方巻き込みの危険圏＝上振れ込みの最大半径（#65）
 inGuaranteed = covers(cover, endPos, guaranteed)   // 下振れ込みでも被覆を巻き込める
 inExpected = covers(cover, endPos, FIELD.aoeRadius) // 期待半径でなら被覆を巻き込める
-selfInAoE = misfire && dist(endPos, enemy.pos) <= aoeRadius        // 自分を巻き込む極
-matesInAoE = misfire ? 生存中の味方（敵チーム）で AoE 半径内に入る数 : 0
+selfInAoE = misfire && dist(endPos, enemy.pos) <= selfDanger       // 自分を巻き込みうる極（上振れ込み）
+matesInAoE = misfire ? 生存中の味方（敵チーム）で selfDanger 内に入る数 : 0
 rank = [
   misfire ? 0 : 1,                       // 暴発が実際に成立するか
   misfire && cover.kind === 'point' ? 0 : 1, // ユニット被覆を壁削り被覆より常に優先（§14.2）
+  selfInAoE ? 1 : 0,                      // 自爆の回避（§12.7 selfInsideAoE／#65：被覆より優先）
+  matesInAoE,                             // 味方（敵チーム）巻き込み数の回避（#65）
   inGuaranteed ? 0 : 1,                   // 下振れ込みでも巻き込める（本命）
   inExpected ? 0 : 1,                     // 期待半径でなら巻き込める（次点）
-  selfInAoE ? 1 : 0,                      // 自爆の回避（§12.7 selfInsideAoE）
-  matesInAoE,                             // 味方（敵チーム）巻き込み数の回避
   hitBeforePole ? 1 : 0,                 // 極到達前に対象のヒットボックスへ通常接触してしまうか
   unbreakableArc !== null ? 1 : 0,       // unbreakable 横断は避ける
   turnInMaterialArcs.length,             // 壁内部の折れ点
@@ -207,7 +218,7 @@ rank = [
 
 `instability` が misfireLimit に近づき半径のブレが大きいほど（04b §4b.3）、`guaranteed`（下振れ時でも確実に届く半径）を満たす候補が優先される＝プレイヤーへの脅威が下がらない。
 
-- **自爆・味方巻き込みの回避（`planRuptorShot` の `teammates` 引数・#63）**：暴発は敵味方無差別に巻き込むため、`enemyAI.ts` の `planEnemyShot` は `ruptor` へ計画を委譲する際、生存中の敵チーム（`teammates`）を渡す。`selfInAoE`/`matesInAoE` は rank の上位キーとして効くが、`misfire`・被覆優先度・下振れ確実性より**下位**に置かれる――「暴発を成立させ、正しい対象を巻き込む」ことをまず満たしたうえで、同格の候補同士なら自爆・味方巻き込みが少ない極（横へ逃がした極）を選ぶ、という優先順位。
+- **自爆・味方巻き込みの回避（`planRuptorShot` の `teammates` 引数・#63/#65）**：暴発は敵味方無差別に巻き込むため、`enemyAI.ts` の `planEnemyShot` は `ruptor` へ計画を委譲する際、生存中の敵チーム（`teammates`）を渡す。`selfInAoE`/`matesInAoE` は rank で**被覆キー（inGuaranteed/inExpected）より上位**に置かれる（#65）――「確実に巻き込める極」より「自爆しない極（横へ逃がした極）」を必ず優先する。危険圏は AoE 半径の**上振れ込み**（`selfDanger`）で見積もる（instability が高いほど広く取って安全側に倒す）。
 
 #### 狙点候補（`aims`）：手前補正と素通り回避
 

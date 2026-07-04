@@ -50,6 +50,10 @@ interface RuptorCandidate {
   noMaterial: boolean
   /** 反対極結界の横断がない */
   noRingBlock: boolean
+  /** 自爆：暴発点が自分の AoE 危険圏（上振れ込み）内（#65：自爆しない場所を優先する） */
+  selfInAoE: boolean
+  /** 巻き込む味方（敵チーム）の数（#65） */
+  matesInAoE: number
 }
 
 /**
@@ -107,6 +111,9 @@ export function planRuptorShot(
   const fams: readonly EnemyFamily[] = own.length > 0 ? own : AVOIDER_FAMILIES
   const wide: readonly EnemyFamily[] = AVOIDER_FAMILIES.filter((f) => !fams.includes(f))
   const guaranteed = FIELD.aoeRadius * (1 - varianceOf(instability))
+  // 自爆・味方巻き込みの危険圏（#65）：AoE 半径は instability で上振れしうるため、
+  // 「上振れ込みの最大半径」より内側に極を置く計画は自爆と見なして避ける
+  const selfDanger = FIELD.aoeRadius * (1 + varianceOf(instability))
   const env = obstacles.length > 0 ? buildPlanningEnv(obstacles, fieldR) : null
   const allyTargets = alive.map((a) => ({ id: a.id, pos: a.pos, radius: GAME.allyHitbox }))
   // 反対極の持続結界の迎撃圏（中心・半径＋手前マージン）。この圏内に極を置く計画は
@@ -145,20 +152,21 @@ export function planRuptorShot(
     // 極到達前の通常ヒットボックス接触（§12.2.1）：対象を素通りして奥で暴発する見た目を避ける
     const hb = firstHitAmong(ev.flight.samples, allyTargets)
     const hitBeforePole = hb !== null && hb.arcLen < ev.pathLength - 0.5
-    // 自爆・味方（敵チーム）巻き込みの回避（§12.7 selfInsideAoE）：暴発は敵味方無差別なので、
-    // 自分や生存中の味方が AoE 期待半径に入る極は強く避ける（横へ逃がした極が優先される）
-    const selfInAoE = misfire && dist(ev.endPos, enemy.pos) <= FIELD.aoeRadius
+    // 自爆・味方（敵チーム）巻き込みの回避（§12.7 selfInsideAoE／#65）：暴発は敵味方無差別。
+    // 危険圏は AoE の上振れ込み（selfDanger）で見積もり、被覆キーより上位で強く避ける
+    // （＝巻き込みが確実な極より、少し外して安全な極を必ず優先する）
+    const selfInAoE = misfire && dist(ev.endPos, enemy.pos) <= selfDanger
     const matesInAoE = misfire
-      ? teammates.filter((m) => m.id !== enemy.id && m.hp > 0 && dist(ev.endPos, m.pos) <= FIELD.aoeRadius).length
+      ? teammates.filter((m) => m.id !== enemy.id && m.hp > 0 && dist(ev.endPos, m.pos) <= selfDanger).length
       : 0
     const rank = [
       misfire ? 0 : 1,
       // ユニット狙い（点被覆）を壁削り狙い（素材被覆）より常に優先する（§14.2 の採用順）
       misfire && cover.kind === 'point' ? 0 : 1,
+      selfInAoE ? 1 : 0, // 自爆回避は被覆より優先（#65：自爆しない場所を選ぶ）
+      matesInAoE,
       inGuaranteed ? 0 : 1, // 下振れ込みで巻き込める（本命・§12.6）
       inExpected ? 0 : 1, // 期待半径でなら巻き込める（次点）
-      selfInAoE ? 1 : 0,
-      matesInAoE,
       hitBeforePole ? 1 : 0,
       ev.unbreakableArc !== null ? 1 : 0, // unbreakable 横断は採用しない（§9.3）
       ev.turnInMaterialArcs.length, // 壁内部の折れ点は採用しない（§9.3）
@@ -177,6 +185,8 @@ export function planRuptorShot(
       inExpected,
       noMaterial: ev.materialArcs.length === 0,
       noRingBlock: ev.oppositeRingArcs.length === 0,
+      selfInAoE,
+      matesInAoE,
     }
   }
 
@@ -224,9 +234,13 @@ export function planRuptorShot(
         discs.push({ pos: { x: disc.x, y: disc.y }, r: disc.r, d: dist(enemy.pos, { x: disc.x, y: disc.y }) })
       }
     }
-    discs.sort((a, b) => a.d - b.d)
+    // 自爆圏より近い素材は狙わない（#65）：極は面の手前 1.2 に置かれるため、
+    // セル中心までの距離が「危険圏＋半径＋手前マージン」以下なら自爆になる＝候補から除外。
+    // 遠いセルは残るので、周囲が全て至近でない限りデモは安全な壁で成立する。
+    const safeDiscs = discs.filter((disc) => disc.d - disc.r - 1.2 > selfDanger + 0.3)
+    safeDiscs.sort((a, b) => a.d - b.d)
     let fallback: RuptorCandidate | null = null
-    for (const disc of discs.slice(0, RP.maxGoalsPerEnemy)) {
+    for (const disc of safeDiscs.slice(0, RP.maxGoalsPerEnemy)) {
       // 極（g の零点）は中心でなく壁「面」の手前（05b §4）＝素材の外に出るまで敵側へ引く
       const L = disc.d || 1
       const pt = (t: number): Vec2 => ({
@@ -237,16 +251,17 @@ export function planRuptorShot(
       while (t > 0 && obstacles.some((ob) => isSolidAt(ob, pt(t)))) t -= 0.4 / L
       const aim = pt(Math.max(0, t - 1.2 / L))
       const found = searchAim(aim, { kind: 'material' })
-      // 確実に暴発でき（極到達）、壁・結界に阻まれない狙いなら即採用
-      if (found && found.misfire && found.noMaterial && found.noRingBlock) {
+      // 確実に暴発でき（極到達）、壁・結界に阻まれず、自爆・味方巻き込みが無い狙いなら即採用（#65）
+      if (found && found.misfire && found.noMaterial && found.noRingBlock && !found.selfInAoE && found.matesInAoE === 0) {
         return { trajectory: found.traj, targetId: '', expectedDamage: 0, misfirePos: found.end }
       }
       if (found && (!fallback || compareRank(found.rank, fallback.rank) < 0)) fallback = found
     }
-    if (fallback) {
+    // 自爆になる暴発は採用しない（#65）：その場合は通常の味方狙いフローへ落とす
+    if (fallback && !(fallback.misfire && fallback.selfInAoE)) {
       return { trajectory: fallback.traj, targetId: '', expectedDamage: 0, misfirePos: fallback.misfire ? fallback.end : null }
     }
-    // 壁が全て崩れた等：以後は通常の味方狙いへフォールバック
+    // 壁が全て崩れた・安全な壁が無い等：以後は通常の味方狙いへフォールバック
   }
 
   /**

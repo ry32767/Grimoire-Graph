@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Ally, AllyCast, BattleState, Vec2 } from './game/types'
+import type { Ally, AllyCast, BattleState, CarveBurst, Vec2, ZPoint } from './game/types'
 import { createBattleState, prepareTurn, resolveAllyCasts } from './game/battle'
 import { planEnemyShots, enemyFlight } from './game/enemyAI'
 import { zfieldAt } from './game/attribute'
+import { ringAverageAttr } from './game/orbit'
 import { recommendCast } from './game/recommend'
 import { ROTATE_PRESETS, defaultCoeffs } from './game/functions'
 import { ZFIELD_PRESETS, defaultZCoeffs } from './game/zfields'
@@ -504,15 +505,31 @@ export default function App() {
         })
       }
     }
+    // 結界の破壊点を霧散演出の同期点として渡す（#64：BattleCanvas は弾がこの点へ到達した
+    // 瞬間から散らし始める。無ければ従来どおり既定タイミングで散る）
+    const breakCarve = (ring: ZPoint[], pos: Vec2 | null | undefined): CarveBurst[] =>
+      pos ? [{ pos, r: 1, arcLen: 0, attr: ringAverageAttr(ring), obstacleId: '' }] : []
     // guardian 敵の防御結界も周回として描く（#28）。壁/弾に負けたら霧散（#34）
     for (const er of resolution.enemyRings) {
-      orbits.push({ ring: er.ring, hitEnemyIds: [], carves: [], broken: er.broken, speed: er.ringSpeed })
+      orbits.push({
+        ring: er.ring,
+        hitEnemyIds: [],
+        carves: breakCarve(er.ring, er.breakPos),
+        broken: er.broken,
+        speed: er.ringSpeed,
+      })
     }
     // 持続周回（#39）：前ターンから残っている結界も回転表示。今ターン相殺で消えたら霧散させる
     const prevOrbits = battle.orbits ?? []
     for (const po of prevOrbits) {
       const survived = resolution.orbits.some((o) => o.id === po.id)
-      orbits.push({ ring: po.ring, hitEnemyIds: [], carves: [], broken: !survived, speed: po.ringSpeed })
+      orbits.push({
+        ring: po.ring,
+        hitEnemyIds: [],
+        carves: breakCarve(po.ring, resolution.orbitBreaks[po.id]),
+        broken: !survived,
+        speed: po.ringSpeed,
+      })
     }
     for (const es of resolution.enemyShots) {
       bullets.push({

@@ -26,7 +26,7 @@
 | `ActiveOrbit` | 永続する周回結界（#39） |
 | `Mechanics` | `{ obstacles, enemyFire }`（段階的解禁） |
 | `BossPhase` | ボスの HP フェーズ（#45）：`{ hpBelow, castCount, obstacles, cullMinions?, rField? }`（`rField`＝崩落後の場半径・`applyBossPhases` が `BattleState.rField` へ反映・#49） |
-| `Stage` | ステージ定義（enemies/obstacles/introText/clearText/mechanics/boss?/bossPhases?/rField?（面ごとの場半径・`createBattleState` が `BattleState.rField` へ取り込む・#49）） |
+| `Stage` | ステージ定義（enemies/obstacles/introText/clearText/mechanics/boss?/bossPhases?/rField?（面ごとの場半径・`createBattleState` が `BattleState.rField` へ取り込む・#49）/allyPositions?（面ごとの味方初期位置の上書き・#64。`party.ts` の並び順に対応し `createBattleState` が適用。未指定の面は既定位置。現状は第4面のみ使用）） |
 | `Phase` | `'enemyReveal' \| 'compose' \| 'resolve'` |
 | `LogEntry` | 戦闘ログ（kind で分類） |
 | `BattleState` | 戦闘状態（メモリ上のみ・永続化なし） |
@@ -88,9 +88,9 @@ resolveAllyCasts(state, casts, castingEnemyIds, { instability?, misfireRoll? })
 1. **敵弾を構築** … `planEnemyShots` で各敵の弾を決定（多重詠唱は弾ごとに独立計画・#44）。guardian の閉軌道は飛ばさず**防御リング**（`enemyRings`）へ分離。ruptor は暴発点（`misfirePos`）つきの弾になる。
 2. **味方発射を分類・構築** … `classifyTrajectory` で発射型/軌道型に。軌道型は壁接触で**霧散**判定。強属性（|z|>zRef）で失速し速度0に達したら**自滅して霧散**（ログで明示・#31/#44）。
 3. **防御** … 各敵弾に対し：
-   - 3z. 障害物が敵弾を削る（味方の盾）。
+   - 3z. 障害物が敵弾を削る（味方の盾）。`blocked`（以降の迎撃・命中の打ち切り）は**壁の中で止まった（`carveAlong` の `vanished`）ときだけ**（#64）。z 減速による自然失速は blocked にしない＝失速点より手前の味方への命中は無効化されない。
    - 3a. 軌道型リング（新規＋永続）が境界で迎撃（反対極のみ相殺）。
-   - 3b. 発射型のパリィ（反対極で交差したら速度を削り合う）。
+   - 3b. 発射型のパリィ：**実衝突判定**（`bulletCollision`・#64）＝両弾を同じゲーム時刻で進め（到達時刻 Σ ds/v・`FIELD.dt` 刻みの時間行進）、`parryHitDist(=2.0)` 以下へ近づいた最初の点で反対極なら速度を削り合う。
    - 減衰イベントを蓄積し、毎回「元初速＋全減衰」で再シミュレート。
 4. **障害物** … 味方の発射型を削りながら遮る。
 5. **4.5 敵結界との相互相殺** … 味方の発射型が敵 guardian の結界（新規リング＋持続結界 `owner='enemy'`）を横切ると、交差点でパリィと同じ相互相殺。自弾は減衰イベントとして飛行へ反映され（命中しない弾が横切っても結界は減速・破壊される）、結界は横断点の減速率で失速／速度0で霧散。同じ場所へ張り直された同IDの持続結界は二重に数えない。
@@ -108,13 +108,17 @@ resolveAllyCasts(state, casts, castingEnemyIds, { instability?, misfireRoll? })
   allies, enemies, obstacles, log,
   allyShots[],     // 味方の発射（描画・命中情報）
   enemyShots[],    // 敵弾（描画・命中情報・misfirePos/misfired）
-  enemyRings[],    // guardian の防御リング（描画用）
+  enemyRings[],    // guardian の防御リング（描画用）。{ring, broken, ringSpeed, breakPos}
+                   //   breakPos＝破壊された点（#64・霧散演出の同期用。破壊されていなければ null）
+  orbitBreaks,     // 破壊された持続結界の破壊点（#64）。Record<orbit id, Vec2>（演出同期用）
   clashes[],       // 弾/結界の衝突点と威力（火花演出）
   orbits[],        // 次ターンへ持ち越す永続周回
   popups[],        // ダメージ／回復の数値表示（#42）
   misfires[]       // このターン解決した暴発 {pos, owner}（instability の加算用・04b）
 }
 ```
+
+> **結界破壊点の演出同期（#64）**：`App.tsx` が `enemyRings[].breakPos` と `orbitBreaks` を `AnimOrbit.carves` の同期点として渡し、`BattleCanvas` の霧散演出は「弾がその点へ到達した瞬間」から始まる（従来はアニメ窓の 40% 固定時刻で開始しズレていた）。ロジックには影響しない（描画タイムラインのみ）。
 
 `App.tsx` はこれを `ResolveAnimation`（`AnimBullet[]` / `AnimOrbit[]` / `clashes` / `popups` / **`deaths`** / **`bossView`**）に変換して `BattleCanvas` に渡す。`deaths[]`（`EnemyDeath = {id,pos,species,element,tier,hitboxRadius,boss}`）は「このターン hp>0→hp≤0 になった敵」を撃破前の敵から作り、`BattleCanvas` が種族別の消滅アニメ（`drawEnemyDeath`／ボスは `drawBossCollapse`）を再生する（05c §6.5・#46/#51）。`bossView = {phase,finale,outcome}` はボスの多段外見（`drawBossSprite`）に渡す描画専用の状態。**いずれも当たり判定・ダメージ計算には影響しない**（描画タイムラインのみ）。
 
@@ -141,7 +145,7 @@ src/
 │  ├ carve.ts               障害物の削り解決本体（`carveAlong`／`densifyGeom`）。turn.ts と enemyPlanning/ が共有
 │  ├ misfire.ts             暴発
 │  ├ misfireInstability.ts  暴発の不安定化・累積・崩壊（膜メーター・04b）
-│  ├ parry.ts               相殺（線分交差・反対極のみ）
+│  ├ parry.ts               相殺（発射型どうしは実衝突 `bulletCollision`・#64／結界の迎撃は線分交差。反対極のみ）
 │  ├ status.ts              状態異常（ひるみ/継続ダメージ）
 │  ├ enemyAI.ts             敵 AI（facade・ロール振り分け・迂回型/守護型の計画）
 │  ├ enemyPlanning/         敵AIの軌道計画（[05](05-enemies.md) §5.4/§5.4b）

@@ -9,7 +9,8 @@ import { FIELD } from '../data/constants'
 export function createBattleState(stage: Stage, stageIndex: number, party: Ally[]): BattleState {
   return {
     stageIndex,
-    allies: party.map((a) => ({ ...a, hp: a.maxHp, statuses: [] })),
+    // 面ごとの初期位置の上書き（#64・第4面：中央寄せ）。未指定はパーティ既定位置
+    allies: party.map((a, i) => ({ ...a, pos: stage.allyPositions?.[i] ?? a.pos, hp: a.maxHp, statuses: [] })),
     enemies: stage.enemies.map((e) => ({ ...e, statuses: [...e.statuses] })),
     obstacles: stage.obstacles.map((o) => ({ ...o, carves: [...o.carves] })),
     mechanics: stage.mechanics,
