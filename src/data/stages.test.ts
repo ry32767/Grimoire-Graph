@@ -208,22 +208,24 @@ describe('難易度フレームワーク（06b）', () => {
 })
 
 describe('フィールド半径 rField（#49・06b §5.5）', () => {
-  it('面ごとに rField が設定される（高難度面ほど広め）', () => {
-    // 1面は既定（未指定＝FIELD.rField）、2〜3面はやや広め、5〜6面は広め、7面上層はさらに広い
-    expect(STAGES[0].rField ?? FIELD.rField).toBe(FIELD.rField)
-    expect(STAGES[1].rField).toBe(32)
-    expect(STAGES[2].rField).toBe(34)
-    expect(STAGES[3].rField).toBe(32)
-    expect(STAGES[4].rField).toBe(36)
-    expect(STAGES[5].rField).toBe(36)
-    expect(STAGES[6].rField).toBe(35)
+  it('面ごとに rField が設定される（サイズのスケールで拡大・第1面25〜最大60）', () => {
+    // 手描き仕様の「サイズ」に対応：第1面=25（最小）→ 面が進むほど広くなる。7面は①矩形43→②大円60。
+    expect(STAGES[0].rField).toBe(25) // size 1
+    expect(STAGES[1].rField).toBe(31) // size 1.5
+    expect(STAGES[2].rField).toBe(37) // size 2
+    expect(STAGES[3].rField).toBe(48) // size 3
+    expect(STAGES[4].rField).toBe(54) // size 3.5
+    expect(STAGES[5].rField).toBe(48) // size 3
+    expect(STAGES[6].rField).toBe(43) // size 2.5（①矩形の間）
+    // 第1面↔第7面②で約2.4倍の広さの差
+    expect(60 / STAGES[0].rField!).toBeGreaterThan(2)
   })
 
-  it('第7面 bossPhases で rField が段階的に縮小する（床崩落）', () => {
+  it('第7面 bossPhases で rField が拡大する（床崩落＝①矩形→②大円60）', () => {
     const phases = STAGES[6].bossPhases!
-    expect(phases[0].rField).toBe(28)
-    expect(phases[1].rField).toBe(24)
-    // 縮小してもボス（y=23）は場内に残る（dist 23 < 24）
+    expect(phases[0].rField).toBe(60) // ②開けた大円（サイズ4）
+    expect(phases[1].rField).toBe(60) // ③④も同じ大円
+    // 拡大してもボス（y=26）は場内に残る
     const boss = STAGES[6].enemies.find((e) => e.boss)!
     expect(dist(boss.pos)).toBeLessThan(phases[1].rField!)
   })

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type {
   Ally,
   Attribute,
@@ -300,8 +300,17 @@ export default function BattleCanvas(props: Props) {
   const doneRef = useRef(props.onAnimationDone)
   doneRef.current = props.onAnimationDone
 
+  // 盤面の手動ズーム/パン（拡大縮小して見やすくする）。大アリーナ（rField 最大60）で有効。
+  const [view, setView] = useState<{ zoom: number; pan: Vec2 }>({ zoom: 1, pan: { x: 0, y: 0 } })
+  const rField = props.rField ?? FIELD.rField
+  // 場が変わった（面/フェーズ遷移）らズームを初期化
+  useEffect(() => {
+    setView({ zoom: 1, pan: { x: 0, y: 0 } })
+  }, [rField])
+
   // ビューポート（#49・06b §5.5）：場の半径 props.rField で倍率が決まる。面/フェーズで可変。
-  const vp: Viewport = { ...VP, unitsRadius: props.rField ?? FIELD.rField }
+  // 手動ズーム/パンを反映（zoom=1・pan=0 なら従来どおり場全体がちょうど収まる）。
+  const vp: Viewport = { ...VP, unitsRadius: rField, zoom: view.zoom, pan: view.pan }
 
   const staticParams: SceneParams = {
     vp,
@@ -769,6 +778,8 @@ export default function BattleCanvas(props: Props) {
     props.misfireBand,
     props.doom,
     props.collapse,
+    view.zoom,
+    view.pan,
   ])
 
   // 破局（致死崩壊・04b §4b.2）：暴発の効果範囲がステージ全体を覆い、場そのものが呑まれる演出。
@@ -849,15 +860,74 @@ export default function BattleCanvas(props: Props) {
   }
   const redrawCompose = () => composeDrawRef.current?.()
 
-  // ポインタ操作：点ピック中はルーペ（#49）、それ以外は発射方向ドラッグ（#47）
+  // ===== 盤面の拡大縮小（ズーム/パン・見やすくする） =====
+  const ZOOM_MIN = 1
+  const ZOOM_MAX = 3.5
+  // 内部解像度でのポインタ座標（ピンチの中心/距離に使う）
+  const eventToInternal = (e: { clientX: number; clientY: number }): Vec2 | null => {
+    const canvas = ref.current
+    if (!canvas) return null
+    const rect = canvas.getBoundingClientRect()
+    if (rect.width === 0 || rect.height === 0) return null
+    return { x: ((e.clientX - rect.left) * INTERNAL) / rect.width, y: ((e.clientY - rect.top) * INTERNAL) / rect.height }
+  }
+  const clampZoom = (z: number) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z))
+  // 場が画面外へ抜け切らないようパンを制限（中心から場の縁が見える範囲まで）
+  const clampPan = (pan: Vec2, zoom: number): Vec2 => {
+    const lim = rField * Math.max(0, 1 - 1 / zoom)
+    return { x: Math.max(-lim, Math.min(lim, pan.x)), y: Math.max(-lim, Math.min(lim, pan.y)) }
+  }
+  // ある内部ピクセル点（focal）を固定したままズーム倍率を変える
+  const zoomAtInternal = (nextZoom: number, focalPx: Vec2) => {
+    setView((v) => {
+      const z = clampZoom(nextZoom)
+      const focal = toMath(focalPx, { ...vp, zoom: v.zoom, pan: v.pan })
+      // newPan = focal - (focal - oldPan) * oldZoom/newZoom（focal をスクリーン上に留める）
+      const pan = {
+        x: focal.x - (focal.x - v.pan.x) * (v.zoom / z),
+        y: focal.y - (focal.y - v.pan.y) * (v.zoom / z),
+      }
+      return { zoom: z, pan: clampPan(pan, z) }
+    })
+  }
+  const zoomAtCenter = (nextZoom: number) => zoomAtInternal(nextZoom, { x: INTERNAL / 2, y: INTERNAL / 2 })
+
+  // マルチタッチ（ピンチ）追跡
+  const pointersRef = useRef<Map<number, Vec2>>(new Map())
+  const pinchRef = useRef<{ dist: number; mid: Vec2; zoom: number; focal: Vec2 } | null>(null)
+  const suppressAimRef = useRef(false)
+
+  const pinchMetrics = () => {
+    const pts = [...pointersRef.current.values()]
+    const dx = pts[0].x - pts[1].x
+    const dy = pts[0].y - pts[1].y
+    return { dist: Math.hypot(dx, dy) || 1, mid: { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 } }
+  }
+
+  const interactive = !!props.pickMode || !!props.onAim
+
+  // ポインタ操作：2本指＝ピンチ（ズーム）＆パン、1本指＝点ピック（ルーペ・#49）/発射方向ドラッグ（#47）
   const handlePointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    const m = eventToMath(e)
-    if (!m) return
+    const px = eventToInternal(e)
+    if (!px) return
+    pointersRef.current.set(e.pointerId, px)
     try {
       ref.current?.setPointerCapture(e.pointerId)
     } catch {
       /* 非対応は無視 */
     }
+    if (pointersRef.current.size >= 2) {
+      // ピンチ開始：進行中の照準/点ピックを取り消す
+      aimingRef.current = false
+      pickPosRef.current = null
+      suppressAimRef.current = true
+      const { dist, mid } = pinchMetrics()
+      pinchRef.current = { dist, mid, zoom: view.zoom, focal: toMath(mid, vp) }
+      return
+    }
+    if (!interactive) return
+    const m = eventToMath(e)
+    if (!m) return
     if (props.pickMode) {
       pickPosRef.current = m
       redrawCompose()
@@ -867,16 +937,37 @@ export default function BattleCanvas(props: Props) {
     }
   }
   const handlePointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    const px = eventToInternal(e)
+    if (px && pointersRef.current.has(e.pointerId)) pointersRef.current.set(e.pointerId, px)
+    if (pointersRef.current.size >= 2 && pinchRef.current) {
+      // ピンチ：距離比でズーム、中心の移動でパン（開始時の focal を現在の中心へ合わせる）
+      const { dist, mid } = pinchMetrics()
+      const start = pinchRef.current
+      const z = clampZoom((start.zoom * dist) / start.dist)
+      const baseScale = Math.min(INTERNAL, INTERNAL) / 2 / rField
+      const scale = baseScale * z
+      // toScreen: midScreen = center + (focal - pan)*scale（y反転）→ pan = focal - (midScreen-center)/scale
+      const pan = {
+        x: start.focal.x - (mid.x - INTERNAL / 2) / scale,
+        y: start.focal.y + (mid.y - INTERNAL / 2) / scale,
+      }
+      setView({ zoom: z, pan: clampPan(pan, z) })
+      return
+    }
+    if (!interactive) return
     const m = eventToMath(e)
     if (!m) return
     if (props.pickMode && pickPosRef.current) {
       pickPosRef.current = m
       redrawCompose()
-    } else if (props.onAim && aimingRef.current) {
+    } else if (props.onAim && aimingRef.current && !suppressAimRef.current) {
       props.onAim(m)
     }
   }
-  const handlePointerUp = () => {
+  const handlePointerUp = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    pointersRef.current.delete(e.pointerId)
+    if (pointersRef.current.size < 2) pinchRef.current = null
+    if (pointersRef.current.size === 0) suppressAimRef.current = false
     if (props.pickMode && pickPosRef.current) {
       props.onFieldClick?.(pickPosRef.current)
       pickPosRef.current = null
@@ -884,20 +975,55 @@ export default function BattleCanvas(props: Props) {
     }
     aimingRef.current = false
   }
+  // ホイールでズーム（カーソル位置を固定）。ページスクロールを止めるため非パッシブで登録
+  useEffect(() => {
+    const canvas = ref.current
+    if (!canvas) return
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const px = eventToInternal(e)
+      if (!px) return
+      const factor = Math.exp(-e.deltaY * 0.0015)
+      zoomAtInternal(view.zoom * factor, px)
+    }
+    canvas.addEventListener('wheel', onWheel, { passive: false })
+    return () => canvas.removeEventListener('wheel', onWheel)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view.zoom, view.pan, rField])
 
-  const interactive = !!props.pickMode || !!props.onAim
+  const zoomed = view.zoom > 1.001
   return (
-    <canvas
-      ref={ref}
-      width={INTERNAL}
-      height={INTERNAL}
-      aria-label="バトルフィールド"
-      onPointerDown={interactive ? handlePointerDown : undefined}
-      onPointerMove={interactive ? handlePointerMove : undefined}
-      onPointerUp={interactive ? handlePointerUp : undefined}
-      onPointerLeave={interactive ? handlePointerUp : undefined}
-      style={interactive ? { cursor: 'crosshair', touchAction: 'none' } : undefined}
-    />
+    <>
+      <canvas
+        ref={ref}
+        width={INTERNAL}
+        height={INTERNAL}
+        aria-label="バトルフィールド"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerLeave={handlePointerUp}
+        style={{ cursor: interactive ? 'crosshair' : 'default', touchAction: 'none' }}
+      />
+      <div className="zoom-controls" aria-label="盤面の拡大縮小">
+        <button type="button" aria-label="拡大" onClick={() => zoomAtCenter(view.zoom * 1.4)}>
+          ＋
+        </button>
+        <button type="button" aria-label="縮小" onClick={() => zoomAtCenter(view.zoom / 1.4)}>
+          －
+        </button>
+        {zoomed && (
+          <button
+            type="button"
+            aria-label="ズームを戻す"
+            className="zoom-reset"
+            onClick={() => setView({ zoom: 1, pan: { x: 0, y: 0 } })}
+          >
+            ⟲
+          </button>
+        )}
+      </div>
+    </>
   )
 }
 

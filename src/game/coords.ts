@@ -13,23 +13,37 @@ export interface Viewport {
   height: number // canvas ピクセル高さ
   /** 画面短辺の半分に対応する数学ユニット数（既定は R_field） */
   unitsRadius: number
+  /**
+   * 手動ズーム倍率（拡大縮小・既定 1）。1 より大きいと拡大（見える範囲が狭くなる）。
+   * 大アリーナ（rField 最大 60）でも敵/味方を見やすくする（描画・入力とも同じ倍率が効く）。
+   */
+  zoom?: number
+  /**
+   * ズーム時に画面中央へ来る数学座標（パン・既定 (0,0)）。zoom>1 で全体が入り切らないとき、
+   * 見たい位置を中央へ寄せる。draw/入力とも toScreen/toMath 経由なので一貫して追従する。
+   */
+  pan?: Vec2
 }
 
-/** 1 ユニットあたりのピクセル数 */
+/** 1 ユニットあたりのピクセル数（手動ズーム倍率込み） */
 export function scaleOf(vp: Viewport): number {
-  return Math.min(vp.width, vp.height) / 2 / vp.unitsRadius
+  return (Math.min(vp.width, vp.height) / 2 / vp.unitsRadius) * (vp.zoom ?? 1)
 }
 
-/** 数学座標 → Canvas ピクセル（y は上下反転） */
+/** 数学座標 → Canvas ピクセル（y は上下反転・パン込み） */
 export function toScreen(p: Vec2, vp: Viewport): Vec2 {
   const s = scaleOf(vp)
-  return { x: vp.width / 2 + p.x * s, y: vp.height / 2 - p.y * s }
+  const px = vp.pan?.x ?? 0
+  const py = vp.pan?.y ?? 0
+  return { x: vp.width / 2 + (p.x - px) * s, y: vp.height / 2 - (p.y - py) * s }
 }
 
-/** Canvas ピクセル → 数学座標 */
+/** Canvas ピクセル → 数学座標（パン込み） */
 export function toMath(px: Vec2, vp: Viewport): Vec2 {
   const s = scaleOf(vp)
-  return { x: (px.x - vp.width / 2) / s, y: (vp.height / 2 - px.y) / s }
+  const ox = vp.pan?.x ?? 0
+  const oy = vp.pan?.y ?? 0
+  return { x: (px.x - vp.width / 2) / s + ox, y: (vp.height / 2 - px.y) / s + oy }
 }
 
 /**
@@ -118,12 +132,15 @@ export function sampleTrajectory(traj: Trajectory): Sample[] {
   const out: Sample[] = []
   // 場の半径は軌道に紐づく（#49・06b §5.5：面/ボスフェーズで可変）。未指定は既定 rField。
   const fieldR = traj.fieldR ?? FIELD.rField
+  // 回転方式の展開上限は場の半径に追従（大アリーナ rField=60 でも対岸まで弾が届く・#49）。
+  // 既定 fieldR=30 では 1.6×30=48 で従来の rotateXMax と一致（挙動不変）。
+  const rotateXMax = Math.max(SAMPLING.rotateXMax, 1.6 * fieldR)
   if (traj.mode === 'rotate') {
     const o = traj.origin ?? { x: 0, y: 0 }
     // #14：局所 y を g(0) だけ平行移動し、術者位置 origin を始点にする
     const g0raw = traj.g(0)
     const g0 = Number.isFinite(g0raw) ? g0raw : 0
-    for (let x = 0; x <= SAMPLING.rotateXMax + 1e-9; x += SAMPLING.rotateStep) {
+    for (let x = 0; x <= rotateXMax + 1e-9; x += SAMPLING.rotateStep) {
       const y = traj.g(x)
       const valid = Number.isFinite(y)
       const local = valid ? rotate({ x, y: y - g0 }, traj.angle) : { x: NaN, y: NaN }
