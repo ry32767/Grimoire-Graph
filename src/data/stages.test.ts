@@ -158,6 +158,10 @@ describe('難易度フレームワーク（06b）', () => {
     for (const a of prep.state.allies) {
       expect(dist(a.pos, demo.misfirePos!)).toBeGreaterThan(FIELD.aoeRadius + 1)
     }
+    // 崩し手自身も巻き込まない（#65：自爆しない場所を選ぶ。危険圏は上振れ込み）
+    const caster = prep.state.enemies.find((e) => e.id === demo.enemyId)!
+    expect(dist(caster.pos, demo.misfirePos!)).toBeGreaterThan(FIELD.aoeRadius)
+    expect(resolution.enemies.find((e) => e.id === caster.id)!.hp).toBe(caster.hp) // 無傷
   })
 
   it('第4面（#64）：味方は中央寄せで、レンの半径7の結界1枚で3人を囲える（壁に触れず存続）', () => {
