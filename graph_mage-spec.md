@@ -214,8 +214,9 @@
 受け入れ条件：[docs/05b-enemy-archetypes.md](docs/05b-enemy-archetypes.md) §7 を正とする。
 - [x] 軌道 family に exp（昇り）/poly34（捻れ）を追加。迂回型・暴発型は line 不可
 - [x] 火力型/迂回型/暴発型/守護型の4パターン（既存 role の拡張・専用物理なし）。高難度：同極すり抜け・交互張り
-- [x] LVL（1〜7）で HP・castMag・family/z場/パターンを連動解放（castInitialSpeed=8 固定）。全7面を [docs/06-stages.md](docs/06-stages.md) のとおり刷新
+- [x] LVL（1〜7）で HP・castMag・family/z場/パターンを連動解放（castInitialSpeed=8 固定。例外：第6面の崩し手3体のみ 6.5・#63）。全7面を [docs/06-stages.md](docs/06-stages.md) のとおり刷新
 - [ ] 守護型の「方向づけられた非一様 z 場」（LVL7 枠・現行未使用のため未実装）
+- [x] 第5面以降は「全員おまかせ」連打（防御なしの自動照準連打）だけではクリアできない（`src/game/balance.test.ts` で自動検証。第6面は加えて「弾色に合わせた反対極の結界→ひるみロック→回廊フィット」の対処プレイで無被弾クリアできる勝ち筋も固定・#63）
 
 #### 機能20：多重詠唱とボス戦の HP フェーズ・断末魔（#44/#45）
 受け入れ条件：
