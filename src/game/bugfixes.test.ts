@@ -577,6 +577,47 @@ describe('パリィの実衝突判定（#64：撃ち返し・横合いの迎撃�
   })
 })
 
+describe('暴発の余波と発射魔法の干渉（#66：効果中に圏内へ入った弾は呑まれる）', () => {
+  // 崩し手（0,20・光・遅め）が餌役（0,0）の近傍で暴発する。射手 p は左遠方から
+  // +x へ横切る弾を撃ち、その速度で「爆発より先に通過し終える／爆発後に圏内へ入る」を切り替える。
+  const run = (bulletSpeed: number) => {
+    const bait = ally('bait', { x: 0, y: 0 }, 40, 'dark') // 低HP＝崩し手の狙いを固定
+    const p = ally('p', { x: -20, y: 0 }, 500, 'neutral')
+    const far = baseEnemy({ id: 'far', name: 'far', pos: { x: 20, y: 0 }, element: 'dark', hp: 300 })
+    const ruptor = baseEnemy({
+      id: 'r', name: 'r', pos: { x: 0, y: 20 }, element: 'light', role: 'ruptor',
+      castInitialSpeed: 5, // 遅い＝爆発時刻が遅い（速い弾はその前に通過し切れる）
+    })
+    // 光の横弾（崩し手の光弾と同極＝パリィは透過。干渉するなら余波だけ）
+    const traj: Trajectory = { mode: 'rotate', g: () => 0, angle: 0, origin: p.pos, z: constZField(FIELD.zRef) }
+    return resolveTurn({
+      allies: [bait, p],
+      casts: [{ allyId: 'p', trajectory: traj, initialSpeed: bulletSpeed }],
+      enemies: [ruptor, far],
+      castingEnemyIds: ['r'],
+      obstacles: [],
+      mechanics: { obstacles: false, enemyFire: true },
+      misfireRoll: 0.5,
+    })
+  }
+
+  it('爆発後に圏内へ入った弾は余波に呑まれ、奥の敵へ届かない', () => {
+    const res = run(4) // 遅い弾＝爆発の瞬間（極手前の減速で遅め）にまだ AoE 圏内に居る
+    expect(res.enemyShots.find((s) => s.enemyId === 'r')!.misfired).toBe(true) // 暴発は成立
+    expect(res.log.some((l) => l.text.includes('余波'))).toBe(true)
+    const shot = res.allyShots.find((s) => s.allyId === 'p')!
+    expect(shot.flight!.end).toBe('vanished') // 呑まれて消える
+    expect(res.enemies.find((e) => e.id === 'far')!.hp).toBe(300) // 奥の敵は無傷
+  })
+
+  it('爆発より先に通過し終えた弾は影響を受けず、奥の敵へ届く', () => {
+    const res = run(16) // 速い弾＝爆発前に AoE 圏を通過し切る
+    expect(res.enemyShots.find((s) => s.enemyId === 'r')!.misfired).toBe(true)
+    expect(res.log.some((l) => l.text.includes('余波'))).toBe(false)
+    expect(res.enemies.find((e) => e.id === 'far')!.hp).toBeLessThan(300) // 命中している
+  })
+})
+
 describe('結界破壊点の記録（#64：霧散演出を弾の到達と同期する）', () => {
   it('敵 guardian の新規結界が味方弾に破られると breakPos が立つ', () => {
     const g = baseEnemy({

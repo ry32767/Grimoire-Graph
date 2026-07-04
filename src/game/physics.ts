@@ -166,6 +166,66 @@ export function simulatePath(
 }
 
 /**
+ * 飛行サンプル列の各点への到達時刻（Σ ds/v の台形積分・ゲーム秒）。
+ * 失速区間（速度≈0）から先は Infinity（＝到達しない）。
+ * パリィの実衝突判定（parry.bulletCollision）と暴発の余波（turn §4.7）が共有する。
+ */
+export function flightTimes(samples: FlightSample[]): number[] {
+  const t = [0]
+  for (let i = 1; i < samples.length; i++) {
+    const vAvg = (samples[i - 1].speed + samples[i].speed) / 2
+    const ds = samples[i].arcLen - samples[i - 1].arcLen
+    t.push(vAvg <= 1e-9 ? Infinity : t[i - 1] + ds / vAvg)
+  }
+  return t
+}
+
+/**
+ * 飛行の弧長 arcLen の点で瞬間的な減速 deltaV を適用した新しい飛行を返す（#66・暴発の余波）。
+ * エネルギーモデル（v² は弧長に沿って加速度積分で決まる）に従い、適用点以降の速度を
+ * v'(s)² = v(s)² − vAt² + vAfter² で書き換える。0 に達した点で打ち切り（消滅）。
+ */
+export function applyDeltaVAtArc(flight: Flight, arcLen: number, deltaV: number): Flight {
+  const s0 = flight.samples
+  if (s0.length < 2 || deltaV <= 0) return flight
+  const out: FlightSample[] = []
+  let dSq: number | null = null // vAfter² − vAt²（適用点で確定）
+  for (let i = 0; i < s0.length; i++) {
+    const smp = s0[i]
+    if (smp.arcLen <= arcLen + 1e-9) {
+      out.push(smp)
+      continue
+    }
+    if (dSq === null) {
+      const prev = s0[i - 1] ?? smp
+      const span = smp.arcLen - prev.arcLen
+      const f = span > 0 ? Math.max(0, Math.min(1, (arcLen - prev.arcLen) / span)) : 0
+      const vAt = prev.speed + (smp.speed - prev.speed) * f
+      const vAfter = Math.max(0, vAt - deltaV)
+      if (vAfter <= 0) {
+        // 適用点で完全に止まる：その場に停止サンプルを置いて消滅
+        const pos = {
+          x: prev.pos.x + (smp.pos.x - prev.pos.x) * f,
+          y: prev.pos.y + (smp.pos.y - prev.pos.y) * f,
+        }
+        out.push({ pos, speed: 0, arcLen, param: prev.param + (smp.param - prev.param) * f })
+        return { samples: out, end: 'vanished', endPos: pos, endSpeed: 0 }
+      }
+      dSq = vAfter * vAfter - vAt * vAt
+    }
+    const sq = smp.speed * smp.speed + dSq
+    if (sq <= 1e-12) {
+      // この点までに 0 へ達した＝ここで消滅（サンプル間隔ぶんの量子化は許容）
+      out.push({ ...smp, speed: 0 })
+      return { samples: out, end: 'vanished', endPos: smp.pos, endSpeed: 0 }
+    }
+    out.push({ ...smp, speed: Math.sqrt(sq) })
+  }
+  const last = out[out.length - 1]
+  return { samples: out, end: flight.end, endPos: flight.endPos, endSpeed: last?.speed ?? 0 }
+}
+
+/**
  * 弧長 arcLen の点に弾が達する「飛行時間」（Σ ds/v の台形積分・ゲーム秒）。
  * 途中で失速（速度≈0）する・経路がそこまで届かない場合は Infinity（＝到達しない）。
  * パリィの同時性判定（2弾が交点を同時刻に通過するか）に使う。

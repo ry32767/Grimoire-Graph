@@ -9,6 +9,7 @@ import type {
   DamagePopup,
   Enemy,
   Flight,
+  FlightSample,
   LogEntry,
   Mechanics,
   Obstacle,
@@ -30,6 +31,9 @@ import {
   simulatePath,
   polyFromPoints,
   sampleAtLength,
+  flightTimes,
+  timeToArc,
+  applyDeltaVAtArc,
   type LossEvent,
 } from './physics'
 import { firstHitAmong, type Target } from './collision'
@@ -700,6 +704,90 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     }
   }
 
+  // === 4.7 暴発の余波と発射魔法の干渉（#66） ===
+  // このターン実際に暴発する弾（味方の関数エラー・崩し手の極到達）を先に列挙し、
+  // 「爆発の瞬間から misfireBlastTime の間に AoE 圏内へ入った（居た）飛行中の弾」へ、
+  // 結界と同じ最大威力のパリィ相当減速（AOE_ORBIT_LOSS）を与える。敵味方無差別・
+  // 光闇両極を帯びるため属性を問わず作用する。爆発より先に通過し終えた弾は影響なし。
+  // AoE 実半径はここで確定し、§5/§6b の解決もこの値を使う（乱数列の消費順を一元化）。
+  interface BlastEvent {
+    center: Vec2
+    radius: number
+    tMis: number
+  }
+  const blastRadiusByPlan = new Map<AllyPlan, number>()
+  const blastRadiusByShot = new Map<EnemyShot, number>()
+  {
+    const blasts: BlastEvent[] = []
+    let seq = 0
+    const rollRadius = () => {
+      const r = misfireRadius(instability0 + seq, (baseRoll + seq * 0.618034) % 1)
+      seq++
+      return r
+    }
+    // 列挙順は解決順（§5：味方 plans 順 → §6b：敵 enemyShots 順）と一致させる＝実半径も一致する
+    for (const p of plans) {
+      if (p.kind !== 'projectile' || !p.freeFlight || p.freeFlight.end !== 'invalid') continue
+      const radius = rollRadius()
+      blastRadiusByPlan.set(p, radius)
+      const last = p.freeFlight.samples[p.freeFlight.samples.length - 1]
+      const tMis = last ? timeToArc(p.freeFlight.samples, last.arcLen) : Infinity
+      if (Number.isFinite(tMis)) blasts.push({ center: p.freeFlight.endPos, radius, tMis })
+    }
+    for (const shot of enemyShots) {
+      if (!shot.misfirePos || shot.blocked || shot.flight.end === 'vanished') continue
+      const radius = rollRadius()
+      blastRadiusByShot.set(shot, radius)
+      const last = shot.flight.samples[shot.flight.samples.length - 1]
+      const tMis = last ? timeToArc(shot.flight.samples, last.arcLen) : Infinity
+      if (Number.isFinite(tMis)) blasts.push({ center: shot.misfirePos, radius, tMis })
+    }
+    // 弾が余波に呑まれる最初の点（時刻・圏内の両方を満たす最初のサンプル）
+    const blastEntry = (samples: FlightSample[], ev: BlastEvent): { pos: Vec2; arcLen: number } | null => {
+      const times = flightTimes(samples)
+      for (let i = 0; i < samples.length; i++) {
+        const t = times[i]
+        if (!Number.isFinite(t) || t > ev.tMis + COMBAT.misfireBlastTime) break
+        if (t + 1e-9 < ev.tMis) continue
+        if (dist(samples[i].pos, ev.center) <= ev.radius) return { pos: samples[i].pos, arcLen: samples[i].arcLen }
+      }
+      return null
+    }
+    for (const ev of blasts) {
+      // 味方の発射型（暴発する弾どうしは同時扱い＝干渉しない）
+      for (const p of plans) {
+        if (p.kind !== 'projectile' || !p.freeFlight || blastRadiusByPlan.has(p)) continue
+        const hitAt = blastEntry(p.freeFlight.samples, ev)
+        if (!hitAt) continue
+        clashes.push({ pos: hitAt.pos, power: AOE_CLASH_POWER })
+        p.pLosses.push({ arcLen: hitAt.arcLen, deltaV: AOE_ORBIT_LOSS })
+        p.freeFlight = applyDeltaVAtArc(p.freeFlight, hitAt.arcLen, AOE_ORBIT_LOSS)
+        log.push({
+          kind: 'misfire',
+          text:
+            p.freeFlight.end === 'vanished'
+              ? `${nameOf(allies, p.cast.allyId)}の弾は暴発の余波に呑まれて消えた`
+              : `${nameOf(allies, p.cast.allyId)}の弾は暴発の余波で大きく減速した`,
+        })
+      }
+      // 敵弾（崩し手の暴発弾は除く＝同時扱い）
+      for (const shot of enemyShots) {
+        if (shot.blocked || blastRadiusByShot.has(shot)) continue
+        const hitAt = blastEntry(shot.flight.samples, ev)
+        if (!hitAt) continue
+        clashes.push({ pos: hitAt.pos, power: AOE_CLASH_POWER })
+        shot.flight = applyDeltaVAtArc(shot.flight, hitAt.arcLen, AOE_ORBIT_LOSS)
+        log.push({
+          kind: 'misfire',
+          text:
+            shot.flight.end === 'vanished'
+              ? `${nameOf(enemies, shot.enemyId)}の弾は暴発の余波に呑まれて消えた`
+              : `${nameOf(enemies, shot.enemyId)}の弾は暴発の余波で大きく減速した`,
+        })
+      }
+    }
+  }
+
   // === 5. 攻撃：命中（発射型）／掃射（軌道型）／暴発 ===
   const allyShots: AllyShot[] = []
   for (const p of plans) {
@@ -778,7 +866,8 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       misfirePos = flight.endPos
       // endSpeed は samples 空でも v0(=初速) を保持するため常に正しい
       const speed = flight.endSpeed
-      const radius = nextMisfireRadius() // instability による半径ばらつき（04b §4b.3）
+      // instability による半径ばらつき（04b §4b.3）。§4.7 で確定済みならその値（余波判定と同一半径）
+      const radius = blastRadiusByPlan.get(p) ?? nextMisfireRadius()
       // 倒した敵（hp0）は AoE 対象に含めない（味方側と同様・撃破済みに判定が出ないように）
       const mis = resolveMisfire(
         { type: 'invalid', pos: misfirePos },
@@ -976,7 +1065,8 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       ...enemies.filter((e) => e.hp > 0).map((e) => ({ id: e.id, pos: e.pos })),
       ...allies.filter((a) => a.hp > 0).map((a) => ({ id: a.id, pos: a.pos })),
     ]
-    const radius = nextMisfireRadius() // instability による半径ばらつき（04b §4b.3）
+    // instability による半径ばらつき（04b §4b.3）。§4.7 で確定済みならその値（余波判定と同一半径）
+    const radius = blastRadiusByShot.get(shot) ?? nextMisfireRadius()
     const casterPos = enemies.find((e) => e.id === shot.enemyId)?.pos ?? { x: 0, y: 0 }
     const mis = resolveMisfire({ type: 'invalid', pos: center }, shot.flight.endSpeed, targets, radius, casterPos)
     for (const id of mis.hitIds) {

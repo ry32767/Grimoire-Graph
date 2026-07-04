@@ -1,6 +1,7 @@
 // パリィ（クラッシュ解決・§3.8・機能12）：同極/中立はすり抜け、反対極のみ相殺。
 // 速度を削り合い、0 になった側は消滅。純粋関数。
 import type { Attribute, FlightSample, Vec2 } from './types'
+import { flightTimes } from './physics'
 import { COMBAT, FIELD } from '../data/constants'
 
 function cross(a: Vec2, b: Vec2): number {
@@ -129,17 +130,6 @@ export function firstCrossing(
     }
   }
   return null
-}
-
-/** 飛行サンプル列の各点への到達時刻（Σ ds/v・ゲーム秒）。失速区間から先は Infinity。 */
-function flightTimes(samples: FlightSample[]): number[] {
-  const t = [0]
-  for (let i = 1; i < samples.length; i++) {
-    const vAvg = (samples[i - 1].speed + samples[i].speed) / 2
-    const ds = samples[i].arcLen - samples[i - 1].arcLen
-    t.push(vAvg <= 1e-9 ? Infinity : t[i - 1] + ds / vAvg)
-  }
-  return t
 }
 
 /** 時刻 τ における弾の位置・弧長（times は flightTimes の累積）。idxRef は前回位置から前進走査。 */
