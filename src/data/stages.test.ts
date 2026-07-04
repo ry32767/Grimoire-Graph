@@ -3,24 +3,13 @@ import { STAGES } from './stages'
 import { ROTATE_PRESETS, buildTrajectory } from '../game/functions'
 import { createBattleState, prepareTurn, resolveAllyCasts } from '../game/battle'
 import { planRuptorShot } from '../game/enemyAI'
-import { makeParty, PARTY } from './party'
+import { makeParty } from './party'
 import { FIELD } from './constants'
 import { dist } from '../game/coords'
 import { isSolidAt, materialCells } from '../game/obstacle'
 import { ringEncloses, type RingPoint } from '../game/orbit'
 import { constZField } from '../game/zfields'
-import type { Obstacle, Trajectory, Vec2 } from '../game/types'
-
-/** 線分 a→e のどこかが障害物の素材に当たるか（直線で射線が通らない＝壁で遮られる）。 */
-function segmentBlocked(a: Vec2, e: Vec2, obstacles: Obstacle[]): boolean {
-  const steps = 300
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps
-    const p = { x: a.x + (e.x - a.x) * t, y: a.y + (e.y - a.y) * t }
-    for (const o of obstacles) if (isSolidAt(o, p)) return true
-  }
-  return false
-}
+import type { Trajectory } from '../game/types'
 
 describe('ステージ定義（機能14・#15）', () => {
   it('3ステージ以上ある', () => {
@@ -53,45 +42,57 @@ describe('ステージ定義（機能14・#15）', () => {
           expect(dist({ x: d.x, y: d.y })).toBeLessThan(rField)
           expect(d.r).toBeGreaterThan(0)
         }
+        // 部屋の囲い（roomWalls/crossWalls）・翼壁は「四方を壁で囲う」ため境界の外まで伸ばして
+        // 密封する（unbreakable の中立壁）。円形の場では外縁が境界円を必ず超えるので、この種の
+        // 囲い壁は厳密な四隅在場内の制約を免除する（内部障害物のみ場内を要求）。
+        const isSealWall = o.kind === 'unbreakable' && o.element === 'neutral'
         for (const r of rects) {
           expect(r.w).toBeGreaterThan(0)
           expect(r.h).toBeGreaterThan(0)
-          // 翼壁（#50）は境界ぎわの回り込み抜けを塞ぐため、外側の縁を場境界まで（＝わずかに場外へ）
-          // 伸ばす必要がある。円形の場では矩形の外側の角が境界円を必ずはみ出すので、翼壁は例外扱い。
-          const isWingWall = o.kind === 'unbreakable' && o.element === 'neutral' && Math.max(Math.abs(r.x), Math.abs(r.x + r.w)) > 15
-          if (isWingWall) {
-            // 翼壁：内側の角は場内、外側の縁は境界へ到達（sealing）していること
-            const innerX = Math.abs(r.x) < Math.abs(r.x + r.w) ? r.x : r.x + r.w
-            const outerX = Math.abs(r.x) < Math.abs(r.x + r.w) ? r.x + r.w : r.x
-            expect(dist({ x: innerX, y: r.y })).toBeLessThan(rField)
-            expect(dist({ x: innerX, y: r.y + r.h })).toBeLessThan(rField)
-            // 外縁は場境界以上（|x| >= rField）まで伸び、帯の側面を塞ぐ
-            expect(Math.abs(outerX)).toBeGreaterThanOrEqual(rField)
-          } else {
-            // 通常の障害物は四隅とも場内（矩形の全4角）
-            expect(dist({ x: r.x, y: r.y })).toBeLessThan(rField)
-            expect(dist({ x: r.x + r.w, y: r.y })).toBeLessThan(rField)
-            expect(dist({ x: r.x, y: r.y + r.h })).toBeLessThan(rField)
-            expect(dist({ x: r.x + r.w, y: r.y + r.h })).toBeLessThan(rField)
-          }
+          if (isSealWall) continue // 部屋/十字の囲い・翼壁は境界まで密封してよい
+          // 通常の障害物は四隅とも場内（矩形の全4角）
+          expect(dist({ x: r.x, y: r.y })).toBeLessThan(rField)
+          expect(dist({ x: r.x + r.w, y: r.y })).toBeLessThan(rField)
+          expect(dist({ x: r.x, y: r.y + r.h })).toBeLessThan(rField)
+          expect(dist({ x: r.x + r.w, y: r.y + r.h })).toBeLessThan(rField)
         }
       }
     }
   })
 
-  it('障害物ありステージは開始時、全ての味方→敵の直線が壁で遮られる', () => {
-    for (const s of STAGES) {
-      if (!s.mechanics.obstacles) continue // チュートリアル等は直線可
-      // 第4面は包囲構成（#49・敵が全方位）がテーマで「正面の壁」の概念がないため除外（06b §5.6）
-      if (s.id === 'stage-4') continue
-      for (const a of PARTY) {
-        for (const e of s.enemies) {
-          // 第6面の崩し手（#63）：封印帯の「前」に放たれた前衛＝意図的に開けた場所に立つ
-          // （暴発弾が初手から届き、予告✕を結界で受ける学習をさせる）。遮蔽の不変条件から除外
-          if (s.id === 'stage-6' && e.role === 'ruptor') continue
-          expect(segmentBlocked(a.pos, e.pos, s.obstacles)).toBe(true)
-        }
+  it('部屋型ステージは四方を壁で囲われている（手描き仕様・回り込み不可）', () => {
+    // 円の中に部屋（矩形/十字）を残し、外側を壁で埋める設計。円周付近（境界の内側）を一周
+    // サンプルし、「素材が全く無い（=部屋がそのまま境界に達している）」向きが少ないことを確認する。
+    // 開けた円のステージ（第4面・第7面②③のフェーズ）は囲わないので除外。
+    const roomStages = STAGES.filter((s) => s.id !== 'stage-4' && s.id !== 'stage-7')
+    for (const s of roomStages) {
+      const rField = s.rField ?? FIELD.rField
+      let sealed = 0
+      const N = 72
+      for (let i = 0; i < N; i++) {
+        const th = (i / N) * Math.PI * 2
+        const p = { x: (rField - 1.5) * Math.cos(th), y: (rField - 1.5) * Math.sin(th) }
+        if (s.obstacles.some((o) => isSolidAt(o, p))) sealed++
       }
+      // 境界付近の過半は囲い壁（部屋の開口＝回廊/正面だけが開く）
+      expect(sealed).toBeGreaterThan(N / 2)
+    }
+  })
+
+  it('部屋の囲い壁は unbreakable（削って部屋の外へ抜けられない）', () => {
+    // 各部屋型ステージに、境界（|x| or |y| ≥ rField）まで届く unbreakable の中立壁がある
+    const roomStages = STAGES.filter((s) => s.id !== 'stage-4' && s.id !== 'stage-7')
+    for (const s of roomStages) {
+      const rField = s.rField ?? FIELD.rField
+      const hasSeal = s.obstacles.some(
+        (o) =>
+          o.kind === 'unbreakable' &&
+          o.element === 'neutral' &&
+          (o.rects ?? []).some(
+            (r) => Math.max(Math.abs(r.x), Math.abs(r.x + r.w)) >= rField || Math.max(Math.abs(r.y), Math.abs(r.y + r.h)) >= rField,
+          ),
+      )
+      expect(hasSeal).toBe(true)
     }
   })
 })
@@ -231,38 +232,27 @@ describe('フィールド半径 rField（#49・06b §5.5）', () => {
   })
 })
 
-describe('翼壁（#50・06b §5.6）', () => {
-  /** 帯の外側〜境界の間（側面帯）の点が、いずれかの unbreakable 素材で塞がれているか。 */
-  function sideBandBlocked(s: (typeof STAGES)[number], sideX: number): boolean {
-    const rField = s.rField ?? FIELD.rField
-    // 帯の端（|x|=18〜19）より外側で、場内に収まる y をいくつか試す
-    for (let y = -8; y <= 12; y += 1) {
-      const x = sideX
-      if (dist({ x, y }) >= rField) continue
-      const blocked = s.obstacles.some((o) => isSolidAt(o, { x, y }))
-      if (blocked) return true
-    }
-    return false
-  }
-
+describe('部屋の囲い（手描き仕様・回り込み対策）', () => {
   it.each([
     ['第2面', 1],
     ['第3面', 2],
-    ['第5面', 4],
     ['第6面', 5],
-  ])('%s：帯の外側の側面帯が素材で塞がれている（両側）', (_name, idx) => {
+  ])('%s：矩形の部屋の左右の外（境界ぎわ）が囲い壁で塞がれている', (_name, idx) => {
     const s = STAGES[idx]
-    // 帯（x∈[-18,18]）の外側 x=22（右）/ x=-22（左）に翼壁の素材があること
-    expect(sideBandBlocked(s, 22)).toBe(true)
-    expect(sideBandBlocked(s, -22)).toBe(true)
+    const rField = s.rField ?? FIELD.rField
+    // 部屋の外（|x| が部屋幅より大きく、境界の内側）に囲い壁の素材があること（両側）
+    const x = rField - 3
+    const blockedRight = s.obstacles.some((o) => isSolidAt(o, { x, y: 0 }))
+    const blockedLeft = s.obstacles.some((o) => isSolidAt(o, { x: -x, y: 0 }))
+    expect(blockedRight).toBe(true)
+    expect(blockedLeft).toBe(true)
   })
 
-  it('翼壁は unbreakable（削って抜けられない・§5.6）', () => {
-    // 第2面の x≈24 付近の壁素材を含む障害物は unbreakable であること
+  it('囲い壁は unbreakable（削って部屋の外へ抜けられない）', () => {
     const s2 = STAGES[1]
-    const wing = s2.obstacles.find((o) => isSolidAt(o, { x: 24, y: 2 }))
-    expect(wing).toBeDefined()
-    expect(wing!.kind).toBe('unbreakable')
+    const seal = s2.obstacles.find((o) => isSolidAt(o, { x: (s2.rField ?? FIELD.rField) - 3, y: 0 }))
+    expect(seal).toBeDefined()
+    expect(seal!.kind).toBe('unbreakable')
   })
 })
 

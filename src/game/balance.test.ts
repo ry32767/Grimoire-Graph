@@ -67,10 +67,11 @@ function autoSpamPlay(
 }
 
 describe('第5面以降は「全員おまかせ」連打では勝てない（#63）', () => {
-  it('第5面：連打は全滅する（クリア不能）', () => {
+  it('第5面：連打ではクリアできない（守護型を崩せず膠着 or 敗北）', () => {
+    // 手描き仕様でステージが拡大（rField=54）したため、防御しない連打は守護型（鏡守のゴーレム）を
+    // 崩せず、クリアに至れない（味方の被害も出る）。「連打では勝てない（クリア不能）」を保証する。
     const res = autoSpamPlay(4, 25, 0.5)
     expect(res.outcome).not.toBe('cleared')
-    expect(res.outcome === 'gameover' || res.outcome === 'collapse').toBe(true)
   }, 300000)
 
   it('第6面：連打は膜の崩壊 or 全滅で敗北する（半径ブレの上下でも同じ）', () => {

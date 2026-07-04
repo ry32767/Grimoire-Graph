@@ -171,12 +171,6 @@ function spiralArm(
     }),
   )
 }
-/** x0→x1 を step 刻みで並べた x 座標列 */
-function spanX(x0: number, x1: number, step: number): number[] {
-  const xs: number[] = []
-  for (let x = x0; x <= x1 + 1e-6; x += step) xs.push(x)
-  return xs
-}
 /** 横一列に連続する壁（円を overlap させて x0→x1 を切れ目なく覆う）。rows 段重ね。 */
 function wall(
   x0: number,
@@ -189,13 +183,6 @@ function wall(
   // 四角い壁（#56）：x0→x1・rows 段ぶんの厚みを持つシャープな矩形
   const step = R * 1.4
   return obRect(element, [{ x: x0 - R, y: y0 - R, w: x1 - x0 + 2 * R, h: (rows - 1) * step + 2 * R }], kind)
-}
-/**
- * 翼壁（#50・06b §5.6）：壁の帯の端 x0 から境界近くの x1 まで側面を塞ぐ unbreakable の壁。
- * 迂回型AIが帯の外側（境界ぎわ）を回り込んで壁を素通りするのを防ぐ。左右対称に置く。
- */
-function wingWall(x0: number, x1: number, y0: number, rows: number): Obstacle {
-  return wall(x0, x1, y0, rows, 'neutral', 'unbreakable')
 }
 
 /** リング（環状の壁）：中心 (cx,cy)・半径 radius に円ブロブを n 個円環状に並べる（第2面の中央リング）。 */
@@ -217,6 +204,42 @@ function ring(
   )
 }
 
+/**
+ * 部屋の囲い（手描き仕様）：円の中に矩形の部屋 [xL,xR]×[yB,yT] を残し、外側（円内の残り）を
+ * 壁で埋めて「四方を壁で囲った部屋」にする。上下左右の4枚の矩形で密封する（角は場境界の外まで
+ * 伸ばして回り込みを断つ＝翼壁の役割を内包）。既定は割れない壁（部屋の境界）。
+ */
+function roomWalls(
+  xL: number,
+  xR: number,
+  yB: number,
+  yT: number,
+  rField: number,
+  element: Obstacle['element'] = 'neutral',
+  kind: ObstacleKind = 'unbreakable',
+): Obstacle[] {
+  const M = rField + 6 // 場境界の外まで（円の外周まで壁を届かせる）
+  return [
+    obRect(element, [{ x: -M, y: -M, w: xL - -M, h: 2 * M }], kind), // 左
+    obRect(element, [{ x: xR, y: -M, w: M - xR, h: 2 * M }], kind), // 右
+    obRect(element, [{ x: xL, y: yT, w: xR - xL, h: M - yT }], kind), // 上
+    obRect(element, [{ x: xL, y: -M, w: xR - xL, h: yB - -M }], kind), // 下
+  ]
+}
+/** 左右だけを壁で塞ぐ部屋（上下は開く＝縦長の広間）。第5面：上下に射線を通しつつ側面の回り込みを断つ。 */
+function roomWallsOpenEnds(xL: number, xR: number, rField: number): Obstacle[] {
+  const M = rField + 6
+  return [
+    obRect('neutral', [{ x: -M, y: -M, w: xL - -M, h: 2 * M }], 'unbreakable'), // 左
+    obRect('neutral', [{ x: xR, y: -M, w: M - xR, h: 2 * M }], 'unbreakable'), // 右
+  ]
+}
+/** x0→x1 を step 刻みで並べた x 座標列 */
+function spanX(x0: number, x1: number, step: number): number[] {
+  const xs: number[] = []
+  for (let x = x0; x <= x1 + 1e-6; x += step) xs.push(x)
+  return xs
+}
 /** 列柱：x0→x1 を step 間隔で、各柱は縦 n 段のブロブ。elems を順に割り当てて光闇を交互にできる。 */
 function colonnade(
   x0: number,
@@ -235,12 +258,14 @@ const stage1: Stage = {
   name: '第一の間 ― 門',
   rField: rFieldForSize(1), // 25：最小。縦長の門（狭い正対の間）
   allyPositions: [
-    { x: -7, y: -14 }, // ミラ
-    { x: 0, y: -16 }, // レン
-    { x: 7, y: -14 }, // ソウ
+    { x: -7, y: -15 }, // ミラ
+    { x: 0, y: -17 }, // レン
+    { x: 7, y: -15 }, // ソウ
   ],
-  enemies: [enemy('石像の番人', { x: 0, y: 14 }, 'dark', 1, 'line', { hp: 90, species: 'proto' })],
-  obstacles: [],
+  enemies: [enemy('石像の番人', { x: 0, y: 15 }, 'dark', 1, 'line', { hp: 90, species: 'proto' })],
+  // 四方を壁で囲った縦長の部屋（手描き仕様）。mechanics.obstacles=false なので当たり判定は無く
+  // 装飾（部屋の枠）として描かれる＝命中だけを学ぶチュートリアルの体験は変わらない。
+  obstacles: roomWalls(-11, 11, -20, 20, rFieldForSize(1)),
   introText: [
     '苔むした門をくぐると、円形の広間。中央で、古びた石像の番人がゆっくりと目を開ける。',
     'まずは狙いを定めて当てるだけでいい。当てる瞬間に式を強く帯びさせるほど、一撃は深く斬り込む。',
@@ -260,15 +285,13 @@ const stage2: Stage = {
   rField: rFieldForSize(1.5), // 31：サイズ1.5。矩形の部屋＋中央リング
   enemies: [
     // 亡霊魔術師 I（迂回型・05c §2）。family は abs/arc のみ（#46）
-    enemy('回廊の衛士', { x: -11, y: 20 }, 'dark', 2, 'arc', { hp: 110, species: 'wraith' }),
-    enemy('影の射手', { x: 11, y: 21 }, 'dark', 2, 'abs', { hp: 105, species: 'wraith' }),
+    enemy('回廊の衛士', { x: -10, y: 15 }, 'dark', 2, 'arc', { hp: 110, species: 'wraith' }),
+    enemy('影の射手', { x: 10, y: 16 }, 'dark', 2, 'abs', { hp: 105, species: 'wraith' }),
   ],
-  // 列柱（属性混在・射線を塞ぐ中央帯）＋中央にもろいリング（一撃で崩せる体験・06b §6）＋翼壁（#50）
+  // 四方を壁で囲った部屋＋中央にもろいリング（一撃で崩せる体験・06b §6）。
   obstacles: [
-    ...colonnade(-18, 18, 3.6, 2, 4, ['dark', 'light']),
-    ring(0, -6, 3.5, 'neutral', 'fragile'), // もろい瓦礫のリング（fragile：一撃で大きく崩れる）
-    wingWall(18, 29, 2, 4), // 翼壁・右（列柱の端から境界(rField=31)近くまで・#50）
-    wingWall(-29, -18, 2, 4), // 翼壁・左
+    ...roomWalls(-17, 17, -24, 24, rFieldForSize(1.5)),
+    ring(0, 2, 4, 'neutral', 'fragile'), // もろい瓦礫のリング（fragile：一撃で大きく崩れる）
   ],
   introText: [
     'ゆるやかに下る回廊。柱が密に連なって、まっすぐな道を塞ぐ。回廊の衛士と影の射手が、闇の弾を撃ってくる。',
@@ -294,16 +317,14 @@ const stage3: Stage = {
     // 亡霊魔術師 II（迂回型・護衛）。family=abs（#46）
     enemy('祭壇の影', { x: 0, y: 23 }, 'dark', 2, 'abs', { hp: 110, species: 'wraith' }),
   ],
-  // 全幅の normal 壁（2段に厚み増）＋左右の塔＋砕けぬ芯柱（迂回強制）＋もろい囲い＋翼壁（06b §6・#50）
+  // 四方を壁で囲った正方形の踊り場＋内部の仕切り（横＋短い縦のL字・スケッチ）＋左右の塔＋もろい囲い。
   obstacles: [
-    wall(-18, 18, 5, 2, 'light'), // 全幅の光の仕切り壁（2段：上下の回り込みも防ぐ）
-    pillar(-13, -3, 5, 'dark'), // 左の塔
-    pillar(13, -3, 5, 'dark'), // 右の塔
-    pillar(-7, 9, 2, 'neutral', 'unbreakable'), // 砕けぬ芯柱・左（迂回強制）
-    pillar(7, 9, 2, 'neutral', 'unbreakable'), // 砕けぬ芯柱・右
-    wall(-9, -3, -17, 1, 'neutral', 'fragile'), // もろい祭具の囲い
-    wingWall(20, 35, -14, 8), // 翼壁・右（障害物帯のy範囲を覆い、外縁を境界(rField=37)まで塞ぐ・#50）
-    wingWall(-35, -20, -14, 8), // 翼壁・左
+    ...roomWalls(-20, 20, -28, 28, rFieldForSize(2)),
+    wall(-20, 5, 5, 2, 'light'), // 内部の横仕切り壁（左壁から中央へ・2段）
+    pillar(5, -4, 4, 'dark'), // 仕切りの端から下へ伸びる短い縦柱（L字）
+    pillar(-13, -3, 4, 'dark'), // 左の塔
+    pillar(13, -3, 4, 'dark'), // 右の塔
+    wall(-15, -9, -18, 1, 'neutral', 'fragile'), // もろい祭具の囲い
   ],
   introText: [
     '階段の途中、広い踊り場に、白と黒の双子の祭壇。白の祭司は光を、黒の祭司は闇をまとい、その奥に祭壇の影が控える。',
@@ -371,6 +392,8 @@ const stage5: Stage = {
   id: 'stage-5',
   name: '第五の間 ― 深層の広間',
   rField: rFieldForSize(3.5), // 54：サイズ3.5。深層の広間（戦闘は中央・広がりは余白／鏡像・中央核）
+  // 十字（4隅を落とした）部屋。鏡像の衛士・射手・ゴーレムは上方、味方は下方。中央は開けておく
+  // （鏡像の射手が下段の味方を射抜ける余地を残す＝防御しない連打が撃ち負ける難度を維持する）。
   enemies: [
     // 鋼鬼 II（火力型）。family=line/exp
     enemy('鏡像の衛士（光）', { x: -15, y: 18 }, 'light', 4, 'line', { families: ['exp'], role: 'breaker', hp: 125, species: 'oni' }),
@@ -398,15 +421,17 @@ const stage5: Stage = {
       species: 'golem',
     }),
   ],
-  // 鏡像の列柱（左＝光/右＝闇）＋中央の砕けぬ核＋割れない鏡枠＋翼壁（06b §6・#50）
+  // 四方を壁で囲った深層の広間（矩形の部屋）＋中央の鏡像の列柱（左＝光/右＝闇）。
+  // 列柱は味方の直射を阻んで攻めを遅らせ、その間に鏡像の射手の曲射（すり抜け）が味方を削る
+  // ＝防御しない連打が撃ち負ける難度を成立させる（旧・鏡像面の勝敗設計を部屋の中で再現）。
   obstacles: [
+    // 部屋は場（rField=54）より狭い縦長の間にして戦闘を密にする（広い場は余白）。側面を封じて
+    // 味方の直射を阻み、その間に鏡像の射手の曲射が味方を削る（連打が撃ち負ける難度を維持）。
+    ...roomWallsOpenEnds(-19, 19, rFieldForSize(3.5)),
     ...colonnade(-18, 0, 3.6, -1, 4, ['light']),
     ...colonnade(3.6, 18, 3.6, -1, 4, ['dark']),
-    block(-3, 1, 3, 2, 'neutral', 'unbreakable'), // 中央の砕けぬ核（スケッチの中央円）
-    pillar(-18, 8, 3, 'neutral', 'unbreakable'), // 割れない鏡枠・左
-    pillar(18, 8, 3, 'neutral', 'unbreakable'), // 割れない鏡枠・右
-    wingWall(21, 52, -1, 4), // 翼壁・右（鏡枠の外側から境界(rField=54)まで・#50）
-    wingWall(-52, -21, -1, 4), // 翼壁・左
+    pillar(-18, 8, 4, 'neutral', 'unbreakable'), // 割れない鏡枠・左（側面の衛士への直射を阻む）
+    pillar(18, 8, 4, 'neutral', 'unbreakable'), // 割れない鏡枠・右
   ],
   introText: [
     '磨かれた深層の広間。左半分は光、右半分は闇――自分たちを映したような鏡像の衛士と射手が、四方から迫る。',
@@ -451,20 +476,13 @@ const stage6: Stage = {
     enemy('崩し手・折れ', { x: 16, y: -3 }, 'dark', 6, 'abs', { role: 'ruptor', fireEvery: 2, fireOffset: 0, hp: 175, castInitialSpeed: 6.5, species: 'redWraith' }),
     enemy('崩し手・捻れ', { x: 0, y: -7 }, 'light', 6, 'poly34', { role: 'ruptor', fireEvery: 2, fireOffset: 0, hp: 175, castInitialSpeed: 6.5, species: 'redWraith' }),
   ],
-  // 角丸の封印室：左右の封印壁＋中央回廊＋砕けぬ封印核＋取っ掛かりの光柱＋翼壁（06b §6・#50・#63）
+  // 四方を壁で囲った封印室（角丸の矩形部屋・スケッチ／十字ではない）＋中央の砕けぬ封印核（番人の盾）
+  // ＋取っ掛かりの光柱。崩し手は室内の手前・開けた場所に立ち、暴発弾が初手から味方の目前へ届く（#63）。
   obstacles: [
-    // 硬い封印壁（3段・tough・#63）：左右2枚に割り、中央に回廊を開ける。
-    // 崩し手の暴発弾は回廊を曲線で通って味方の目前まで届く＝予告✕を見て反対極の結界で
-    // 受け止める（このステージの学習テーマ）が機能する。防御しない連打は暴発 AoE で全滅する。
-    // tough なので術の削りでは容易に広がらない（回廊での攻防が主軸になる）。
-    wall(-24, -13, 1, 3, 'neutral', 'tough'),
-    wall(15, 24, 1, 3, 'neutral', 'tough'),
+    ...roomWalls(-22, 22, -30, 30, rFieldForSize(3)),
     block(-4, 1, 4, 2, 'neutral', 'unbreakable'), // 砕けぬ封印核（正面突破不可・番人の盾）
-    pillar(-23, -4, 2, 'light'), // 左の光柱
-    pillar(23, -4, 2, 'light'), // 右の光柱
-    // 翼壁は封印壁の端と重なるまで寄せる（#63：横抜けを封じ、突破手段を tough 壁の掘削 or 暴発に一本化）
-    wingWall(25, 46, -8, 6), // 翼壁・右（境界(rField=48)近くまで・#50）
-    wingWall(-46, -25, -8, 6), // 翼壁・左
+    pillar(-20, -5, 2, 'light'), // 左の光柱（取っ掛かり）
+    pillar(20, -5, 2, 'light'), // 右の光柱
   ],
   introText: [
     '左右に聳える封印壁と、中央の砕けぬ封印核。その奥に封印の番人が控え、封印帯の前へ――様子のおかしい崩し手が、三体放たれている。',
@@ -514,12 +532,10 @@ const stage7: Stage = {
       species: 'oni',
     }),
   ],
-  // ①上層（矩形の間）：列柱＋守護者の盾＋翼壁（隠れる場所が多い・#50）
+  // ①上層：四方を壁で囲った矩形の間＋守護者の盾（内部の normal 壁）。
   obstacles: [
-    ...colonnade(-22, 22, 4, -2, 5, ['light', 'dark']),
+    ...roomWalls(-20, 20, -30, 30, rFieldForSize(2.5)),
     block(-5, -4, 4, 3, 'light'), // 守護者の盾（normal）
-    wingWall(22, 41, -5, 7), // 翼壁・右（列柱のy範囲を覆い、外縁を境界(rField=43)まで塞ぐ・#50）
-    wingWall(-41, -22, -5, 7), // 翼壁・左
   ],
   // HPフェーズ（#45）：66%/33% で床が崩れ、②開けた大円へ。rField は 42→60 と拡大する（#49・スケッチ）。
   // ②③は同じ大円（開けた短い壁のみ）。最下層（33%以下・断末魔前）はボス単独＝眷属を間引き・3同時発射。
