@@ -42,7 +42,17 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.retry.outputs.page_url }}
     steps:
+      # Pages 側の一時エラー（"Deployment failed, try again later."）で、ビルド成功後の
+      # デプロイだけが落ちることがある（2026-07-04 Run #32 で発生）。1回だけ自動で再試行する。
       - id: deployment
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+      - name: Wait before retry（一時エラー対策）
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 30
+      - id: retry
+        name: Deploy (retry)
+        if: steps.deployment.outcome == 'failure'
         uses: actions/deploy-pages@v4
