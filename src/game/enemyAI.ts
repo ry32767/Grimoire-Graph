@@ -241,9 +241,10 @@ export function planEnemyShot(
   // 防御ロール：自陣（自分＋味方）を守る周回結界を張る（#28/05b §5.4）
   if (enemy.role === 'guardian') return planGuardianOrbit(enemy, allies, obstacles, teammates, fieldR)
 
-  // 崩し手（#42）：狙った対象の近傍で暴発させる専用計画（enemyPlanning/ruptorPlanner）
+  // 崩し手（#42）：狙った対象の近傍で暴発させる専用計画（enemyPlanning/ruptorPlanner）。
+  // teammates（敵チーム）を渡し、自爆・味方巻き込みになる極を避けさせる（§12.7）
   if (enemy.role === 'ruptor') {
-    return planRuptorShot(enemy, allies, obstacles, undefined, standingRings, fieldR, instability)
+    return planRuptorShot(enemy, allies, obstacles, undefined, standingRings, fieldR, instability, teammates)
   }
 
   // 闇の周回で完全に隠れた味方は視認不可＝狙えない（#35）。全員隠れていれば見えないなりに撃つ。

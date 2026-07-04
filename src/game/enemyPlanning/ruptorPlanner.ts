@@ -4,7 +4,7 @@
 import type { Ally, Enemy, EnemyFamily, Obstacle, Trajectory, Vec2, ZField } from '../types'
 import { dist } from '../coords'
 import { firstHitAmong } from '../collision'
-import { isSolidAt, materialCells } from '../obstacle'
+import { isSolidAt, materialCells, obstacleOverlapsCircle } from '../obstacle'
 import { ringEncloses, ringAverageAttr, ringCentroid, ringRadius, type RingPoint } from '../orbit'
 import { varianceOf } from '../misfireInstability'
 import { COMBAT, FIELD, GAME, RUPTOR, ENEMY_ROUTE_PLANNING as RP } from '../../data/constants'
@@ -44,7 +44,20 @@ interface RuptorCandidate {
   end: Vec2
   /** 実際に暴発する（極に到達し、削り・結界で失速しない）＝予告を出してよい候補 */
   misfire: boolean
+  /** AoE 期待半径で巻き込み対象（点 or 壁素材）を捉えている */
+  inExpected: boolean
+  /** 経路が素材に触れない（クリーン） */
+  noMaterial: boolean
+  /** 反対極結界の横断がない */
+  noRingBlock: boolean
 }
+
+/**
+ * AoE の巻き込み判定の対象（§12.2）。ユニット狙いは「点」（対象の見かけ位置）、
+ * 壁狙い（壁面手前・第4面デモ）は「素材」＝AoE が削れる壁に重なっていれば有効。
+ * 横へ逃がした極（自爆・味方巻き込み回避）でも壁沿いなら有効性を失わない。
+ */
+type Cover = { kind: 'point'; pos: Vec2 } | { kind: 'material' }
 
 /**
  * 崩し手の攻撃計画（#42・05b §4）。狙う対象の近傍に z 場の極（暴発点）が来る軌道を、
@@ -61,6 +74,7 @@ export function planRuptorShot(
   standingRings: RingPoint[][] = [],
   fieldR?: number,
   instability = 0,
+  teammates: { id: string; pos: Vec2; hp: number }[] = [],
 ): EnemyPlan | null {
   const alive = allies.filter((a) => a.hp > 0)
   if (alive.length === 0) return null
@@ -108,26 +122,43 @@ export function planRuptorShot(
   const poleTooCloseToHostileRing = (p: Vec2): boolean =>
     hostileRingZones.some((zone) => dist(p, zone.c) < zone.reach - 1e-6)
 
-  /** 1候補を本番物理で評価し、辞書式 rank（§12.7）を組む。coverPos＝AoE で巻き込みたい点。 */
-  const evalTraj = (traj: Trajectory, aim: Vec2, coverPos: Vec2, ownFam: boolean, turnXs?: number[]): RuptorCandidate => {
+  // 巻き込み判定：点（対象位置）or 素材（AoE が削れる壁に重なるか）
+  const breakables = obstacles.filter((ob) => (ob.kind ?? 'normal') !== 'unbreakable')
+  const covers = (cover: Cover, end: Vec2, radius: number): boolean =>
+    cover.kind === 'point'
+      ? dist(end, cover.pos) <= radius
+      : breakables.some((ob) => obstacleOverlapsCircle(ob, end, radius))
+  const coverDist = (cover: Cover, end: Vec2, aim: Vec2): number =>
+    cover.kind === 'point' ? dist(end, cover.pos) : dist(end, aim)
+
+  /** 1候補を本番物理で評価し、辞書式 rank（§12.7）を組む。 */
+  const evalTraj = (traj: Trajectory, aim: Vec2, cover: Cover, ownFam: boolean, turnXs?: number[]): RuptorCandidate => {
     const ev = evaluateEnemyShot(traj, enemy.castInitialSpeed, obstacles, standingRings, { turnXs })
     const dPole = dist(ev.endPos, aim)
-    const dCover = dist(ev.endPos, coverPos)
+    const dCover = coverDist(cover, ev.endPos, aim)
+    const inExpected = covers(cover, ev.endPos, FIELD.aoeRadius)
+    const inGuaranteed = covers(cover, ev.endPos, guaranteed)
     // 暴発として採用できる条件（§14.2）：極に到達して実際に暴発し（迎撃・削りで失速しない）、
     // 反対極結界の迎撃圏に際どく踏み込まず（防御側の対抗策を貫かない・05b §4.6）、
-    // 対象が AoE 期待半径内（圏外の暴発は無害なので無理に撃たない＝通常弾へ切り替え）。
-    const misfire =
-      ev.ruptured &&
-      !ev.stalled &&
-      !poleTooCloseToHostileRing(ev.endPos) &&
-      dCover <= FIELD.aoeRadius
+    // 巻き込み対象が AoE 期待半径内（圏外の暴発は無害なので無理に撃たない＝通常弾へ切り替え）。
+    const misfire = ev.ruptured && !ev.stalled && !poleTooCloseToHostileRing(ev.endPos) && inExpected
     // 極到達前の通常ヒットボックス接触（§12.2.1）：対象を素通りして奥で暴発する見た目を避ける
     const hb = firstHitAmong(ev.flight.samples, allyTargets)
     const hitBeforePole = hb !== null && hb.arcLen < ev.pathLength - 0.5
+    // 自爆・味方（敵チーム）巻き込みの回避（§12.7 selfInsideAoE）：暴発は敵味方無差別なので、
+    // 自分や生存中の味方が AoE 期待半径に入る極は強く避ける（横へ逃がした極が優先される）
+    const selfInAoE = misfire && dist(ev.endPos, enemy.pos) <= FIELD.aoeRadius
+    const matesInAoE = misfire
+      ? teammates.filter((m) => m.id !== enemy.id && m.hp > 0 && dist(ev.endPos, m.pos) <= FIELD.aoeRadius).length
+      : 0
     const rank = [
       misfire ? 0 : 1,
-      dCover <= guaranteed ? 0 : 1, // 下振れ込みで巻き込める（本命・§12.6）
-      dCover <= FIELD.aoeRadius ? 0 : 1, // 期待半径でなら巻き込める（次点）
+      // ユニット狙い（点被覆）を壁削り狙い（素材被覆）より常に優先する（§14.2 の採用順）
+      misfire && cover.kind === 'point' ? 0 : 1,
+      inGuaranteed ? 0 : 1, // 下振れ込みで巻き込める（本命・§12.6）
+      inExpected ? 0 : 1, // 期待半径でなら巻き込める（次点）
+      selfInAoE ? 1 : 0,
+      matesInAoE,
       hitBeforePole ? 1 : 0,
       ev.unbreakableArc !== null ? 1 : 0, // unbreakable 横断は採用しない（§9.3）
       ev.turnInMaterialArcs.length, // 壁内部の折れ点は採用しない（§9.3）
@@ -138,11 +169,19 @@ export function planRuptorShot(
       Math.max(0, dCover - guaranteed),
       ev.pathLength,
     ]
-    return { traj, rank, end: ev.endPos, misfire }
+    return {
+      traj,
+      rank,
+      end: ev.endPos,
+      misfire,
+      inExpected,
+      noMaterial: ev.materialArcs.length === 0,
+      noRingBlock: ev.oppositeRingArcs.length === 0,
+    }
   }
 
   /** 指定の狙点に極を仕込み、family 候補＋経路フィット候補から rank 最良を選ぶ。 */
-  const searchAim = (aim: Vec2, coverPos: Vec2): RuptorCandidate | null => {
+  const searchAim = (aim: Vec2, cover: Cover): RuptorCandidate | null => {
     const z = buildRuptorZField(enemy.pos, aim, polarity)
     const base = aimAt(enemy.pos, aim)
     const hFold = dist(enemy.pos, aim) * ABS_H_RATIO
@@ -153,7 +192,7 @@ export function planRuptorShot(
     const tryFams = (list: readonly EnemyFamily[], ownFam: boolean) => {
       for (const fam of list) {
         for (const traj of familyTrajectories(fam, enemy.pos, base, z, hFold, fieldR)) {
-          consider(evalTraj(traj, aim, coverPos, ownFam))
+          consider(evalTraj(traj, aim, cover, ownFam))
         }
       }
     }
@@ -163,12 +202,12 @@ export function planRuptorShot(
       if (!route) return
       for (const fit of fitRouteToFamilies(route.points, enemy.pos, AVOIDER_FAMILIES)) {
         const traj: Trajectory = { mode: 'rotate', g: fit.g, angle: fit.angle, origin: enemy.pos, z, fieldR }
-        consider(evalTraj(traj, aim, coverPos, fams.includes(fit.family), fit.turnXs))
+        consider(evalTraj(traj, aim, cover, fams.includes(fit.family), fit.turnXs))
       }
     }
     tryFams(fams, true)
     const good = (c: RuptorCandidate | null): boolean =>
-      c !== null && c.misfire && c.rank[2] === 0 && c.rank[6] === 0 // 暴発成立・AoE 圏内・クリーン
+      c !== null && c.misfire && c.inExpected && c.noMaterial // 暴発成立・AoE 圏内・クリーン
     if (!good(best)) tryRoute('clean')
     if (!good(best) && wide.length > 0) tryFams(wide, false)
     if (!good(best)) tryRoute('wallTunnel')
@@ -197,9 +236,9 @@ export function planRuptorShot(
       let t = Math.max(0, (L - disc.r) / L)
       while (t > 0 && obstacles.some((ob) => isSolidAt(ob, pt(t)))) t -= 0.4 / L
       const aim = pt(Math.max(0, t - 1.2 / L))
-      const found = searchAim(aim, aim)
+      const found = searchAim(aim, { kind: 'material' })
       // 確実に暴発でき（極到達）、壁・結界に阻まれない狙いなら即採用
-      if (found && found.misfire && found.rank[6] === 0 && found.rank[7] === 0) {
+      if (found && found.misfire && found.noMaterial && found.noRingBlock) {
         return { trajectory: found.traj, targetId: '', expectedDamage: 0, misfirePos: found.end }
       }
       if (found && (!fallback || compareRank(found.rank, fallback.rank) < 0)) fallback = found
@@ -256,30 +295,39 @@ export function planRuptorShot(
   // 「手前・横・奥」のヒットボックス外に極を置く候補を並べ、素通り（極到達前の通常接触）を避ける。
   const rawAim = aimOverride?.pos ?? perceivedPos(target)
   const targetId = aimOverride?.targetId ?? target.id
-  // aim=極を置く点／cover=その暴発が AoE で巻き込むべき点。壁手前補正では「壁を削り封印帯を
-  // 積む」こと自体が目的なので cover も壁手前（狙点そのもの）。結界手前補正では対象を巻き込む。
-  const aims: { aim: Vec2; cover: Vec2 }[] = []
+  // aim=極を置く点／cover=その暴発が AoE で巻き込むべき対象。
+  // - 通常狙い・結界手前補正：対象の位置（点被覆）。対象中心でなく手前・横のヒットボックス外に
+  //   極候補を並べ、素通り（極到達前の通常接触）を避ける（§12.2.1）。
+  // - 壁越し（wallFrontAim が補正する局面）：点被覆の候補も必ず併走させる＝壁に隙間・回廊が
+  //   あれば曲線で通して対象付近で暴発する方を優先し（rank のユニット被覆キー）、
+  //   どうしても届かないときだけ壁面手前（素材被覆＝封印帯を削って積む）へ落とす（§14.2）。
+  const aims: { aim: Vec2; cover: Cover }[] = []
+  const pushPointAims = (center: Vec2) => {
+    const L = dist(enemy.pos, center) || 1
+    const dir = { x: (center.x - enemy.pos.x) / L, y: (center.y - enemy.pos.y) / L }
+    const side = { x: -dir.y, y: dir.x }
+    const front = GAME.allyHitbox + 0.9
+    const lateral = GAME.allyHitbox + 1.2
+    const pointCover: Cover = { kind: 'point', pos: center }
+    aims.push(
+      { aim: { x: center.x - dir.x * front, y: center.y - dir.y * front }, cover: pointCover },
+      { aim: { x: center.x + side.x * lateral, y: center.y + side.y * lateral }, cover: pointCover },
+      { aim: { x: center.x - side.x * lateral, y: center.y - side.y * lateral }, cover: pointCover },
+      { aim: center, cover: pointCover },
+    )
+  }
   if (aimOverride) {
-    aims.push({ aim: rawAim, cover: rawAim })
+    aims.push({ aim: rawAim, cover: { kind: 'point', pos: rawAim } })
   } else {
     const ringAim = ringFrontAim(rawAim)
     const wallAim = wallFrontAim(ringAim)
     if (wallAim.x !== ringAim.x || wallAim.y !== ringAim.y) {
-      aims.push({ aim: wallAim, cover: wallAim })
+      pushPointAims(ringAim) // 隙間・回廊があれば対象付近の暴発を優先（ユニット被覆）
+      aims.push({ aim: wallAim, cover: { kind: 'material' } }) // 届かなければ壁面手前で積む
     } else if (ringAim.x !== rawAim.x || ringAim.y !== rawAim.y) {
-      aims.push({ aim: ringAim, cover: rawAim })
+      aims.push({ aim: ringAim, cover: { kind: 'point', pos: rawAim } })
     } else {
-      const L = dist(enemy.pos, rawAim) || 1
-      const dir = { x: (rawAim.x - enemy.pos.x) / L, y: (rawAim.y - enemy.pos.y) / L }
-      const side = { x: -dir.y, y: dir.x }
-      const front = GAME.allyHitbox + 0.9
-      const lateral = GAME.allyHitbox + 1.2
-      aims.push(
-        { aim: { x: rawAim.x - dir.x * front, y: rawAim.y - dir.y * front }, cover: rawAim },
-        { aim: { x: rawAim.x + side.x * lateral, y: rawAim.y + side.y * lateral }, cover: rawAim },
-        { aim: { x: rawAim.x - side.x * lateral, y: rawAim.y - side.y * lateral }, cover: rawAim },
-        { aim: rawAim, cover: rawAim },
-      )
+      pushPointAims(rawAim)
     }
   }
   let best: RuptorCandidate | null = null
