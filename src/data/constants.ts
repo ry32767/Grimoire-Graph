@@ -172,6 +172,42 @@ export const SAMPLING = {
 } as const
 
 /**
+ * 障害物判定の最大点間隔（ユニット・#1）。飛行サンプルの頂点間がこれより開くと壁をすり抜ける
+ * ため、本番の削り判定（carve.ts）も敵AIの経路評価（enemyPlanning/）も必ずこの密度以下で判定する。
+ */
+export const OBSTACLE_STEP = 0.6
+
+/**
+ * 敵AIの経路計画（enemyPlanning/・修正仕様書 §18）。迂回型（attacker）・暴発型（ruptor）が
+ * 「幾何経路探索 → family フィット → 本番物理検証」の3層で軌道を選ぶときの調整パラメータ。
+ */
+export const ENEMY_ROUTE_PLANNING = {
+  /** 経路探索のグリッド幅（ユニット）。rField=30〜36 で実用的なノード数に収まる */
+  gridStep: 0.75,
+  /** A* の展開ノード数上限（暴走防止） */
+  maxExpansions: 12000,
+  /** 経路平滑化（見通し線ショートカット）のパス数 */
+  smoothingPasses: 3,
+  /**
+   * クリーン経路に要求する余白（ユニット）。本番判定より少し広く取り、
+   * フィット誤差・弾の太さでも「素材に触れない」を実際に保証する。OBSTACLE_STEP に自動追従。
+   */
+  clearance: Math.max(0.45, OBSTACLE_STEP * 0.75),
+  /** 経路探索で素材（削れる壁）を通るときの距離あたり追加コスト */
+  materialWeight: 40.0,
+  /** 1体あたりの経路探索ゴール数上限 */
+  maxGoalsPerEnemy: 6,
+  /** 1ゴールあたりの採用経路数上限 */
+  maxRoutesPerGoal: 4,
+  /** 壁トンネル（直線掘削）の最大長（ユニット）。これより長い掘削は諦めて牽制へ */
+  maxTunnelLength: 8.0,
+  /** 1経路あたりの壁トンネル本数上限（壁内部の蛇行禁止） */
+  maxTunnelCount: 1,
+  /** family フィットで局所 x の後退を許す上限（ユニット）。超えると回転方式で表現できない */
+  monotoneBacktrackEps: 0.35,
+} as const
+
+/**
  * おまかせ照準（recommend）の探索パラメータ（#21/#30・バグ修正）。
  * 壁のある面では強い z（zPeak/zRef）だと削りコストが高く壁の奥へ届かない。弱い z（zWeak）を
  * 候補に足し、狙い角も少し振って、貫通/迂回して確実に当たる経路を見つける。
