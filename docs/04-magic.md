@@ -1,7 +1,7 @@
 # 04. 魔法（二系統・暴発・パリィ・障害物・結界）
 
 魔法の挙動を司るモジュール群：
-`loop.ts`（系統分類）、`orbit.ts`（結界）、`misfire.ts`（暴発）、`parry.ts`（相殺）、`obstacle.ts`（えぐり）、`turn.ts`（解決の統合）。
+`loop.ts`（系統分類）、`orbit.ts`（結界）、`misfire.ts`（暴発）、`parry.ts`（相殺）、`obstacle.ts`（えぐり半径・速度損）、`carve.ts`（`carveAlong`＝えぐりの解決本体。本番 `turn.ts` と敵AI事前評価 `enemyPlanning/` が共有）、`turn.ts`（解決の統合）。
 
 ---
 
@@ -114,7 +114,7 @@ base = min(carveMaxRadius(=2), max(0, power) × carveRadiusScale(=0.05))
 | `tough` | 0.32 | 1.7 | 無属性・頑丈。最大火力でも貫通に複数発。 |
 | `unbreakable` | 0（削れない） | 1 | 壊れない。当たった魔法は**その場で全速度を失い停止**（迂回必須）。 |
 
-実装の細部（`turn.ts` `carveAlong`）：飛行サンプルは軌道頂点なので、急な関数では頂点間が開く。`OBSTACLE_STEP=0.6` 以下に密化（`densifyGeom`）して壁のすり抜けを防ぐ。`unbreakable` に当たると全速度損で停止。
+実装の細部（`src/game/carve.ts` の `carveAlong`）：飛行サンプルは軌道頂点なので、急な関数では頂点間が開く。`OBSTACLE_STEP=0.6`（`src/data/constants.ts`）以下に密化（`densifyGeom`）して壁のすり抜けを防ぐ。`unbreakable` に当たると全速度損で停止。本番の解決（`turn.ts`）と敵AIの事前評価（`src/game/enemyPlanning/evaluate.ts`）は `carve.ts` の同一実装を共有する（判定不一致＝壁埋まりの根絶）。
 
 > 敵弾も同じ仕組みで障害物に削られる（障害物は味方の盾にもなる・#16）。
 
