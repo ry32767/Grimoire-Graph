@@ -45,9 +45,9 @@
 | 属性・強度・ダメージ | `src/game/attribute.ts` |
 | 関数カタログ・自由入力 | `src/game/functions.ts` / `src/game/mathEngine.ts` / `src/game/zfields.ts` |
 | ターン解決の中核 | `src/game/turn.ts` |
-| 敵 AI | `src/game/enemyAI.ts` |
+| 敵 AI | `src/game/enemyAI.ts`（軌道計画は `src/game/enemyPlanning/`） |
 | 結界（軌道型魔法） | `src/game/orbit.ts` / `src/game/loop.ts` |
-| 障害物のえぐり | `src/game/obstacle.ts` |
+| 障害物のえぐり | `src/game/obstacle.ts`（判定）／`src/game/carve.ts`（削り解決本体・`turn.ts`と敵AIが共有） |
 | バランス定数 | `src/data/constants.ts` |
 | ステージ・敵・パーティ | `src/data/stages.ts` / `src/data/party.ts` |
 | 描画・演出 | `src/render/draw.ts` / `src/components/BattleCanvas.tsx` / `src/render/theme.ts` |

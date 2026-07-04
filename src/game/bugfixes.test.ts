@@ -132,24 +132,30 @@ describe('正面パリィ（バグ修正：collinear/anti-parallel 経路が相�
   })
 })
 
-describe('第6面：崩し手が壁の奥の味方を狙っても確実に暴発する（バグ修正）', () => {
-  it('封印帯の3段壁越しでも、崩し手は極を壁面手前へ引いて毎ターン暴発を積む', () => {
+describe('第6面：崩し手の暴発が確実に成立する（バグ修正・#63）', () => {
+  it('前衛の崩し手は不発にならず、無防備な味方の近傍で確実に暴発する', () => {
+    // #63 の再設計：崩し手は封印帯の「前」に立ち、暴発弾は初手から味方の目前へ届く。
+    // 無防備（発射なし）で受けると、崩し手の弾は極まで到達して必ず暴発する（不発・通常命中化しない）。
     let state = createBattleState(STAGES[5], 5, makeParty())
     let total = 0
-    let castingTurns = 0
-    for (let t = 0; t < 8; t++) {
+    let ruptorShots = 0
+    for (let t = 0; t < 4 && state.outcome === 'ongoing'; t++) {
       const prep = prepareTurn(state)
-      const ruptors = prep.castingEnemyIds.filter(
-        (id) => prep.state.enemies.find((e) => e.id === id)?.role === 'ruptor',
+      if (prep.state.outcome !== 'ongoing') break
+      const ruptorIds = new Set(
+        prep.state.enemies.filter((e) => e.role === 'ruptor' && e.hp > 0).map((e) => e.id),
       )
       const { state: after, resolution } = resolveAllyCasts(prep.state, [], prep.castingEnemyIds)
-      if (ruptors.length > 0) castingTurns++
+      for (const shot of resolution.enemyShots) {
+        if (!ruptorIds.has(shot.enemyId)) continue
+        ruptorShots++
+        expect(shot.misfired).toBe(true) // 暴発予告どおり必ず暴発する（AI予告と実解決の一致）
+      }
       total += resolution.misfires.filter((m) => m.owner === 'enemy').length
       state = after
     }
-    // 崩し手が撃つターンが複数あり、そのほぼ全てで暴発が積まれる（修正前は最初の数ターン0だった）
-    expect(castingTurns).toBeGreaterThanOrEqual(5)
-    expect(total).toBeGreaterThanOrEqual(castingTurns - 1)
+    expect(ruptorShots).toBeGreaterThanOrEqual(2)
+    expect(total).toBe(ruptorShots)
   })
 })
 

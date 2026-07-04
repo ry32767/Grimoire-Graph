@@ -28,6 +28,8 @@ interface EnemyOpts {
   /** HP の明示指定（LVL 倍率より優先。ボス等） */
   hp?: number
   castMag?: number
+  /** 弾の初速の明示指定（既定 CAST_SPEED=8）。第6面の崩し手は遅め＝結界1枚で受かる調整（#63） */
+  castInitialSpeed?: number
   hitboxRadius?: number
   /** 敵弾の z 場（sin/cos 等・05b §3）。(mag) を受けて ZField を返す */
   castZField?: (mag: number) => ZField
@@ -76,7 +78,7 @@ function enemy(
     families: opts.families,
     role: opts.role,
     castTrajectory: { mode: 'rotate', g: () => 0, angle: 0 },
-    castInitialSpeed: CAST_SPEED,
+    castInitialSpeed: opts.castInitialSpeed ?? CAST_SPEED,
     castZ,
     castZField: opts.castZField?.(castMag),
     ruptorTarget: opts.ruptorTarget,
@@ -372,32 +374,52 @@ const stage6: Stage = {
   name: '第六の間 ― 封印帯',
   rField: 36, // #49：翼壁で3段壁と光柱のy範囲を覆う広め
   enemies: [
-    // ゴーレム III（守護型・最上位：交互張り＋方向づけ併用）。HP180
-    enemy('封印の番人', { x: 0, y: 23 }, 'light', 6, 'spiral', {
+    // ゴーレム III（守護型・最上位：交互張り＋方向づけ併用）。HP180。
+    // 前衛 (0,14) に置く（#63）：崩し手たちの盾。単純な連打（最寄り狙い）はまず番人を
+    // 殴り続けることになり、その間に崩し手の暴発が膜の崩壊へ積み上がる。
+    // 結界で暴発を止めてから番人を崩す（防御→攻撃）の手順が必要になる。
+    enemy('封印の番人', { x: 0, y: 14 }, 'light', 6, 'spiral', {
       role: 'guardian',
       alternatingAura: true, // ターンごとに光⇔闇のオーラを張り替える
       directedAura: true, // 脅威方向に強度偏重（併用・#47）
       hp: 180,
       species: 'golem',
     }),
-    // 紅亡霊 II（崩し手3体・誘発）。family を個体ごとに abs/arc/poly34 と変える（#46）。位相もずらす
-    enemy('崩し手・弧', { x: -13, y: 19 }, 'dark', 6, 'arc', { role: 'ruptor', fireEvery: 2, fireOffset: 1, hp: 130, species: 'redWraith' }),
-    enemy('崩し手・折れ', { x: 13, y: 19 }, 'light', 6, 'abs', { role: 'ruptor', fireEvery: 2, fireOffset: 0, hp: 130, species: 'redWraith' }),
-    enemy('崩し手・捻れ', { x: 0, y: 16 }, 'dark', 6, 'poly34', { role: 'ruptor', fireEvery: 2, fireOffset: 1, hp: 130, species: 'redWraith' }),
+    // 紅亡霊 II（崩し手3体・誘発）。family を個体ごとに abs/arc/poly34 と変える（#46）。
+    // 連打対策（#63）：封印帯の「前」＝開けた場所に放たれており、暴発弾は初手から味方の目前へ
+    // 届く。予告✕を見て反対極の結界で受け止めれば暴発しない（学習テーマ）が、防御しない
+    // 「全員おまかせ」連打は毎波の暴発 AoE（最大威力180）で全滅する。
+    // - 属性は光2＋闇1：おまかせの反対極弾は「ひるみ」でなく DoT になり、ひるみロックで
+    //   詠唱を止め続けることはできない（弾色を見極めて両極の結界で防ぐ動機づけ）。
+    // - HP175：結界で受けながらであれば十分倒し切れる（時間制限はない）。
+    // 位相（fireOffset）は「同じ極性の弾が同一ターンに2本重ならない」よう振り、
+    // 初速は遅め（6.5）：反対極の結界1枚（迎撃減速 6.25＋極手前の自然減速）で1本ずつ確実に
+    // 受け切れる＝正しい色の結界を張れば完封できる波状攻撃にする（#63）。
+    enemy('崩し手・弧', { x: -12, y: -2 }, 'light', 6, 'arc', { role: 'ruptor', fireEvery: 2, fireOffset: 1, hp: 175, castInitialSpeed: 6.5, species: 'redWraith' }),
+    enemy('崩し手・折れ', { x: 12, y: -2 }, 'dark', 6, 'abs', { role: 'ruptor', fireEvery: 2, fireOffset: 0, hp: 175, castInitialSpeed: 6.5, species: 'redWraith' }),
+    enemy('崩し手・捻れ', { x: 0, y: -5 }, 'light', 6, 'poly34', { role: 'ruptor', fireEvery: 2, fireOffset: 0, hp: 175, castInitialSpeed: 6.5, species: 'redWraith' }),
   ],
-  // 3段重ねの封印壁＋砕けぬ封印核＋取っ掛かりの光柱＋翼壁（06b §6・#50）
+  // 左右の封印壁＋中央回廊＋砕けぬ封印核＋取っ掛かりの光柱＋翼壁（06b §6・#50・#63）
   obstacles: [
-    wall(-18, 18, 1, 3, 'dark'), // 分厚い封印壁（3段・光で崩せる）
+    // 硬い封印壁（3段・tough・#63）：左右2枚に割り、中央に回廊を開ける。
+    // 崩し手の暴発弾は回廊を曲線で通って味方の目前まで届く＝予告✕を見て反対極の結界で
+    // 受け止める（このステージの学習テーマ）が機能する。防御しない連打は暴発 AoE で全滅する。
+    // tough なので術の削りでは容易に広がらない（回廊での攻防が主軸になる）。
+    // 封印核（x −4.4..5.2）との間に左右それぞれ幅約3の回廊を残す（曲線・精密な直線なら通せる）
+    wall(-18, -10, 1, 3, 'neutral', 'tough'),
+    wall(11, 18, 1, 3, 'neutral', 'tough'),
     block(-2, 1, 3, 2, 'neutral', 'unbreakable'), // 砕けぬ封印核（正面突破不可）
     pillar(-17, -3, 2, 'light'), // 左の光柱
     pillar(17, -3, 2, 'light'), // 右の光柱
-    wingWall(21, 34, -6, 6), // 翼壁・右（光柱(x=±17)と重ならず境界(rField=36)近くまで・#50）
-    wingWall(-34, -21, -6, 6), // 翼壁・左
+    // 翼壁は封印壁の端と重なるまで寄せる（#63：x≈±19〜21 の隙間を曲線で抜ける「横抜け」を封じ、
+    // 突破手段を「tough 壁の掘削 or 暴発による開通」に一本化する）
+    wingWall(19, 34, -6, 6), // 翼壁・右（境界(rField=36)近くまで・#50）
+    wingWall(-34, -19, -6, 6), // 翼壁・左
   ],
   introText: [
-    '三段重ねの封印壁が回廊を塞ぎ、中央には決して砕けぬ封印核。封印の番人と、様子のおかしい崩し手が三体。',
-    '頭上に、いくつもの綻びの予兆が揺れている。崩し手の弾は光か闇をまとう――着弾する前に、反対の理の結界で受け止めれば暴発しない。',
-    'ヒント：弾の色を見極めて結界で防げ。同じ極の結界は素通りされる。闇の封印壁は光で崩せる。',
+    '左右に聳える封印壁と、中央の砕けぬ封印核。その奥に封印の番人が控え、封印帯の前へ――様子のおかしい崩し手が、三体放たれている。',
+    '崩し手の弾は光か闇をまとい、狙う相手の目前で暴発する。着弾する前に、反対の理の結界で受け止めれば暴発しない。予兆の✕印と弾の色をよく見ること。',
+    'ヒント：結界は暴発の予兆（✕）まで覆う大きさで張れ。同じ極の結界は素通りされる。封印壁は硬く術では削りにくい――番人へは核の脇の回廊を曲線で通すか、切り札（暴発）で壁ごと吹き飛ばせ。',
   ],
   clearText: [
     '崩れかけた封印帯を抜け、その奥に大広間への扉が開く。冷たい風が、三人の頬を撫でた。',

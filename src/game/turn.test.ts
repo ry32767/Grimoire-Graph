@@ -253,9 +253,11 @@ describe('防御の重ね掛け（軌道型＋パリィ）', () => {
     // 味方a(光)が (0,-6)→上へ直進し、遠くの敵T(0,14) を撃つ。別の敵P の闇弾が y=4 で自弾と交差。
     // P が撃つと自弾が削られ、T への与ダメが減る（自弾が減速する＝相互相殺）。
     const target = enemy('T', { x: 0, y: 14 }, 'dark', 999, 5)
-    // P は別の味方 b(HP低=狙われる) を狙い、その弾が (0,4) 付近で自弾と交差する
+    // P は別の味方 b(反対極＋HP低=狙われる) を狙い、その弾が (0,4) 付近で自弾と交差する。
+    // 敵AI は castZField（闇 −zRef）の実属性で採点するため、b=光（相性1.5・低HP）が
+    // a=闇（同極0.5）より明確に高評価になる配置にして「P→b の横撃ち」を固定する。
     const parrier = { ...enemy('P', { x: 10, y: 4 }, 'light', 100, 10), castZField: () => -FIELD.zRef }
-    const allies = [ally('a', { x: 0, y: -6 }, 'light'), ally('b', { x: -10, y: 4 }, 'dark', 20)]
+    const allies = [ally('a', { x: 0, y: -6 }, 'dark'), ally('b', { x: -10, y: 4 }, 'light', 20)]
     const aCast = cast('a', { mode: 'rotate', g: () => 0, angle: Math.PI / 2, origin: { x: 0, y: -6 }, z: zLightMid }, 12)
     const base = { allies, casts: [aCast], enemies: [target, parrier], obstacles: [], mechanics: withFire }
     const withParry = resolveTurn({ ...base, castingEnemyIds: ['P'] })

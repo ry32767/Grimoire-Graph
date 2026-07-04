@@ -138,11 +138,20 @@ src/
 │  ├ orbit.ts               結界（掃射・迎撃・オーラ・壁破壊）
 │  ├ collision.ts           当たり判定（線分×円）
 │  ├ obstacle.ts            障害物のえぐり（素材判定・半径・速度損）
+│  ├ carve.ts               障害物の削り解決本体（`carveAlong`／`densifyGeom`）。turn.ts と enemyPlanning/ が共有
 │  ├ misfire.ts             暴発
 │  ├ misfireInstability.ts  暴発の不安定化・累積・崩壊（膜メーター・04b）
 │  ├ parry.ts               相殺（線分交差・反対極のみ）
 │  ├ status.ts              状態異常（ひるみ/継続ダメージ）
-│  ├ enemyAI.ts             敵 AI（系統・ロール・探索・壁よけ）
+│  ├ enemyAI.ts             敵 AI（facade・ロール振り分け・迂回型/守護型の計画）
+│  ├ enemyPlanning/         敵AIの軌道計画（[05](05-enemies.md) §5.4/§5.4b）
+│  │  ├ planningEnv.ts        本番と同一ジオメトリの空間クエリ・clearance
+│  │  ├ routeSearch.ts        グリッド A*＋見通し線平滑化（clean/wallTunnel）
+│  │  ├ routeFit.ts           経路→family（abs/arc/poly34）フィット
+│  │  ├ evaluate.ts           候補軌道の本番物理検証（carveAlong 共有・辞書式 rank 比較）
+│  │  ├ ruptorPlanner.ts      暴発型（ruptor）の計画・z 場の極（`buildRuptorZField`）
+│  │  ├ trajectories.ts       family→軌道の組み立て（attacker/ruptor 共有）
+│  │  └ perception.ts         隠蔽時の見かけ位置・脅威優先度（attacker/ruptor 共有）
 │  ├ recommend.ts           おすすめ術式の探索
 │  ├ exprFit.ts             式の係数化（数値→スライダー）・通過点フィット（最小二乗・#46）
 │  ├ turn.ts                ターン解決の中核

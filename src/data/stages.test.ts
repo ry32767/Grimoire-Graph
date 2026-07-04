@@ -84,6 +84,9 @@ describe('ステージ定義（機能14・#15）', () => {
       if (s.id === 'stage-4') continue
       for (const a of PARTY) {
         for (const e of s.enemies) {
+          // 第6面の崩し手（#63）：封印帯の「前」に放たれた前衛＝意図的に開けた場所に立つ
+          // （暴発弾が初手から届き、予告✕を結界で受ける学習をさせる）。遮蔽の不変条件から除外
+          if (s.id === 'stage-6' && e.role === 'ruptor') continue
           expect(segmentBlocked(a.pos, e.pos, s.obstacles)).toBe(true)
         }
       }
@@ -92,8 +95,17 @@ describe('ステージ定義（機能14・#15）', () => {
 })
 
 describe('難易度フレームワーク（06b）', () => {
-  it('castInitialSpeed は全敵・全LVLで 8 固定', () => {
-    for (const s of STAGES) for (const e of s.enemies) expect(e.castInitialSpeed).toBe(8)
+  it('castInitialSpeed は既定 8 固定（例外は第6面の崩し手=6.5・#63）', () => {
+    for (const s of STAGES) {
+      for (const e of s.enemies) {
+        if (s.id === 'stage-6' && e.role === 'ruptor') {
+          // 遅い暴発弾（#63）：予告を見て反対極の結界1枚を張れば確実に受け切れる速度
+          expect(e.castInitialSpeed).toBe(6.5)
+        } else {
+          expect(e.castInitialSpeed).toBe(8)
+        }
+      }
+    }
   })
 
   it('迂回型・暴発型は line family を持たない（05b §2）', () => {
