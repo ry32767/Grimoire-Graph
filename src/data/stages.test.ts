@@ -7,6 +7,8 @@ import { makeParty, PARTY } from './party'
 import { FIELD } from './constants'
 import { dist } from '../game/coords'
 import { isSolidAt, materialCells } from '../game/obstacle'
+import { ringEncloses, type RingPoint } from '../game/orbit'
+import { constZField } from '../game/zfields'
 import type { Obstacle, Trajectory, Vec2 } from '../game/types'
 
 /** 線分 a→e のどこかが障害物の素材に当たるか（直線で射線が通らない＝壁で遮られる）。 */
@@ -151,6 +153,32 @@ describe('難易度フレームワーク（06b）', () => {
     expect(prep.castingEnemyIds.some((id) => prep.state.enemies.find((e) => e.id === id)?.role === 'ruptor')).toBe(true)
     const { resolution } = resolveAllyCasts(prep.state, [], prep.castingEnemyIds)
     expect(resolution.misfires.filter((m) => m.owner === 'enemy').length).toBeGreaterThanOrEqual(1)
+    // デモの暴発は中央寄せの味方（#64）を巻き込まない（顔見せ演出のまま）
+    const demo = resolution.enemyShots.find((s) => s.misfired)!
+    for (const a of prep.state.allies) {
+      expect(dist(a.pos, demo.misfirePos!)).toBeGreaterThan(FIELD.aoeRadius + 1)
+    }
+  })
+
+  it('第4面（#64）：味方は中央寄せで、レンの半径7の結界1枚で3人を囲える（壁に触れず存続）', () => {
+    const st = createBattleState(STAGES[3], 3, makeParty())
+    // ステージ定義の初期位置上書きが適用されている
+    expect(st.allies.map((a) => a.pos)).toEqual(STAGES[3].allyPositions)
+    const prep = prepareTurn(st)
+    const ren = prep.state.allies[1]
+    const traj: Trajectory = {
+      mode: 'polar', f: () => 7, origin: ren.pos, z: constZField(-FIELD.zRef), fieldR: prep.state.rField,
+    }
+    const { resolution } = resolveAllyCasts(
+      prep.state,
+      [{ allyId: ren.id, trajectory: traj, initialSpeed: FIELD.fixedSpeed }],
+      prep.castingEnemyIds,
+    )
+    const orbitShot = resolution.allyShots.find((s) => s.kind === 'orbit')!
+    expect(orbitShot.broken).toBe(false) // 渦は開始半径13で離してあり、結界は壁に触れない
+    for (const a of prep.state.allies) {
+      expect(ringEncloses(orbitShot.path as RingPoint[], a.pos)).toBe(true) // 3人とも内側
+    }
   })
 
   it('第6面に崩し手3体（低頻度・位相ずらし）と交互張りの守護型がいる', () => {

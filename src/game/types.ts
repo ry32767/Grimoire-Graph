@@ -330,6 +330,11 @@ export interface Stage {
    * 描画・当たり判定・敵AI・味方プレビューが参照する。未指定は FIELD.rField を据え置く。
    */
   rField?: number
+  /**
+   * 面ごとの味方初期位置の上書き（#64・第4面）。パーティ定義（party.ts）の並び順に対応する。
+   * 未指定の面は既定位置（PARTY の pos）のまま。createBattleState が適用する。
+   */
+  allyPositions?: Vec2[]
 }
 
 /**

@@ -262,11 +262,29 @@ export function planEnemyShot(
 
   // 採点結果（プロパティ経由＝クロージャ代入でも型の絞り込みが崩れない）
   const sel = { best: null as { plan: EnemyPlan; rank: readonly number[] } | null }
+  // 火力型の掘削候補（#64）：どの候補も命中しない＝壁が厚いとき、「1番奥まで掘り進める」
+  // 候補（停止点が狙いに最も近い＝carve 損失込みで最深到達）を布石として選ぶ。
+  // ランプ z（飛行中 |z|≈0＝最大加速）は速度が乗って carve 半径も大きく、自然に最深になる。
+  const drill = { best: null as { plan: EnemyPlan; depth: number } | null }
+  const trackDrill = (traj: Trajectory, ally: Ally, aimPos: Vec2, ev: ReturnType<typeof evaluateEnemyShot>): void => {
+    const last = ev.flight.samples[ev.flight.samples.length - 1]
+    if (!last) return
+    if (ev.materialArcs.length === 0) return // 素材を削らず失速/逸れた候補は掘削でない
+    // unbreakable に当たって止まった候補は、掘っても道が開かない＝対象外
+    if (ev.unbreakableArc !== null && last.arcLen >= ev.unbreakableArc - 0.3) return
+    const depth = dist(last.pos, aimPos) // 小さいほど奥（狙いの近く）まで届いた
+    if (!drill.best || depth < drill.best.depth) {
+      drill.best = { plan: { trajectory: traj, targetId: ally.id, expectedDamage: 0 }, depth }
+    }
+  }
   /** 候補を本番物理で評価し rank で採点する。命中しなければ false（＝攻撃候補にならない）。 */
   const consider = (traj: Trajectory, ally: Ally, aimPos: Vec2, zVal: number, maneuver: number, turnXs?: number[]): boolean => {
     const ev = evaluateEnemyShot(traj, enemy.castInitialSpeed, obstacles, standingRings, { turnXs })
     const hit = firstHit(ev.flight.samples, aimPos, GAME.allyHitbox)
-    if (!hit || hit.speed <= 0) return false // 失速・不達の候補は捨てる（#31）
+    if (!hit || hit.speed <= 0) {
+      if (breaker) trackDrill(traj, ally, aimPos, ev) // 不達でも掘削の布石として記録（#64）
+      return false // 失速・不達の候補は捨てる（#31）
+    }
     // 破壊不能壁（unbreakable）は削れず必ず弾を止める＝命中前に横切る候補は全ロールで棄却
     if (ev.unbreakableArc !== null && ev.unbreakableArc < hit.arcLen) return false
     const matBefore = ev.materialArcs.filter((a) => a < hit.arcLen).length
@@ -336,6 +354,8 @@ export function planEnemyShot(
     }
     // 火力型のランプ z 場（05b §3 指数系）：飛行中は |z|≈0（中庸＝最大加速）を保ち、
     // 命中直前に |z|→zPeak へ立ち上げる。「速度を出しつつ最大強度で当てる」火力型らしい候補。
+    // 飛行中の |z|≈0 は最大加速＝壁に高速で当たる＝carve 半径も大きい（#64：加速度を上げる
+    // ほど貫通しやすい）。掘削（drill）の最深到達もこのランプ候補が自然に担う。
     if (breaker && !enemy.castZField) {
       const Lr = dist(enemy.pos, aimPos) || 1
       const sign = ally.element === 'light' ? -1 : 1 // 反対極を突く
@@ -387,6 +407,10 @@ export function planEnemyShot(
     }
   }
   if (sel.best) return sel.best.plan
+
+  // 火力型（#64）：どの候補も命中しない＝壁が厚い。牽制でお茶を濁さず、
+  // 「1番奥まで掘れる」候補で壁を掘り進める（毎ターン掘り足せばいずれ道が開く）。
+  if (breaker && drill.best) return drill.best.plan
 
   // 命中見込みなし：最もHPが低い味方へ牽制（見える相手・見かけ位置へ・#35）。
   // family は得意関数から選ぶ（line を持たない個体＝迂回型/暴発型は曲線で牽制・05b §2）。

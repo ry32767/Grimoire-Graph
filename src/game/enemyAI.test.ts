@@ -130,8 +130,11 @@ describe('敵AIの攻撃計画（#2/#17）', () => {
   })
 
   it('breaker ロールは壁ごしでも貫いて狙う（障害物ペナルティを受けない・#28）', () => {
-    // 敵(0,8)→味方(0,-8) の直線上に壁。breaker は減点されず、attacker より高評価になる
-    const wall: Obstacle = { id: 'w', element: 'dark', solids: [{ x: 0, y: 0, r: 2 }], carves: [] }
+    // 敵(0,8)→味方(0,-8) の直線上に壁（反対極＝闇弾で安く削れる）。breaker は貫通して
+    // 直進の高威力弾を通し、迂回する attacker より高評価になる。
+    // ※ #64 の削り物理修正後は削り減速が本当に効く（1発で貫けない厚さは実際に止まる）ため、
+    //   1手で貫通が成立する厚さ（r=1.6）の反対極の壁で本来の役割分担を検証する。
+    const wall: Obstacle = { id: 'w', element: 'light', solids: [{ x: 0, y: 0, r: 1.6 }], carves: [] }
     const target = ally('t', { x: 0, y: -8 }, 'light')
     const attacker: Enemy = enemy({ x: 0, y: 8 }, 'line')
     const breaker: Enemy = { ...attacker, role: 'breaker' }
@@ -139,6 +142,7 @@ describe('敵AIの攻撃計画（#2/#17）', () => {
     const bPlan = planEnemyShot(breaker, [target], [wall])
     expect(aPlan).not.toBeNull()
     expect(bPlan).not.toBeNull()
+    expect(bPlan!.expectedDamage).toBeGreaterThan(0) // 貫通して実際に届く
     expect(bPlan!.expectedDamage).toBeGreaterThan(aPlan!.expectedDamage)
   })
 

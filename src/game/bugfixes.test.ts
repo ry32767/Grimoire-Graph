@@ -449,3 +449,181 @@ describe('崩し手の AoE 到達圏ガード（暴発が必ず対象へ届く�
     expect(dist(plan!.misfirePos!, t.pos)).toBeLessThan(FIELD.aoeRadius)
   })
 })
+
+// ===== #64：テストプレイ報告の修正（見た目すり抜け／blocked 意味論／掘削／パリィ／結界破壊点） =====
+
+describe('壁の見た目すり抜けの根絶（#64：削りの早期打ち切りバグ）', () => {
+  // 修正前：resim 後の flight.end==='vanished'（遠くの自然失速）で削りを打ち切り、
+  // 弾が「残りの壁素材の中」を減速なしで通過していた（アニメ上だけ貫通して見える）。
+  it('第3面T1：全敵弾の飛行サンプルは、解決後の壁素材の中を速度>0で通らない', () => {
+    const stage = STAGES[2]
+    const res = resolveTurn({
+      allies: makeParty(),
+      casts: [],
+      enemies: stage.enemies,
+      castingEnemyIds: stage.enemies.map((e) => e.id),
+      obstacles: stage.obstacles.map((o) => ({ ...o, carves: [...o.carves] })),
+      mechanics: stage.mechanics,
+      fieldR: stage.rField,
+    })
+    for (const shot of res.enemyShots) {
+      const leak = shot.flight.samples.filter(
+        (s) => s.speed > 0 && res.obstacles.some((o) => isSolidAt(o, s.pos)),
+      )
+      expect(leak).toEqual([])
+    }
+  })
+
+  it('blocked（壁止まり）の敵弾は、飛行サンプルが停止点より先へ伸びない', () => {
+    // 全幅の厚い壁で必ず止まる構図。アニメーションは flight.samples をそのまま描くため、
+    // これが「弾は壁で止まって見える」ことの保証になる。
+    const wallN = rectWall({ x: -30, y: 0, w: 60, h: 8 }, 'normal')
+    const victim = ally('v', { x: 0, y: -15 }, 40, 'light')
+    const res = resolveTurn({
+      allies: [victim],
+      casts: [],
+      enemies: [baseEnemy({ pos: { x: 0, y: 20 }, role: 'breaker' })],
+      castingEnemyIds: ['e0'],
+      obstacles: [wallN],
+      mechanics: { obstacles: true, enemyFire: true },
+    })
+    const shot = res.enemyShots[0]
+    expect(shot.blocked).toBe(true)
+    const last = shot.flight.samples[shot.flight.samples.length - 1]
+    expect(last.speed).toBe(0)
+    // 停止点は壁の帯（y -2.4..10.4 付近）より手前＝壁の中。奥（対象側）へ抜けていない
+    expect(last.pos.y).toBeGreaterThan(-3)
+  })
+})
+
+describe('blocked の意味論（#64：自然失速＝壁止まりではない）', () => {
+  it('敵弾が対象の先で自然失速（z 減速）しても、途中の味方への命中は無効化されない', () => {
+    // castZField=-3（|z|>zRef＝減速場）：弾は味方を過ぎたあたりで速度0になる（end=vanished）。
+    // 修正前は obstacles のある面で end==='vanished' を一律 blocked にしていたため、
+    // 実際には当たっている弾が無効化されていた。
+    const victim = ally('v', { x: 0, y: -2 }, 100, 'light')
+    const farWall = rectWall({ x: 20, y: 20, w: 4, h: 4 }, 'normal') // 経路と無関係な遠い壁
+    const e = baseEnemy({
+      pos: { x: 0, y: 10 },
+      castZField: constZField(-3),
+      castZ: -3,
+      castInitialSpeed: 14,
+    })
+    const res = resolveTurn({
+      allies: [victim],
+      casts: [],
+      enemies: [e],
+      castingEnemyIds: ['e0'],
+      obstacles: [farWall],
+      mechanics: { obstacles: true, enemyFire: true },
+    })
+    const shot = res.enemyShots[0]
+    expect(shot.blocked).toBe(false)
+    expect(shot.hitAllyId).toBe('v')
+    expect(res.allies[0].hp).toBeLessThan(100)
+  })
+})
+
+describe('火力型の掘削（#64：牽制でなく「1番奥まで掘れる」候補で壁を掘り進める）', () => {
+  it('厚い壁で全候補が不達でも、数ターンの掘削で道を開けて命中に至る', () => {
+    // 反対極（安く削れる）の壁・厚さ5。1ターンでは貫けないが、穴は累積するので
+    // 掘削（最深到達）を選び続ければ数ターンで貫通して命中する。
+    const wallN: Obstacle = { id: 'w', element: 'light', solids: [], rects: [{ x: -30, y: 0, w: 60, h: 5 }], carves: [] }
+    let obstacles: Obstacle[] = [{ ...wallN, carves: [] }]
+    let allies = [ally('v', { x: 0, y: -15 }, 500, 'light')]
+    const e = baseEnemy({ pos: { x: 0, y: 20 }, role: 'breaker' })
+    let hitTurn = -1
+    for (let t = 1; t <= 6; t++) {
+      const res = resolveTurn({
+        allies,
+        casts: [],
+        enemies: [e],
+        castingEnemyIds: ['e0'],
+        obstacles,
+        mechanics: { obstacles: true, enemyFire: true },
+      })
+      // 掘削は毎ターン素材を削る（牽制の空撃ちで止まらない）
+      expect(res.enemyShots[0].carves.length).toBeGreaterThan(0)
+      obstacles = res.obstacles
+      allies = res.allies
+      if (res.enemyShots[0].hitAllyId) {
+        hitTurn = t
+        break
+      }
+    }
+    expect(hitTurn).toBeGreaterThan(0) // 数ターン以内に掘り抜いて命中する
+  })
+})
+
+describe('パリィの実衝突判定（#64：撃ち返し・横合いの迎撃が成立する）', () => {
+  it('予告経路の中点あたりを狙って撃つと、交差時刻が合いパリィが成立する', () => {
+    // 敵(10,15)→味方 v(10,-14) の縦弾に対し、離れた味方 p が経路中点(10,0) 付近を狙って撃つ。
+    // 旧・幾何交点＋通過時刻ゲートでは僅かな時刻差で弾かれがちだった「狙った迎撃」の成立を固定する。
+    const p = ally('p', { x: -10, y: -10 }, 500, 'neutral')
+    const victim = ally('v', { x: 10, y: -14 }, 40, 'light')
+    const aim = { x: 10, y: 0 }
+    const ang = Math.atan2(aim.y - p.pos.y, aim.x - p.pos.x)
+    const traj: Trajectory = { mode: 'rotate', g: () => 0, angle: ang, origin: p.pos, z: constZField(FIELD.zRef) }
+    const res = resolveTurn({
+      allies: [p, victim],
+      casts: [{ allyId: 'p', trajectory: traj, initialSpeed: FIELD.fixedSpeed }],
+      enemies: [baseEnemy({ pos: { x: 10, y: 15 } })],
+      castingEnemyIds: ['e0'],
+      obstacles: [],
+      mechanics: { obstacles: false, enemyFire: true },
+    })
+    expect(res.log.some((l) => l.kind === 'parry')).toBe(true)
+    expect(res.enemyShots[0].damage).toBeLessThan(30) // 相殺で削れて素通しより軽い
+  })
+})
+
+describe('結界破壊点の記録（#64：霧散演出を弾の到達と同期する）', () => {
+  it('敵 guardian の新規結界が味方弾に破られると breakPos が立つ', () => {
+    const g = baseEnemy({
+      id: 'g', name: 'g', pos: { x: 0, y: 12 }, hp: 200, maxHp: 200, element: 'dark',
+      family: 'spiral', role: 'guardian', castZ: -2.5, castInitialSpeed: 3, // 遅い結界＝一撃で破れる
+    })
+    const a = ally('a', { x: 0, y: -8 }, 500, 'light')
+    const traj: Trajectory = { mode: 'rotate', g: () => 0, angle: Math.PI / 2, origin: a.pos, z: constZField(FIELD.zRef) }
+    const res = resolveTurn({
+      allies: [a],
+      casts: [{ allyId: 'a', trajectory: traj, initialSpeed: 14 }],
+      enemies: [g],
+      castingEnemyIds: ['g'],
+      obstacles: [],
+      mechanics: { obstacles: false, enemyFire: true },
+    })
+    const ring = res.enemyRings[0]
+    expect(ring.broken).toBe(true)
+    expect(ring.breakPos).not.toBeNull()
+    // 破壊点はリング境界付近（弾の横断点）＝そこへ弾が到達した瞬間に霧散が始められる
+    expect(Math.abs(dist(ring.breakPos!, g.pos) - 7)).toBeLessThan(2.5)
+  })
+
+  it('持続結界（前ターンの敵結界）が破られると orbitBreaks に破壊点が載る', () => {
+    const g = baseEnemy({
+      id: 'g', name: 'g', pos: { x: 0, y: 12 }, hp: 200, maxHp: 200, element: 'dark',
+      family: 'spiral', role: 'guardian', castZ: -2.5, castInitialSpeed: 3,
+    })
+    const a = ally('a', { x: 0, y: -8 }, 500, 'light')
+    const t1 = resolveTurn({
+      allies: [a], casts: [], enemies: [g], castingEnemyIds: ['g'],
+      obstacles: [], mechanics: { obstacles: false, enemyFire: true },
+    })
+    const orbit = t1.orbits.find((o) => o.owner === 'enemy')
+    expect(orbit).toBeDefined()
+    const traj: Trajectory = { mode: 'rotate', g: () => 0, angle: Math.PI / 2, origin: a.pos, z: constZField(FIELD.zRef) }
+    const t2 = resolveTurn({
+      allies: [a],
+      casts: [{ allyId: 'a', trajectory: traj, initialSpeed: 14 }],
+      enemies: [{ ...t1.enemies[0] }],
+      castingEnemyIds: [],
+      obstacles: [],
+      mechanics: { obstacles: false, enemyFire: true },
+      activeOrbits: t1.orbits,
+    })
+    if (!t2.orbits.some((o) => o.owner === 'enemy')) {
+      expect(t2.orbitBreaks[orbit!.id]).toBeDefined() // 破壊されたなら破壊点が必ず載る
+    }
+  })
+})

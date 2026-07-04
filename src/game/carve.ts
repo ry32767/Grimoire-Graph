@@ -89,10 +89,22 @@ export function carveAlong(
     bursts.push({ pos: dense[s].pos, r, arcLen: dense[s].arcLen, attr, obstacleId: hit.id })
     losses.push({ arcLen: dense[s].arcLen, deltaV: carveSpeedLoss(attr, hit.element, kind) })
     flight = resim(losses)
+    // 消滅点が「今削っている位置」以前なら弾は壁の中で止まった＝これ以上は削れない。
+    // 先（z 減速の自然失速点など）での消滅なら弾はまだここを通過できるので削り続ける。
+    // 単純に flight.end==='vanished' で打ち切ると、遠くで失速するだけの弾が壁を数回しか
+    // 削らず、残りの素材の中を素通りする（見た目だけ貫通する）バグになる。
     if (flight.end === 'vanished') {
-      vanished = true
-      break
+      const lastArc = flight.samples[flight.samples.length - 1]?.arcLen ?? 0
+      if (lastArc <= dense[s].arcLen + 1e-6) {
+        vanished = true
+        break
+      }
     }
+  }
+  // 途中で素材に触れなくても、削りの減速で弾が「最後に触れた素材の位置以前」で止まったら壁止まり
+  if (!vanished && flight.end === 'vanished' && bursts.length > 0) {
+    const lastArc = flight.samples[flight.samples.length - 1]?.arcLen ?? 0
+    if (lastArc <= bursts[bursts.length - 1].arcLen + 1e-6) vanished = true
   }
   return { flight, bursts, vanished }
 }
