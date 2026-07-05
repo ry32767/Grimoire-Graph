@@ -71,9 +71,9 @@ export interface AnimBullet {
   misfirePos: Vec2 | null
   /** この弾が障害物を削った点（弧長つき。到達時に穴を開示しパーティクルを出す・#11） */
   carves: CarveBurst[]
-  /** 命中して対象を反応させる情報（#20。外れ/暴発は null） */
-  impact: AnimImpact | null
-  /** 速度0で霧散したか（#38：終端で小さくなって散る演出。命中/暴発時は出さない） */
+  /** 命中して対象を反応させる情報（#20。貫通で複数命中しうる。外れ/暴発は空配列） */
+  impacts: AnimImpact[]
+  /** 速度0で霧散したか（#38：終端で小さくなって散る演出。暴発時は出さない） */
   vanished?: boolean
 }
 
@@ -396,11 +396,11 @@ export default function BattleCanvas(props: Props) {
     // 弾の到達後に演出を見せる余韻：暴発は大きく、命中は短く確保する（#9/#29/#20）
     const hasMisfire = anim.bullets.some((b) => b.misfirePos)
     const hasImpact =
-      anim.bullets.some((b) => b.impact) || anim.orbits.some((o) => o.hitEnemyIds.length > 0)
+      anim.bullets.some((b) => b.impacts.length > 0) || anim.orbits.some((o) => o.hitEnemyIds.length > 0)
     const hasClash = !!anim.clashes && anim.clashes.length > 0
     const hasBrokenOrbit = anim.orbits.some((o) => o.broken)
-    // 発射魔法の霧散（速度0・命中も暴発もしていない弾）にも余韻を確保する（#38）
-    const hasVanish = anim.bullets.some((b) => b.vanished && !b.impact && !b.misfirePos)
+    // 発射魔法の霧散（速度0）にも余韻を確保する（#38。貫通のため命中と霧散は両立しうる）
+    const hasVanish = anim.bullets.some((b) => b.vanished && !b.misfirePos)
     const baseTail = hasMisfire
       ? MISFIRE_TAIL_MS
       : hasBrokenOrbit || hasVanish
@@ -489,12 +489,14 @@ export default function BattleCanvas(props: Props) {
         revealed[o.id] ? { ...o, carves: [...o.carves, ...revealed[o.id]] } : o,
       )
 
-      // 被弾の検出：弾が命中弧長に達したら対象の反応を開始（#20）
+      // 被弾の検出：弾が命中弧長に達したら対象の反応を開始（#20。貫通で複数対象に届きうる）
       anim.bullets.forEach((b, i) => {
         const st = states[i]
-        if (!st || !b.impact) return
-        if (st.arcLen >= b.impact.arcLen && flashStartByTarget[b.impact.id] === undefined) {
-          flashStartByTarget[b.impact.id] = elapsed
+        if (!st) return
+        for (const im of b.impacts) {
+          if (st.arcLen >= im.arcLen && flashStartByTarget[im.id] === undefined) {
+            flashStartByTarget[im.id] = elapsed
+          }
         }
       })
       // 軌道型の掃射ヒットは周回が一巡した中盤で反応
@@ -662,8 +664,8 @@ export default function BattleCanvas(props: Props) {
         // 暴発：弾が終端へ到達してから余韻いっぱいまで爆発を進める（実時間ベース）
         const arrivalMs = maxTotal > 0 ? (tl.total / maxTotal) * flightMs : 0
         const exploding = b.misfirePos && elapsed >= arrivalMs
-        // 霧散：命中も暴発もしていない弾が終端（速度0）に達したら、小さくなって散る（#38）
-        const vanishing = b.vanished && !b.impact && !b.misfirePos && elapsed >= arrivalMs
+        // 霧散：暴発しない弾が終端（速度0）に達したら、小さくなって散る（#38。貫通で命中後も飛び続けた弾も対象）
+        const vanishing = b.vanished && !b.misfirePos && elapsed >= arrivalMs
         if (!exploding && !vanishing) {
           // 飛んだぶんの軌跡を逆位相の波＋揺れる粒で描く（発射アニメ中も表示・#11）
           const traveled: ZPoint[] = b.samples

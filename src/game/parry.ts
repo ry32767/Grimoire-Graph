@@ -1,8 +1,8 @@
 // パリィ（クラッシュ解決・§3.8・機能12）：同極/中立はすり抜け、反対極のみ相殺。
-// 速度を削り合い、0 になった側は消滅。純粋関数。
+// 互いの威力を引き算し、大きい方だけが残った威力を速度として引き継ぐ（必ず片方は消滅）。純粋関数。
 import type { Attribute, FlightSample, Vec2 } from './types'
 import { flightTimes } from './physics'
-import { COMBAT, FIELD } from '../data/constants'
+import { FIELD } from '../data/constants'
 
 function cross(a: Vec2, b: Vec2): number {
   return a.x * b.y - a.y * b.x
@@ -203,9 +203,12 @@ export interface ParryResult {
 }
 
 /**
- * 交差した2弾の属性・速度・威力からパリィを解決する。
+ * 交差した2弾の属性・速度・威力からパリィを解決する（結界の迎撃・相殺も同じ計算）。
  * - 同極（光×光/闇×闇）または一方が中立 → すり抜け（速度そのまま継続）
- * - 反対極（光×闇） → 相手の威力に応じて速度を削り合う。0 側は消滅。
+ * - 反対極（光×闇） → 互いの威力を引き算し、威力が大きかった側だけが
+ *   残った威力（powerWin − powerLose）を引き継いで継続する。威力＝速度×強度で
+ *   強度は位置で決まるため、残威力は速度の縮小（speed × 残威力/元威力）として反映する。
+ * - パリィが発生したら必ずどちらかは消滅する（同威力なら両方＝完全相殺）。
  */
 export function resolveParry(
   attrA: Attribute,
@@ -221,13 +224,14 @@ export function resolveParry(
     // 同極・中立はすり抜け
     return { passthrough: true, speedA, speedB, vanishA: false, vanishB: false }
   }
-  const newA = Math.max(0, speedA - powerB * COMBAT.parryLossScale)
-  const newB = Math.max(0, speedB - powerA * COMBAT.parryLossScale)
-  return {
-    passthrough: false,
-    speedA: newA,
-    speedB: newB,
-    vanishA: newA <= 0,
-    vanishB: newB <= 0,
+  if (powerA > powerB) {
+    const newA = Math.max(0, speedA * ((powerA - powerB) / powerA))
+    return { passthrough: false, speedA: newA, speedB: 0, vanishA: newA <= 0, vanishB: true }
   }
+  if (powerB > powerA) {
+    const newB = Math.max(0, speedB * ((powerB - powerA) / powerB))
+    return { passthrough: false, speedA: 0, speedB: newB, vanishA: true, vanishB: newB <= 0 }
+  }
+  // 同威力（両方0を含む）＝完全相殺で両方消滅
+  return { passthrough: false, speedA: 0, speedB: 0, vanishA: true, vanishB: true }
 }

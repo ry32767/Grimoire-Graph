@@ -4,12 +4,12 @@
 // 各イベントは弧長つきで返す＝呼び出し側が「命中前 or 極到達前」だけを数えられる。
 import type { Flight, Obstacle, Trajectory, Vec2 } from '../types'
 import { sampleTrajectory, validPrefix, pathTermination } from '../coords'
-import { simulatePath, type LossEvent } from '../physics'
+import { simulatePath, sampleAtLength, type LossEvent } from '../physics'
 import { carveAlong, densifyGeom, OBSTACLE_STEP } from '../carve'
 import { isSolidAt } from '../obstacle'
 import { attributeOf, strengthOf, zfieldAt } from '../attribute'
 import { ringInterception, type RingPoint } from '../orbit'
-import { COMBAT } from '../../data/constants'
+import { resolveParry } from '../parry'
 
 /** 候補軌道の評価結果。rank（辞書式順位）と成功条件の判定に使う。 */
 export interface ShotEvaluation {
@@ -151,25 +151,30 @@ export function evaluateEnemyShot(
     stalled = r.vanished
   }
 
-  // 結界（持続周回）の横断：反対極のみ相互相殺で減速（同極・中立は透過＝本番 turn.ts と同じ）
+  // 結界（持続周回）の横断：本番（turn.ts）と同じ resolveParry で相殺する（判定のズレ防止）。
+  // 反対極のみ・同極/中立は透過。結界威力が上回れば弾は消滅、弾が上回れば残威力で継続。
   const oppositeRingArcs: number[] = []
-  if (standingRings.length > 0) {
-    for (const ring of standingRings) {
-      if (ring.length < 3) continue
-      const inter = ringInterception(ring, path)
-      if (!inter.crossed || inter.enemyIndex === undefined || inter.ringZ === undefined) continue
-      const crossArc = cumLen[Math.min(inter.enemyIndex, cumLen.length - 1)]
-      const bAttr = attributeOf(zfieldAt(traj, inter.pos ?? path[Math.min(inter.enemyIndex, path.length - 1)]))
-      const rAttr = attributeOf(inter.ringZ)
-      const opposite = (bAttr === 'light' && rAttr === 'dark') || (bAttr === 'dark' && rAttr === 'light')
-      if (!opposite) continue
-      oppositeRingArcs.push(crossArc)
-      losses.push({
-        arcLen: crossArc,
-        deltaV: (inter.ringSpeed ?? 0) * strengthOf(inter.ringZ) * COMBAT.parryLossScale,
-      })
-    }
-    if (oppositeRingArcs.length > 0) flight = resim(losses)
+  for (const ring of standingRings) {
+    if (ring.length < 3) continue
+    const inter = ringInterception(ring, path)
+    if (!inter.crossed || inter.enemyIndex === undefined || inter.ringZ === undefined) continue
+    const crossArc = cumLen[Math.min(inter.enemyIndex, cumLen.length - 1)]
+    const before = sampleAtLength(flight, crossArc)?.speed ?? 0
+    const vCross = inter.ringSpeed ?? 0
+    if (before <= 0 || vCross <= 0) continue
+    const bZ = zfieldAt(traj, inter.pos ?? path[Math.min(inter.enemyIndex, path.length - 1)])
+    const parry = resolveParry(
+      attributeOf(inter.ringZ),
+      vCross,
+      vCross * strengthOf(inter.ringZ),
+      attributeOf(bZ),
+      before,
+      before * strengthOf(bZ),
+    )
+    if (parry.passthrough) continue
+    oppositeRingArcs.push(crossArc)
+    losses.push({ arcLen: crossArc, deltaV: before - parry.speedB })
+    flight = resim(losses)
   }
   if (flight.end === 'vanished') stalled = true
 

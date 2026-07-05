@@ -628,7 +628,7 @@ export default function App() {
           side: 'ally',
           misfirePos: s.misfirePos,
           carves: s.carves,
-          impact: s.hitEnemyId ? { id: s.hitEnemyId, side: 'enemy', arcLen: s.hitArcLen } : null,
+          impacts: s.hits.map((h) => ({ id: h.targetId, side: 'enemy' as const, arcLen: h.arcLen })),
           vanished: s.flight?.end === 'vanished', // 速度0で霧散（#38）
         })
       }
@@ -670,7 +670,7 @@ export default function App() {
         side: 'enemy',
         misfirePos: es.misfired ? es.misfirePos : null, // 崩し手の暴発（#42）：解決したときだけ爆発演出
         carves: es.carves,
-        impact: es.hitAllyId ? { id: es.hitAllyId, side: 'ally', arcLen: es.hitArcLen } : null,
+        impacts: es.hits.map((h) => ({ id: h.targetId, side: 'ally' as const, arcLen: h.arcLen })),
         vanished: es.flight.end === 'vanished', // 結界/壁で止められて霧散（#38）
       })
     }

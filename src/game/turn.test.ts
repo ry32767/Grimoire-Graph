@@ -154,8 +154,9 @@ describe('周回が魔法に負けると霧散する（#34）', () => {
     expect(res.log.some((l) => l.text.includes('霧散'))).toBe(true)
   })
 
-  it('止めきれない敵弾でも結界は減速して存続する（#59：失速した速度で回り続ける）', () => {
-    // そこそこの闇結界(速度10) vs 光の敵弾 → 敵弾は弱まりつつ通過、結界は減速して存続（broken=false）
+  it('威力で勝った結界は敵弾を消し、残威力ぶんの速度で回り続ける（威力の引き算）', () => {
+    // 闇結界(速度10・威力25) vs 光の敵弾(速度9・威力22.5) → 結界の勝ち：敵弾は消滅し、
+    // 結界は残威力（25−22.5）を速度に換算した分だけ残して存続する（broken=false）
     const e = { ...enemy('e', { x: 0, y: 12 }, 'light', 100, 9), castZField: () => FIELD.zRef }
     const res = resolveTurn({
       allies: [ally('a', { x: 0, y: 0 }, 'dark')],
@@ -735,5 +736,117 @@ describe('暴発は AoE 内の結界も最大威力で削る（§3.5）', () => 
     // 崩し手の暴発が解決し、AoE 内の味方結界が霧散している
     expect(res.misfires.some((m) => m.owner === 'enemy')).toBe(true)
     expect(res.orbits.some((o) => o.id === 'ring1')).toBe(false)
+  })
+})
+
+describe('貫通（命中で減速せず消えない・複数対象へ多段ヒット）', () => {
+  it('一直線上の2体の敵に1発で両方命中し、命中で減速しない（同ダメージ）', () => {
+    // 原点から +x への直線弾（z=zRef 一定＝加減速なし）。x=5 と x=9 の敵を貫いて両方に当たる。
+    // 命中は魔法を減速させないので、手前と奥のダメージは等しい。
+    const res = resolveTurn({
+      allies: [ally('a', { x: 0, y: 0 })],
+      casts: [cast('a', { mode: 'rotate', g: () => 0, angle: 0, origin: { x: 0, y: 0 }, z: zLightMid }, 10)],
+      enemies: [enemy('e1', { x: 5, y: 0 }, 'dark'), enemy('e2', { x: 9, y: 0 }, 'dark')],
+      castingEnemyIds: [],
+      obstacles: [],
+      mechanics: onlyHit,
+    })
+    const shot = res.allyShots[0]
+    expect(shot.hits.map((h) => h.targetId)).toEqual(['e1', 'e2']) // 弧長順に2体へ命中
+    const d1 = 100 - res.enemies.find((e) => e.id === 'e1')!.hp
+    const d2 = 100 - res.enemies.find((e) => e.id === 'e2')!.hp
+    expect(d1).toBeGreaterThan(0)
+    expect(d2).toBeCloseTo(d1, 6) // 命中しても減速しない＝奥の敵にも同じ威力
+  })
+
+  it('敵弾も貫通し、経路上の複数の味方に命中する', () => {
+    // 敵(0,10) は最低HPの lo(0,-8) を狙う。直線経路上の hi(0,0) も貫通で被弾する。
+    const res = resolveTurn({
+      allies: [ally('hi', { x: 0, y: 0 }, 'neutral', 100), ally('lo', { x: 0, y: -8 }, 'neutral', 20)],
+      casts: [],
+      enemies: [enemy('e', { x: 0, y: 10 }, 'dark', 100, 8)],
+      castingEnemyIds: ['e'],
+      obstacles: [],
+      mechanics: withFire,
+    })
+    const shot = res.enemyShots[0]
+    expect(shot.hits.length).toBeGreaterThanOrEqual(2)
+    expect(res.allies.find((a) => a.id === 'hi')!.hp).toBeLessThan(100)
+    expect(res.allies.find((a) => a.id === 'lo')!.hp).toBeLessThan(20)
+  })
+
+  it('速度0で消えた弾はその先の対象に命中しない（貫通は霧散点まで）', () => {
+    // z=zPeak（|z|>zRef）の減速場：弾は途中で失速して消え、遠い敵には届かない
+    const res = resolveTurn({
+      allies: [ally('a', { x: 0, y: 0 })],
+      casts: [cast('a', { mode: 'rotate', g: () => 0, angle: 0, origin: { x: 0, y: 0 }, z: zLight }, 6)],
+      enemies: [enemy('far', { x: 25, y: 0 }, 'dark')],
+      castingEnemyIds: [],
+      obstacles: [],
+      mechanics: onlyHit,
+    })
+    const shot = res.allyShots[0]
+    expect(shot.flight?.end).toBe('vanished')
+    expect(shot.hits.length).toBe(0)
+    expect(res.enemies[0].hp).toBe(100)
+  })
+})
+
+describe('複数回パリィ（同時刻の共存で判定・勝ち残りは次の魔法とまたパリィする）', () => {
+  // 敵(0,12)の光弾（速度12・威力30）が y 軸を下り、最低HPの味方 v(0,-10) を狙う。
+  // 迎撃の闇弾（z=-zRef・強度2.5）を同軸で撃ち上げてパリィさせる共通セットアップ。
+  const up = (o: { x: number; y: number }): Trajectory => ({
+    mode: 'rotate', g: () => 0, angle: Math.PI / 2, origin: o, z: zDarkMid,
+  })
+  const eLight = () => ({ ...enemy('e', { x: 0, y: 12 }, 'light', 100, 12), castZField: () => FIELD.zRef })
+
+  it('敵弾は弱い自弾に撃ち勝った後、別の自弾と再びパリィして消える（多段パリィ）', () => {
+    // 弱い1本目（(0,2)から速度3・威力7.5）が先にぶつかって撃ち負けて消えるが、敵弾も威力を失い、
+    // 後からぶつかる2本目（(0,-5)から速度12・威力30）が残威力の敵弾に撃ち勝って消滅させる。
+    const v = ally('v', { x: 0, y: -10 }, 'light', 20)
+    const i1 = ally('i1', { x: 0, y: 2 }, 'dark', 100)
+    const i2 = ally('i2', { x: 0, y: -5 }, 'dark', 100)
+    const res = resolveTurn({
+      allies: [v, i1, i2],
+      casts: [cast('i1', up(i1.pos), 3), cast('i2', up(i2.pos), 12)],
+      enemies: [eLight()],
+      castingEnemyIds: ['e'],
+      obstacles: [],
+      mechanics: withFire,
+    })
+    // パリィが2回起きる（1回目で敵弾が勝ち、2回目で敵弾が消える）
+    expect(res.log.filter((l) => l.kind === 'parry').length).toBe(2)
+    expect(res.enemyShots[0].blocked).toBe(true)
+    // 1本目の自弾はパリィで消滅、2本目は勝ち残って飛び続ける
+    const s1 = res.allyShots.find((s) => s.allyId === 'i1')!
+    const s2 = res.allyShots.find((s) => s.allyId === 'i2')!
+    expect(s1.flight?.end).toBe('vanished')
+    expect(s2.flight?.end).not.toBe('vanished')
+    // 狙われた味方は無傷（敵弾は途中で消えた）
+    expect(res.allies.find((a) => a.id === 'v')!.hp).toBe(20)
+  })
+
+  it('パリィはキャスト順でなくゲーム時刻の早い衝突から解決される', () => {
+    // 1本目のキャスト（弱い闇弾・(0,-2)から速度3）より、2本目（(0,-5)から速度12・威力30）の方が
+    // 先に敵弾へぶつかる。時系列解決なら同威力どうしの完全相殺が先に起き、敵弾は消滅、
+    // 1本目の弱い弾はパリィを経験せずそのまま飛び続ける。
+    const v = ally('v', { x: 0, y: -10 }, 'light', 20)
+    const i1 = ally('i1', { x: 0, y: -2 }, 'dark', 100)
+    const i2 = ally('i2', { x: 0, y: -5 }, 'dark', 100)
+    const res = resolveTurn({
+      allies: [v, i1, i2],
+      casts: [cast('i1', up(i1.pos), 3), cast('i2', up(i2.pos), 12)],
+      enemies: [eLight()],
+      castingEnemyIds: ['e'],
+      obstacles: [],
+      mechanics: withFire,
+    })
+    expect(res.log.filter((l) => l.kind === 'parry').length).toBe(1) // 完全相殺の1回だけ
+    expect(res.enemyShots[0].blocked).toBe(true)
+    const s1 = res.allyShots.find((s) => s.allyId === 'i1')!
+    const s2 = res.allyShots.find((s) => s.allyId === 'i2')!
+    expect(s2.flight?.end).toBe('vanished') // 同威力＝両方消滅
+    expect(s1.flight?.end).not.toBe('vanished') // 先撃ちでも時刻が遅い衝突は起きない
+    expect(res.allies.find((a) => a.id === 'v')!.hp).toBe(20)
   })
 })
