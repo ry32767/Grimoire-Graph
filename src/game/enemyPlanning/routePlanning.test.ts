@@ -254,7 +254,20 @@ describe('ステージ回帰（§17.4）', () => {
         if (plan!.expectedDamage > 0 || plan!.misfirePos) {
           const { flight } = enemyFlight(plan!.trajectory, e.castInitialSpeed)
           const dense = densifyGeom(flight.samples, OBSTACLE_STEP)
-          expect(dense.some((p) => unb.some((ob) => isSolidAt(ob, p.pos)))).toBe(false)
+          // 対象（or 暴発点）へ届くまでを確認する。手描き仕様では各面が「壁で囲った部屋」なので、
+          // 対象を過ぎた弾は必ず奥の囲い壁に達する。保証すべきは「対象へ届くまでに unbreakable を
+          // 貫かない（＝壁の中を通って当てにいかない）」こと。最接近点までで判定する。
+          const aimPos = party.find((a) => a.id === plan!.targetId)?.pos ?? plan!.misfirePos ?? null
+          let cut = dense.length
+          if (aimPos) {
+            let best = Infinity
+            for (let i = 0; i < dense.length; i++) {
+              const d = dist(dense[i].pos, aimPos)
+              if (d < best) { best = d; cut = i + 1 }
+            }
+          }
+          const upto = dense.slice(0, cut)
+          expect(upto.some((p) => unb.some((ob) => isSolidAt(ob, p.pos)))).toBe(false)
         }
       }
     }

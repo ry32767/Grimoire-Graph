@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Ally, AllyCast, BattleState, CarveBurst, Vec2, ZPoint } from './game/types'
+import type { Ally, AllyCast, BattleState, CarveBurst, Stage, Vec2, ZPoint } from './game/types'
 import { createBattleState, prepareTurn, resolveAllyCasts } from './game/battle'
 import { planEnemyShots, enemyFlight } from './game/enemyAI'
 import { zfieldAt } from './game/attribute'
@@ -58,8 +58,10 @@ import Codex from './components/Codex'
 import Guide from './components/Guide'
 import { TitleScreen, StoryScreen, ResultScreen } from './components/screens'
 import { ensureAudio, playSfx, startMusic, toggleMuted, type SfxKind } from './audio/sound'
+// ステージエディタ（#67）は開発ビルド専用ツール。マウントは import.meta.env.DEV のときだけ（本番非露出）。
+import StageEditor from './editor/StageEditor'
 
-type Screen = 'title' | 'prologue' | 'stageIntro' | 'battle' | 'stageClear' | 'gameover' | 'ending'
+type Screen = 'title' | 'prologue' | 'stageIntro' | 'battle' | 'stageClear' | 'gameover' | 'ending' | 'editor'
 
 /** 開発時のみ：URL の ?stage=N（1始まり）で指定ステージへ直行（通常プレイ＝本番ビルドでは無効・#33）。 */
 const DEV = import.meta.env.DEV
@@ -69,6 +71,12 @@ function devStageFromUrl(): number | null {
   if (!raw) return null
   const n = Number.parseInt(raw, 10)
   return Number.isFinite(n) && n >= 1 && n <= STAGES.length ? n - 1 : null
+}
+
+/** 開発時のみ：URL の ?editor=1 でステージエディタへ直行（#67・本番ビルドでは無効）。 */
+function devEditorFromUrl(): boolean {
+  if (!DEV || typeof window === 'undefined') return false
+  return new URLSearchParams(window.location.search).get('editor') === '1'
 }
 
 /** from→to を a 直線で狙う角度。 */
@@ -129,9 +137,37 @@ function initComposers(party: Ally[]): Record<string, ComposerState> {
   return m
 }
 
+/**
+ * ステージエディタのテストプレイ（#67 §7）用の一時セッションのスナップショット。
+ * テストプレイ中の状態（HP消費・instability の増減など）を本編の進行状況と完全に分離するため、
+ * 開始前の状態をここへ退避し、終了（勝敗/中断）時にそのまま復元してエディタへ戻る。
+ */
+interface TestPlaySnapshot {
+  instability: number
+  stageStartInstability: number
+  stageMisfires: number
+  collapseSeen: boolean
+  collapseGameover: boolean
+  collapsePlaying: boolean
+  demoSeen: boolean
+  runStartMs: number | null
+  battle: BattleState | null
+  castingIds: string[]
+  impairedIds: string[]
+  composers: Record<string, ComposerState>
+  activeAllyId: string
+  animation: ResolveAnimation | null
+  pendingState: BattleState | null
+  view: 'stage' | 'edit'
+  touchedAllies: Set<string>
+  confirmArmed: boolean
+  stageIndex: number
+}
+
 export default function App() {
   const devStage = devStageFromUrl()
-  const [screen, setScreen] = useState<Screen>(devStage !== null ? 'stageIntro' : 'title')
+  const devEditor = devEditorFromUrl()
+  const [screen, setScreen] = useState<Screen>(devEditor ? 'editor' : devStage !== null ? 'stageIntro' : 'title')
   const [stageIndex, setStageIndex] = useState(devStage ?? 0)
   const [battle, setBattle] = useState<BattleState | null>(null)
   const [castingIds, setCastingIds] = useState<string[]>([])
@@ -189,6 +225,9 @@ export default function App() {
   // #10：音
   const sfxRef = useRef<SfxKind[]>([])
   const [muted, setMutedState] = useState(false)
+  // ステージエディタのテストプレイ（#67 §7）：本編の進行状況と分離した使い捨てセッション中フラグ
+  const [testPlayActive, setTestPlayActive] = useState(false)
+  const testPlaySnapshotRef = useRef<TestPlaySnapshot | null>(null)
 
   const aliveAllies = useMemo(() => battle?.allies.filter((a) => a.hp > 0) ?? [], [battle])
 
@@ -331,6 +370,95 @@ export default function App() {
       setGuideOpen(true)
       setGuideShown(true)
     }
+  }
+
+  /**
+   * ステージエディタのテストプレイ開始（#67 §7）。編集中の Stage をそのまま battle 化し、
+   * タイトル/序章/イントロを飛ばして直接戦闘へ入る。開始前の本編の進行状況はスナップショットへ退避し、
+   * テストプレイ終了時にそのまま復元する（本編の instability・HP 等には一切影響しない）。
+   */
+  const startTestPlay = (stage: Stage, instabilityStart: number, testStageIndex: number) => {
+    testPlaySnapshotRef.current = {
+      instability,
+      stageStartInstability,
+      stageMisfires,
+      collapseSeen,
+      collapseGameover,
+      collapsePlaying,
+      demoSeen,
+      runStartMs,
+      battle,
+      castingIds,
+      impairedIds,
+      composers,
+      activeAllyId,
+      animation,
+      pendingState,
+      view,
+      touchedAllies,
+      confirmArmed,
+      stageIndex,
+    }
+    setTestPlayActive(true)
+    pendingPrepRef.current = null
+    pendingEventsRef.current = null
+    setInstability(instabilityStart)
+    setStageStartInstability(instabilityStart)
+    setStageMisfires(0)
+    setCollapseSeen(false)
+    setCollapseGameover(false)
+    setCollapsePlaying(false)
+    setDemoSeen(false)
+    setConfirmArmed(false)
+    setStoryOverlay(null)
+    // 編集中ステージの元インデックスへ合わせる（戦闘画面のステージ名表示・#67 §7）
+    setStageIndex(testStageIndex)
+    const party = makeParty()
+    const fresh = createBattleState(stage, testStageIndex, party)
+    const prep = prepareTurn(fresh)
+    setBattle(prep.state)
+    setCastingIds(prep.castingEnemyIds)
+    setImpairedIds(prep.impairedAllyIds)
+    setComposers(initComposers(party))
+    setActiveAllyId(party[0].id)
+    setAnimation(null)
+    setPendingState(null)
+    setView('stage')
+    setTouchedAllies(new Set())
+    if (runStartMs === null) setRunStartMs(performance.now())
+    setScreen('battle')
+  }
+
+  /** テストプレイ終了（勝敗/中断のいずれか・#67 §7）：本編の状態を復元してエディタ画面へ戻す。 */
+  const endTestPlay = () => {
+    const snap = testPlaySnapshotRef.current
+    testPlaySnapshotRef.current = null
+    setTestPlayActive(false)
+    pendingPrepRef.current = null
+    pendingEventsRef.current = null
+    if (snap) {
+      setInstability(snap.instability)
+      setStageStartInstability(snap.stageStartInstability)
+      setStageMisfires(snap.stageMisfires)
+      setCollapseSeen(snap.collapseSeen)
+      setCollapseGameover(snap.collapseGameover)
+      setCollapsePlaying(snap.collapsePlaying)
+      setDemoSeen(snap.demoSeen)
+      setRunStartMs(snap.runStartMs)
+      setBattle(snap.battle)
+      setCastingIds(snap.castingIds)
+      setImpairedIds(snap.impairedIds)
+      setComposers(snap.composers)
+      setActiveAllyId(snap.activeAllyId)
+      setAnimation(snap.animation)
+      setPendingState(snap.pendingState)
+      setView(snap.view)
+      setTouchedAllies(snap.touchedAllies)
+      setConfirmArmed(snap.confirmArmed)
+      setStageIndex(snap.stageIndex)
+    }
+    setStoryOverlay(null)
+    setScreen('editor')
   }
 
   // 1人ぶんのおすすめ術式を作る（#46）。対象は最も近い生存敵。組めなければ null。
@@ -605,10 +733,13 @@ export default function App() {
     if (prep.state.outcome === 'cleared') {
       playSfx('clear')
       snapshotTime()
-      setScreen('stageClear')
+      // テストプレイ中（#67 §7）は結果画面を出さず、そのままエディタへ戻る
+      if (testPlayActive) endTestPlay()
+      else setScreen('stageClear')
     } else if (prep.state.outcome === 'gameover') {
       playSfx('gameover')
-      setScreen('gameover')
+      if (testPlayActive) endTestPlay()
+      else setScreen('gameover')
     }
   }
 
@@ -674,13 +805,16 @@ export default function App() {
       playSfx('clear')
       snapshotTime()
       setBattle(after)
-      setScreen('stageClear')
+      // テストプレイ中（#67 §7）は結果画面を出さず、そのままエディタへ戻る
+      if (testPlayActive) endTestPlay()
+      else setScreen('stageClear')
       return
     }
     if (after.outcome === 'gameover') {
       playSfx('gameover')
       setBattle(after)
-      setScreen('gameover')
+      if (testPlayActive) endTestPlay()
+      else setScreen('gameover')
       return
     }
     const prep = prepareTurn(after)
@@ -724,6 +858,15 @@ export default function App() {
   }
 
   // ===== 全画面（タイトル/物語/結果） =====
+  // ステージエディタ（#67）：開発ビルド専用。到達経路（devEditorFromUrl・タイトルの DEV ボタン）は
+  // どちらも DEV ガード済みなので、本番ビルドで screen==='editor' になることはない。
+  if (screen === 'editor') {
+    return (
+      <div className="app">
+        <StageEditor onBack={() => setScreen('title')} onTestPlay={startTestPlay} />
+      </div>
+    )
+  }
   if (screen === 'title') {
     return (
       <div className="app">
@@ -754,6 +897,9 @@ export default function App() {
                 {i + 1}
               </button>
             ))}
+            <button className="btn small" onClick={() => setScreen('editor')}>
+              ステージエディタ
+            </button>
           </div>
         )}
       </div>
@@ -857,6 +1003,7 @@ export default function App() {
         <div className="battle-left">
           <div className="phase-bar">
             <span>
+              {testPlayActive && <span className="boss-tag">テストプレイ</span>}
               {STAGES[battle.stageIndex].name}
               {STAGES[battle.stageIndex].boss && <span className="boss-tag">BOSS</span>}
             </span>
@@ -885,7 +1032,9 @@ export default function App() {
               onCollapseDone={() => {
                 setCollapsePlaying(false)
                 playSfx('gameover')
-                setScreen('gameover')
+                // テストプレイ中（#67 §7）は結果画面を出さず、そのままエディタへ戻る
+                if (testPlayActive) endTestPlay()
+                else setScreen('gameover')
               }}
               animation={animation}
               onAnimationDone={onAnimationDone}
@@ -978,6 +1127,11 @@ export default function App() {
                       >
                         {muted ? '🔇 音オフ' : '🔊 音オン'}
                       </button>
+                      {testPlayActive && (
+                        <button className="btn small" onClick={() => { setMenuOpen(false); endTestPlay() }}>
+                          ■ テストプレイ中断 → エディタへ
+                        </button>
+                      )}
                     </div>
                   </>
                 )}

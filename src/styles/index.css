@@ -406,6 +406,36 @@ h3 {
   height: 100%;
   display: block;
 }
+/* 盤面の拡大縮小（ズーム）ボタン：盤面の右下に重ねる */
+.zoom-controls {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 3;
+}
+.zoom-controls button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+  font-family: var(--font-pixel);
+  color: var(--light-1);
+  background: rgba(13, 11, 20, 0.72);
+  border: 2px solid var(--panel-border);
+  border-radius: 6px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.zoom-controls button:hover {
+  background: rgba(30, 26, 46, 0.9);
+}
+.zoom-controls .zoom-reset {
+  font-size: 16px;
+}
 
 /* バトル上部のフェーズ表示 */
 .phase-bar {

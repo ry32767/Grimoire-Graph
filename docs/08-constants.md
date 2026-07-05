@@ -9,7 +9,7 @@
 
 | 定数 | 値 | 意味 |
 |---|---|---|
-| `rField` | 30 | 場外境界（原点からこの半径外は場外＝暴発/消滅） |
+| `rField` | 30（既定） | 場外境界（原点からこの半径外は場外＝暴発/消滅）。**面ごとに `Stage.rField` でスケール**（サイズ由来。第1面25〜第7面②60・[06-stages.md](06-stages.md)） |
 | `sMax` | 5 | 属性強度の最大値 |
 | `zPeak` | 5 | 強度ピーク V（|z|=zPeak で強度最大の山型） |
 | `epsilon` | 0.35 | 中立しきい（\|z\|<ε は中立） |
@@ -63,6 +63,8 @@
 | `fragile` | 1.7 | 0.55 |
 | `tough` | 0.32 | 1.7 |
 | `unbreakable` | 0 | 1 |
+
+**`NEUTRAL_NORMAL_STRENGTH = 2`（#68）**：中立(無属性)の `normal` 壁の削り強度倍率。中立 normal 壁は属性関係なく「属性壁の最硬（同極 aff=0.5 → 係数1.5）」の 2 倍＝`carveCost×3` の速度損で固定される（`src/game/obstacle.ts` の `carveSpeedLoss`）。旧 `fragile` の置換先（[04-magic.md](04-magic.md) §4.4）。
 
 ## RUPTOR（崩し手・#42／[05b-enemy-archetypes.md](05b-enemy-archetypes.md) §4）
 
@@ -118,7 +120,7 @@ z 場に極（1/x 型の特異点）を仕込み、狙点で暴発させる敵�
 
 | 定数 | 値 | 意味 |
 |---|---|---|
-| `rotateXMax` | 48 | 回転方式：ローカル x の最大 |
+| `rotateXMax` | 48（下限） | 回転方式：ローカル x の最大。実際は `max(48, 1.6·fieldR)` と場の半径に追従（大アリーナ rField=60 でも対岸まで弾が届く・#49）。既定 fieldR=30 では 48 |
 | `rotateStep` | 0.08 | 回転方式：x の刻み |
 | `polarThetaMax` | 4π | 極座標方式：θ の最大 |
 | `polarStep` | 0.02 | 極座標方式：θ の刻み |

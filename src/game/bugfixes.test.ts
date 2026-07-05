@@ -316,29 +316,26 @@ describe('敵 guardian の持続結界（owner=enemy・バグ修正：ターン�
   })
 })
 
-describe('翼壁が場境界まで届き、境界ぎわの回り込み抜けを塞ぐ（#50・バグ修正）', () => {
-  // 各ステージについて、障害物帯の全 y を貫く「場内クリーン縦通路」が外側(|x|>=15)に無いこと。
-  const bands: Record<number, { y0: number; y1: number }> = {
-    2: { y0: -3, y1: 11 }, 3: { y0: -14, y1: 13 }, 5: { y0: -3, y1: 15 }, 6: { y0: -8, y1: 13 }, 7: { y0: -4, y1: 18 },
-  }
-  it('第2/3/5/6/7面とも外側クリーン縦通路は0本', () => {
-    for (let s = 0; s < STAGES.length; s++) {
-      const band = bands[s + 1]
-      if (!band) continue
-      const st = STAGES[s]
-      const R = st.rField ?? FIELD.rField
-      const cols: number[] = []
-      for (let x = -R; x <= R; x += 0.5) {
-        if (Math.abs(x) < 15) continue
-        let clean = true
-        let inField = true
-        for (let y = band.y0; y <= band.y1; y += 0.3) {
-          if (Math.hypot(x, y) > R) { inField = false; break }
-          if (st.obstacles.some((ob) => isSolidAt(ob, { x, y }))) { clean = false; break }
-        }
-        if (clean && inField) cols.push(Number(x.toFixed(1)))
+describe('部屋の囲いが場境界まで届き、回り込み抜けを塞ぐ（手描き仕様）', () => {
+  // 手描き仕様では各面は「円の中に壁で囲った部屋」。矩形の部屋（第2/3/6/7面）は境界ぎわの左右が
+  // 囲い壁で完全に塞がれている（縦に貫くクリーンな通路が場境界側に無い）。
+  // 第5面は十字の部屋で左右の横回廊が意図的に境界へ開くため対象外（第4面・開けた円も対象外）。
+  it.each([
+    ['第2面', 1],
+    ['第3面', 2],
+    ['第6面', 5],
+    ['第7面①', 6],
+  ])('%s：境界ぎわの左右は囲い壁で塞がれている（縦に抜けられない）', (_name, idx) => {
+    const st = STAGES[idx]
+    const R = st.rField ?? FIELD.rField
+    for (const sign of [1, -1]) {
+      const x = sign * (R - 2) // 境界の内側（部屋の外＝囲い壁の中）
+      let anyOpen = false
+      for (let y = -8; y <= 8; y += 0.5) {
+        if (Math.hypot(x, y) > R) continue
+        if (!st.obstacles.some((ob) => isSolidAt(ob, { x, y }))) anyOpen = true
       }
-      expect(cols).toEqual([])
+      expect(anyOpen).toBe(false)
     }
   })
 })
@@ -361,13 +358,16 @@ describe('おまかせ照準が障害物のある面でも進捗を出す（reco
     return firstHit(flight.samples, target.pos, target.hitboxRadius)
   }
 
-  it('壁の無い第1面は直接命中する（従来どおり）', () => {
+  it('第1面（囲いのみ・障害物なし）は直接命中する（従来どおり）', () => {
     const st = STAGES[0]
-    const party = makeParty()
     const tgt = st.enemies[0]
+    // 第1面は部屋の枠で囲うが mechanics.obstacles=false（装飾）＝当たり判定なし。
+    // recommend も App と同様に壁を無視する（gated）。味方はステージ定義の実配置を使う。
+    const positions = st.allyPositions ?? makeParty().map((a) => a.pos)
+    const obs = st.mechanics.obstacles ? st.obstacles : []
     let hits = 0
-    for (const a of party) if (evalRecommend(a.pos, tgt, st.obstacles, st.rField ?? FIELD.rField)) hits++
-    expect(hits).toBe(party.length)
+    for (const p of positions) if (evalRecommend(p, tgt, obs, st.rField ?? FIELD.rField)) hits++
+    expect(hits).toBe(positions.length)
   })
 
   it('壁で塞がれた面でも、直線フォールバックでなく対象へ近づく（削り進める）軌道を返す', () => {
