@@ -100,21 +100,10 @@ describe('壁の種別ごとの削れやすさ（#40）', () => {
     expect(carveRadius(p, 'unbreakable')).toBe(0)
   })
 
-  it('速度損：tough > normal > fragile（頑丈ほど止まりやすい・属性壁で比較）', () => {
-    // 種別の lossScale の大小を見る（中立 normal は #68 で特別扱いのため、属性壁 light で比較）
-    const loss = (k: Parameters<typeof carveSpeedLoss>[2]) => carveSpeedLoss('neutral', 'light', k)
+  it('速度損：tough > normal > fragile（頑丈ほど止まりやすい）', () => {
+    const loss = (k: Parameters<typeof carveSpeedLoss>[2]) => carveSpeedLoss('neutral', 'neutral', k)
     expect(loss('tough')).toBeGreaterThan(loss('normal'))
     expect(loss('normal')).toBeGreaterThan(loss('fragile'))
-  })
-
-  it('中立の normal 壁は属性壁の最硬（同極）の2倍・属性関係なし（#68）', () => {
-    const neutralNormal = carveSpeedLoss('light', 'neutral', 'normal')
-    // 攻撃属性を変えても中立 normal の削り強度は不変（属性関係なし）
-    expect(carveSpeedLoss('dark', 'neutral', 'normal')).toBe(neutralNormal)
-    expect(carveSpeedLoss('neutral', 'neutral', 'normal')).toBe(neutralNormal)
-    // 属性壁の最硬＝同極（light 弾 × light 壁）の2倍
-    const attrMax = carveSpeedLoss('light', 'light', 'normal')
-    expect(neutralNormal).toBeCloseTo(attrMax * 2, 6)
   })
 
   it('種別を省略すると normal と同じ（後方互換）', () => {

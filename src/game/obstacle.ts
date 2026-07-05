@@ -4,11 +4,8 @@
 //   - えぐる半径 = 威力 × 係数（最大半径でキャップ）。威力が高いほど一撃で広く削れて貫通しやすい。
 //   - えぐるたびに弾は減速。速度が 0 になればその場で消滅し貫通しない。反対極ほど安く削れる。
 import type { Attribute, Obstacle, ObstacleKind, Rect, Vec2 } from './types'
-import { COMBAT, NEUTRAL_NORMAL_STRENGTH, OBSTACLE_KIND } from '../data/constants'
+import { COMBAT, OBSTACLE_KIND } from '../data/constants'
 import { affinityMultiplier } from './attribute'
-
-/** 属性壁の最硬（同極＝aff 最小）の削り係数 (2-aff)。中立 normal 壁の基準に使う（#68）。 */
-const ATTR_MAX_LOSS_FACTOR = 2 - affinityMultiplier('light', 'light') // 同極 aff=0.5 → 1.5
 
 /** 点 p が矩形 r の内側か。 */
 function pointInRect(p: Vec2, r: Rect): boolean {
@@ -81,10 +78,6 @@ export function carveSpeedLoss(
   element: Attribute,
   kind: ObstacleKind = 'normal',
 ): number {
-  // 中立(属性なし)の normal 壁は、属性壁の最硬（同極）の NEUTRAL_NORMAL_STRENGTH 倍で固定（属性関係なし・#68）。
-  if (element === 'neutral' && kind === 'normal') {
-    return COMBAT.carveCost * NEUTRAL_NORMAL_STRENGTH * ATTR_MAX_LOSS_FACTOR
-  }
   const aff = affinityMultiplier(attackAttr, element)
   return COMBAT.carveCost * (2 - aff) * OBSTACLE_KIND[kind].lossScale
 }
