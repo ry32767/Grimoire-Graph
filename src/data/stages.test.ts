@@ -256,6 +256,76 @@ describe('部屋の囲い（手描き仕様・回り込み対策）', () => {
   })
 })
 
+describe('新レイアウトの成立条件（壁は tough・迂回型はカバーの陰・火力型は守護の傍）', () => {
+  const toughCount = (idx: number) => STAGES[idx].obstacles.filter((o) => o.kind === 'tough').length
+
+  it('内部の戦術壁は tough（面ごとに所定数以上）', () => {
+    expect(toughCount(1)).toBeGreaterThanOrEqual(2) // 第2面：左右の柱列
+    expect(toughCount(2)).toBeGreaterThanOrEqual(5) // 第3面：仕切り・L柱・両塔・影のカバー
+    expect(toughCount(3)).toBeGreaterThanOrEqual(4) // 第4面：全幅壁・渦2本・弓手のカバー
+    expect(toughCount(4)).toBeGreaterThanOrEqual(10) // 第5面：列柱8・射手カバー2
+    expect(toughCount(5)).toBeGreaterThanOrEqual(5) // 第6面：光柱2・崩し手カバー3
+    expect(toughCount(6)).toBeGreaterThanOrEqual(2) // 第7面①：守護者の盾・迂回眷属のカバー
+    // 第7面②（bossPhases）：開けた大円の短壁も tough
+    for (const o of STAGES[6].bossPhases![0].obstacles!) expect(o.kind).toBe('tough')
+  })
+
+  it('火力型（breaker）は守護型/ボスの傍（距離≤10）で結界に守られる位置にいる', () => {
+    const s5 = STAGES[4]
+    const golem = s5.enemies.find((e) => e.role === 'guardian')!
+    for (const name of ['鏡像の衛士（光）', '鏡像の衛士（闇）']) {
+      const e = s5.enemies.find((x) => x.name === name)!
+      expect(dist(e.pos, golem.pos)).toBeLessThanOrEqual(10)
+    }
+    const s7 = STAGES[6]
+    const boss = s7.enemies.find((e) => e.boss)!
+    const oni = s7.enemies.find((e) => e.name === '守護者の眷属（火力）')!
+    expect(dist(oni.pos, boss.pos)).toBeLessThanOrEqual(10)
+  })
+
+  // 迂回型は「最寄り味方への直射線上に tough 素材」＝カバーの陰に立つ（基準2の幾何条件）
+  const coveredFromNearestAlly = (idx: number, name: string): boolean => {
+    const s = STAGES[idx]
+    const e = s.enemies.find((x) => x.name === name)!
+    const allies = s.allyPositions ?? makeParty().map((a) => a.pos)
+    const nearest = allies.reduce((b, p) => (dist(e.pos, p) < dist(e.pos, b) ? p : b))
+    const L = dist(e.pos, nearest)
+    for (let d = 0; d <= L; d += 0.4) {
+      const p = { x: e.pos.x + ((nearest.x - e.pos.x) * d) / L, y: e.pos.y + ((nearest.y - e.pos.y) * d) / L }
+      if (s.obstacles.some((o) => o.kind === 'tough' && isSolidAt(o, p))) return true
+    }
+    return false
+  }
+
+  it.each([
+    ['第3面', 2, '祭壇の影'],
+    ['第4面', 3, '坑道の弓手'],
+    ['第5面', 4, '鏡像の射手（闇）'],
+    ['第5面', 4, '鏡像の射手（光）'],
+    ['第7面', 6, '守護者の眷属（迂回）'],
+  ] as const)('%s：%s は最寄り味方への直射線が tough カバーで遮られている', (_s, idx, name) => {
+    expect(coveredFromNearestAlly(idx, name)).toBe(true)
+  })
+
+  it('第6面：崩し手3体はそれぞれ至近（8以内）に tough の岩塊カバーを持つ', () => {
+    const s6 = STAGES[5]
+    const ruptors = s6.enemies.filter((e) => e.role === 'ruptor')
+    const toughSolids = s6.obstacles.filter((o) => o.kind === 'tough' && o.solids.length > 0)
+    for (const r of ruptors) {
+      const near = toughSolids.some((o) => o.solids.some((d) => dist({ x: d.x, y: d.y }, r.pos) <= 8 + d.r))
+      expect(near).toBe(true)
+    }
+  })
+
+  it('第6面：tough カバーは結界役（先頭の味方）の半径7の結界に触れない距離にある', () => {
+    // 対処プレイ（balance.test）の成立条件：結界は壁に触れると霧散する（#34）
+    const mira = makeParty()[0].pos
+    for (const o of STAGES[5].obstacles.filter((x) => x.kind === 'tough')) {
+      for (const d of o.solids) expect(dist({ x: d.x, y: d.y }, mira) - d.r).toBeGreaterThan(7 + 1)
+    }
+  })
+})
+
 describe('図鑑（05c）との整合', () => {
   it('図鑑のHP値と一致する', () => {
     const hpOf = (idx: number, name: string) =>

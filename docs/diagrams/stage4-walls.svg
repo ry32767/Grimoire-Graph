@@ -1,52 +1,36 @@
-<svg viewBox="-36 -36 72 72" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
-  <rect x="-36" y="-36" width="72" height="72" fill="#0d0b14"/>
-  <line x1="-36" y1="0" x2="36" y2="0" stroke="#3a3470" stroke-width="0.15"/>
-  <line x1="0" y1="-36" x2="0" y2="36" stroke="#3a3470" stroke-width="0.15"/>
-  <circle cx="0" cy="0" r="32" fill="none" stroke="#5c4f9c" stroke-width="0.3" stroke-dasharray="1,0.8"/>
-  <rect x="-20.4" y="-5.4" width="40.8" height="4.8" fill="#7b5cc4" fill-opacity="0.75" stroke="#4d3d80" stroke-width="0.5"/>
-  <circle cx="13" cy="8" r="2.4" fill="#f4c430" fill-opacity="0.75" stroke="#a9821f" stroke-width="0.4"/>
-  <circle cx="8.14" cy="-3.203" r="2.4" fill="#f4c430" fill-opacity="0.75" stroke="#a9821f" stroke-width="0.4"/>
-  <circle cx="-4.541" cy="-5.977" r="2.4" fill="#f4c430" fill-opacity="0.75" stroke="#a9821f" stroke-width="0.4"/>
-  <circle cx="-14.784" cy="3.196" r="2.4" fill="#f4c430" fill-opacity="0.75" stroke="#a9821f" stroke-width="0.4"/>
-  <circle cx="-13.262" cy="17.636" r="2.4" fill="#f4c430" fill-opacity="0.75" stroke="#a9821f" stroke-width="0.4"/>
-  <circle cx="0" cy="25.241" r="2.4" fill="#f4c430" fill-opacity="0.75" stroke="#a9821f" stroke-width="0.4"/>
-  <circle cx="14.635" cy="18.633" r="2.4" fill="#f4c430" fill-opacity="0.75" stroke="#a9821f" stroke-width="0.4"/>
-  <circle cx="18.011" cy="2.148" r="2.4" fill="#f4c430" fill-opacity="0.75" stroke="#a9821f" stroke-width="0.4"/>
-  <circle cx="-15.827" cy="8" r="2.4" fill="#7b5cc4" fill-opacity="0.75" stroke="#4d3d80" stroke-width="0.4"/>
-  <circle cx="-9.802" cy="21.491" r="2.4" fill="#7b5cc4" fill-opacity="0.75" stroke="#4d3d80" stroke-width="0.4"/>
-  <circle cx="5.415" cy="24.666" r="2.4" fill="#7b5cc4" fill-opacity="0.75" stroke="#4d3d80" stroke-width="0.4"/>
-  <circle cx="17.473" cy="13.677" r="2.4" fill="#7b5cc4" fill-opacity="0.75" stroke="#4d3d80" stroke-width="0.4"/>
-  <circle cx="15.55" cy="-3.297" r="2.4" fill="#7b5cc4" fill-opacity="0.75" stroke="#4d3d80" stroke-width="0.4"/>
-  <circle cx="0" cy="-12.069" r="2.4" fill="#7b5cc4" fill-opacity="0.75" stroke="#4d3d80" stroke-width="0.4"/>
-  <circle cx="-16.922" cy="-4.295" r="2.4" fill="#7b5cc4" fill-opacity="0.75" stroke="#4d3d80" stroke-width="0.4"/>
-  <circle cx="-20.7" cy="14.726" r="2.4" fill="#7b5cc4" fill-opacity="0.75" stroke="#4d3d80" stroke-width="0.4"/>
-  <circle cx="0" cy="10.5" r="7" fill="none" stroke="#8fd4a8" stroke-width="0.3" stroke-dasharray="0.9,0.6"/>
-  <text x="0" y="19.2" font-size="1.6" fill="#8fd4a8" text-anchor="middle">レンから半径7の結界で3人を囲える</text>
-  <g>
-    <circle cx="-4.5" cy="7" r="1.3" fill="#ffe9a8" stroke="#2a2438" stroke-width="0.25"/>
-    <text x="-4.5" y="5.5" font-size="1.7" fill="#c9c2e8" text-anchor="middle" font-family="sans-serif">ミラ</text>
-  </g>
-  <g>
-    <circle cx="0" cy="10.5" r="1.3" fill="#ffe9a8" stroke="#2a2438" stroke-width="0.25"/>
-    <text x="0" y="13.6" font-size="1.7" fill="#c9c2e8" text-anchor="middle" font-family="sans-serif">レン</text>
-  </g>
-  <g>
-    <circle cx="4.5" cy="7" r="1.3" fill="#ffe9a8" stroke="#2a2438" stroke-width="0.25"/>
-    <text x="4.5" y="5.5" font-size="1.7" fill="#c9c2e8" text-anchor="middle" font-family="sans-serif">ソウ</text>
-  </g>
-  <circle cx="0" cy="8" r="0.6" fill="none" stroke="#ffe9a8" stroke-width="0.3" stroke-dasharray="0.6,0.4"/>
-  <text x="0" y="21.4" font-size="1.6" fill="#ffe9a8" text-anchor="middle">味方重心(0,-8)・渦は開始半径13</text>
-  <g>
-    <polygon points="0,-20.6 -1.4,-17.8 1.4,-17.8" fill="#b483ff" stroke="#2a2438" stroke-width="0.25"/>
-    <text x="0" y="-21.1" font-size="1.7" fill="#fff8e1" text-anchor="middle" font-family="sans-serif">渦の番兵(守護)</text>
-  </g>
-  <g>
-    <polygon points="-16,23.4 -17.4,26.2 -14.6,26.2" fill="#f4c430" stroke="#2a2438" stroke-width="0.25"/>
-    <text x="-16" y="22.9" font-size="1.7" fill="#fff8e1" text-anchor="middle" font-family="sans-serif">坑道の弓手</text>
-  </g>
-  <g>
-    <polygon points="16,23.4 14.6,26.2 17.4,26.2" fill="#b483ff" stroke="#2a2438" stroke-width="0.25"/>
-    <text x="16" y="22.9" font-size="1.7" fill="#fff8e1" text-anchor="middle" font-family="sans-serif">崩し手(暴発)</text>
-  </g>
-  <text x="-35" y="-33" font-size="2.2" fill="#fff8e1">第4面 ― 螺旋（rField=32・包囲構成・味方は中央寄せ #64）</text>
+<svg viewBox="-54 -54 108 108" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
+  <rect x="-54" y="-54" width="108" height="108" fill="#0d0b14"/>
+  <line x1="-54" y1="0" x2="54" y2="0" stroke="#3a3470" stroke-width="0.2"/>
+  <line x1="0" y1="-54" x2="0" y2="54" stroke="#3a3470" stroke-width="0.2"/>
+  <circle cx="0" cy="0" r="48" fill="none" stroke="#5c4f9c" stroke-width="0.4" stroke-dasharray="1.2,1"/>
+  <rect x="-26.4" y="-8.4" width="52.8" height="4.8" fill="#7b5cc4" fill-opacity="0.8" stroke="#e8e8e8" stroke-width="0.55"/>
+  <circle cx="16" cy="13" r="2.4" fill="#f4c430" fill-opacity="0.8" stroke="#e8e8e8" stroke-width="0.55"/>
+  <circle cx="11.455986644070103" cy="0.8006132998599522" r="2.4" fill="#f4c430" fill-opacity="0.8" stroke="#e8e8e8" stroke-width="0.55"/>
+  <circle cx="-1.096967038387415" cy="-4.435791783890874" r="2.4" fill="#f4c430" fill-opacity="0.8" stroke="#e8e8e8" stroke-width="0.55"/>
+  <circle cx="-14.027500281997272" cy="1.3954425445826626" r="2.4" fill="#f4c430" fill-opacity="0.8" stroke="#e8e8e8" stroke-width="0.55"/>
+  <circle cx="-18.79117898174089" cy="15.3738779610329" r="2.4" fill="#f4c430" fill-opacity="0.8" stroke="#e8e8e8" stroke-width="0.55"/>
+  <circle cx="-11.565064778353406" cy="28.91794607000358" r="2.4" fill="#f4c430" fill-opacity="0.8" stroke="#e8e8e8" stroke-width="0.55"/>
+  <circle cx="3.824601802268391" cy="33.04926477214727" r="2.4" fill="#f4c430" fill-opacity="0.8" stroke="#e8e8e8" stroke-width="0.55"/>
+  <circle cx="17.854098168299938" cy="24.33055523785078" r="2.4" fill="#f4c430" fill-opacity="0.8" stroke="#e8e8e8" stroke-width="0.55"/>
+  <circle cx="21.193627665688833" cy="7.558401297568972" r="2.4" fill="#f4c430" fill-opacity="0.8" stroke="#e8e8e8" stroke-width="0.55"/>
+  <circle cx="10.89543461558328" cy="-6.8187219919384034" r="2.4" fill="#f4c430" fill-opacity="0.8" stroke="#e8e8e8" stroke-width="0.55"/>
+  <circle cx="-18.827433388230816" cy="12.999999999999998" r="2.4" fill="#7b5cc4" fill-opacity="0.8" stroke="#e8e8e8" stroke-width="0.55"/>
+  <circle cx="-13.391497987189656" cy="27.260496936284127" r="2.4" fill="#7b5cc4" fill-opacity="0.8" stroke="#e8e8e8" stroke-width="0.55"/>
+  <circle cx="1.2745030497689431" cy="33.25764587819573" r="2.4" fill="#7b5cc4" fill-opacity="0.8" stroke="#e8e8e8" stroke-width="0.55"/>
+  <circle cx="16.206075150695536" cy="26.406831326492075" r="2.4" fill="#7b5cc4" fill-opacity="0.8" stroke="#e8e8e8" stroke-width="0.55"/>
+  <circle cx="21.596317213192087" cy="10.271750669732459" r="2.4" fill="#7b5cc4" fill-opacity="0.8" stroke="#e8e8e8" stroke-width="0.55"/>
+  <circle cx="13.22698842579482" cy="-5.20538773154545" r="2.4" fill="#7b5cc4" fill-opacity="0.8" stroke="#e8e8e8" stroke-width="0.55"/>
+  <circle cx="-4.354409987458667" cy="-9.82661654169101" r="2.4" fill="#7b5cc4" fill-opacity="0.8" stroke="#e8e8e8" stroke-width="0.55"/>
+  <circle cx="-20.241379135479992" cy="0.15443019171689265" r="2.4" fill="#7b5cc4" fill-opacity="0.8" stroke="#e8e8e8" stroke-width="0.55"/>
+  <circle cx="-23.932232034742068" cy="19.14475279271629" r="2.4" fill="#7b5cc4" fill-opacity="0.8" stroke="#e8e8e8" stroke-width="0.55"/>
+  <circle cx="-12.257561038641336" cy="35.296420757424116" r="2.4" fill="#7b5cc4" fill-opacity="0.8" stroke="#e8e8e8" stroke-width="0.55"/>
+  <rect x="-29.4" y="1" width="8.8" height="4.8" fill="#f4c430" fill-opacity="0.8" stroke="#e8e8e8" stroke-width="0.55"/>
+  <g><circle cx="-4.5" cy="11" r="1.4" fill="#ffe9a8" stroke="#2a2438" stroke-width="0.3"/><text x="-4.5" y="15" font-size="2.4" fill="#c9c2e8" text-anchor="middle">ミラ</text></g>
+  <g><circle cx="0" cy="14.5" r="1.4" fill="#ffe9a8" stroke="#2a2438" stroke-width="0.3"/><text x="0" y="18.5" font-size="2.4" fill="#c9c2e8" text-anchor="middle">レン</text></g>
+  <g><circle cx="4.5" cy="11" r="1.4" fill="#ffe9a8" stroke="#2a2438" stroke-width="0.3"/><text x="4.5" y="15" font-size="2.4" fill="#c9c2e8" text-anchor="middle">ソウ</text></g>
+  <g><polygon points="0,-27.6 -1.5,-24.7 1.5,-24.7" fill="#7b5cc4" stroke="#2a2438" stroke-width="0.3"/><text x="0" y="-28.4" font-size="2.4" fill="#fff8e1" text-anchor="middle">渦の番兵(守護)</text></g>
+  <g><polygon points="-30,-1.6 -31.5,1.3 -28.5,1.3" fill="#f4c430" stroke="#2a2438" stroke-width="0.3"/><text x="-30" y="-2.4" font-size="2.4" fill="#fff8e1" text-anchor="middle">坑道の弓手(迂回)</text></g>
+  <g><polygon points="22,18.4 20.5,21.3 23.5,21.3" fill="#7b5cc4" stroke="#2a2438" stroke-width="0.3"/><text x="22" y="17.6" font-size="2.4" fill="#fff8e1" text-anchor="middle">崩し手(暴発)</text></g>
+  <text x="-52.5" y="-50.5" font-size="3" fill="#fff8e1">第四の間 ― 螺旋（rField=48）</text>
+  <text x="-52.5" y="52.5" font-size="2.1818181818181817" fill="#c9c2e8">金=光・紫=闇・灰=無属性／白縁=硬い(tough)・薄=もろい(fragile)・暗灰=割れない(unbreakable)</text>
 </svg>
