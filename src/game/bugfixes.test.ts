@@ -670,3 +670,90 @@ describe('結界破壊点の記録（#64：霧散演出を弾の到達と同期�
     }
   })
 })
+
+describe('火力型の掘削は「掘れば道が開く」壁だけを狙う（不可解な壁撃ちの修正）', () => {
+  it('直進路の奥が unbreakable で塞がる地形では、掘れば開く側の壁を掘って数ターンで命中する', () => {
+    // 中央の直進路は tough 壁の奥に unbreakable（掘っても絶対に開通しない死路）。
+    // 弧で横へ膨らめば tough 壁だけで抜けられる。従来は「停止点が狙いに近い」だけで
+    // 中央の死路を毎ターン掘り続け、永遠に命中しなかった（不可解な壁撃ち）。
+    const tough = rectWall({ x: -14, y: 8, w: 28, h: 3 }, 'tough')
+    const unbreak = rectWall({ x: -5, y: 2, w: 10, h: 2 }, 'unbreakable')
+    const e = baseEnemy({ pos: { x: 0, y: 20 }, role: 'breaker', families: ['arc', 'poly34', 'abs'] })
+    let obstacles: Obstacle[] = [tough, unbreak]
+    let allies = [ally('v', { x: 0, y: -15 }, 5000, 'light')]
+    let hitTurn = -1
+    for (let t = 1; t <= 8; t++) {
+      const res = resolveTurn({
+        allies, casts: [], enemies: [e], castingEnemyIds: ['e0'],
+        obstacles, mechanics: { obstacles: true, enemyFire: true },
+      })
+      obstacles = res.obstacles
+      allies = res.allies
+      // unbreakable は削れない＝死路側を掘ってもここには穴が開かない（掘るだけ無駄）
+      expect(res.obstacles.find((o) => o.id === unbreak.id)!.carves.length).toBe(0)
+      if (res.enemyShots[0].hits.length > 0) {
+        hitTurn = t
+        break
+      }
+    }
+    expect(hitTurn).toBeGreaterThan(0) // 開通する側の壁を掘り進め、数ターンで命中へ至る
+  })
+
+  it('z 減速で壁が無くても届かない相手を、壁を掘って狙い続けない', () => {
+    // castZField=-3 の弾は自由飛行でも十数ユニットで失速し、32ユニット先の対象へは
+    // 物理的に届かない（掘削で消せるのは壁の速度損だけ）。従来は掘削候補に選ばれ続け、
+    // 毎ターン角度を変えては壁を掘った（不可解な壁撃ち）。修正後は牽制（直線）に落ち、
+    // 牽制線上の穴が開いた後は壁を削らなくなる。
+    const wall = rectWall({ x: -6, y: 10, w: 12, h: 2 }, 'fragile')
+    const e = baseEnemy({
+      pos: { x: 0, y: 20 }, role: 'breaker', castZField: constZField(-3), castZ: -3,
+    })
+    let obstacles: Obstacle[] = [wall]
+    const allies = [ally('v', { x: 0, y: -12 }, 500, 'light')]
+    const carvesPerTurn: number[] = []
+    for (let t = 1; t <= 6; t++) {
+      const res = resolveTurn({
+        allies, casts: [], enemies: [e], castingEnemyIds: ['e0'],
+        obstacles, mechanics: { obstacles: true, enemyFire: true },
+      })
+      obstacles = res.obstacles
+      carvesPerTurn.push(res.enemyShots[0]?.carves.length ?? 0)
+    }
+    // 終盤ターンは壁を削らない（従来は毎ターン別の角度で掘り続けて全ターン carve が出た）
+    expect(carvesPerTurn.slice(3)).toEqual([0, 0, 0])
+  })
+})
+
+describe('高難度の火力型は掘削用の弱い一定場を両極で使う（掘削がおまかせに劣らない）', () => {
+  // 闇の厚壁（h=6）×光の味方狙い：素の z 候補（対象の反対極＝闇）は壁と同極で削りが高くつく。
+  // 高難度（LVL≥COMBAT.breakerDrillMinLevel）は壁の反対極（光）の弱場（|z|=breakerDrillZ）も試し、
+  // 速度損 ×0.5 で3倍安く掘り抜ける（おまかせの zWeak は対象の反対極しか試さない＝この差で上回る）。
+  const digTurns = (level: number): number => {
+    let allies = [ally('v', { x: 0, y: -15 }, 5000, 'light')]
+    const e = baseEnemy({ pos: { x: 0, y: 20 }, role: 'breaker', families: ['arc', 'abs', 'poly34'], level })
+    let obstacles: Obstacle[] = [
+      { id: 'wall', element: 'dark', solids: [], rects: [{ x: -30, y: 0, w: 60, h: 6 }], carves: [], kind: 'normal' },
+    ]
+    for (let t = 1; t <= 10; t++) {
+      const res = resolveTurn({
+        allies, casts: [], enemies: [e], castingEnemyIds: ['e0'],
+        obstacles, mechanics: { obstacles: true, enemyFire: true },
+      })
+      obstacles = res.obstacles
+      allies = res.allies
+      if (res.enemyShots[0].hits.length > 0) return t
+    }
+    return -1
+  }
+
+  it('LVL6：同極で削りにくい闇の厚壁を、壁の反対極の弱場で安く掘り抜き2ターン以内に命中する', () => {
+    const t = digTurns(6)
+    expect(t).toBeGreaterThan(0)
+    expect(t).toBeLessThanOrEqual(2)
+  })
+
+  it('LVL3（低難度）には解禁されず、同じ壁の突破に高難度より時間がかかる（従来挙動）', () => {
+    const t = digTurns(3)
+    expect(t === -1 || t > 2).toBe(true)
+  })
+})

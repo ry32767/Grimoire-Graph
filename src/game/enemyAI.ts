@@ -270,8 +270,15 @@ export function planEnemyShot(
     const last = ev.flight.samples[ev.flight.samples.length - 1]
     if (!last) return
     if (ev.materialArcs.length === 0) return // 素材を削らず失速/逸れた候補は掘削でない
-    // unbreakable に当たって止まった候補は、掘っても道が開かない＝対象外
-    if (ev.unbreakableArc !== null && last.arcLen >= ev.unbreakableArc - 0.3) return
+    // 「掘れば道が開く」見込みのない候補は掘削にしない（不可解な壁撃ちの根絶）：
+    // (1) 壁が無くても z 減速で狙いへ届かない弾は、掘って壁の速度損を消しても永遠に届かない。
+    //     障害物なしの自由飛行が狙いのヒットボックスへ届くことを掘削の前提条件にする。
+    const free = enemyFlight(traj, enemy.castInitialSpeed).flight
+    const freeHit = firstHit(free.samples, aimPos, GAME.allyHitbox)
+    if (!freeHit || freeHit.speed <= 0) return
+    // (2) 狙いへ達する前に unbreakable（削れない壁）を横切る経路は、掘り進めても必ずそこで
+    //     止まる＝トンネルは開通しない（手前で止まっている今も、掘り切った後も同じ）。
+    if (ev.unbreakableArc !== null && ev.unbreakableArc < freeHit.arcLen) return
     const depth = dist(last.pos, aimPos) // 小さいほど奥（狙いの近く）まで届いた
     if (!drill.best || depth < drill.best.depth) {
       drill.best = { plan: { trajectory: traj, targetId: ally.id, expectedDamage: 0 }, depth }
@@ -364,6 +371,16 @@ export function planEnemyShot(
         return sign * FIELD.zPeak * Math.pow(t, COMBAT.breakerRampPow)
       }
       zCands = [...zCands, { z: ramp, zVal: sign * FIELD.zPeak }]
+      // 高難度（LVL≥breakerDrillMinLevel）は「掘削用の弱い一定場」を両極で試す（05b §5.1）：
+      // |z|=breakerDrillZ(=1.5) は加速域（|z|<zRef）のまま高速を保ち、削りの速度損に耐える。
+      // さらに z を壁の反対極に合わせられれば削りの速度損は ×0.5（相性1.5）になり、
+      // 色つきの壁を3倍安く掘り抜ける。おまかせ（zWeak）は対象の反対極しか試さないため、
+      // 高難度の火力型はここで掘削効率が上回る。開けた地形ではランプ候補が採点で勝つ。
+      if ((enemy.level ?? 7) >= COMBAT.breakerDrillMinLevel) {
+        for (const m of [COMBAT.breakerDrillZ, -COMBAT.breakerDrillZ]) {
+          if (!zCands.some((c) => c.zVal === m)) zCands = [...zCands, { z: constZField(m), zVal: m }]
+        }
+      }
     }
     aims.push({ ally, aimPos, zCands })
 
