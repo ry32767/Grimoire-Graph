@@ -86,4 +86,27 @@ describe('パリィ解決（§3.8）', () => {
     expect(r.vanishA).toBe(true)
     expect(r.vanishB).toBe(true)
   })
+
+  it('威力の引き算：勝った側は残威力（powerA−powerB）を速度に換算して引き継ぐ', () => {
+    // A: 速度10・強度3（威力30） vs B: 速度10・強度2（威力20）
+    // → A が勝ち、新威力 = 30−20 = 10。強度3は位置で不変なので新速度 = 10/3
+    const r = resolveParry('light', 10, 30, 'dark', 10, 20)
+    expect(r.vanishB).toBe(true)
+    expect(r.vanishA).toBe(false)
+    expect(r.speedA).toBeCloseTo(10 / 3, 6)
+    expect(r.speedB).toBe(0)
+  })
+
+  it('パリィが発生したら必ずどちらかは消滅する（反対極で両方残ることはない）', () => {
+    const cases: [number, number, number, number][] = [
+      [8, 20, 6, 15],
+      [10, 5, 10, 40],
+      [3, 3, 3, 3],
+    ]
+    for (const [sA, pA, sB, pB] of cases) {
+      const r = resolveParry('light', sA, pA, 'dark', sB, pB)
+      expect(r.passthrough).toBe(false)
+      expect(r.vanishA || r.vanishB).toBe(true)
+    }
+  })
 })

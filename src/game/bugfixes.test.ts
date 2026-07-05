@@ -263,19 +263,21 @@ describe('敵 guardian の持続結界（owner=enemy・バグ修正：ターン�
     })
     const enemyOrbit = t1.orbits.find((o) => o.owner === 'enemy')
     expect(enemyOrbit).toBeDefined()
-    // turn2：guardian は沈黙（castingEnemyIds=[]）。味方が光弾を上方へ発射
+    // turn2：guardian は沈黙（castingEnemyIds=[]）。味方が弱めの光弾を上方へ発射
+    // （威力＝速度×強度が結界威力を下回る弾。パリィは威力の引き算＝負けた側が必ず消える）
     const traj: Trajectory = { mode: 'rotate', g: () => 0, angle: Math.PI / 2, origin: { x: 0, y: 0 }, z: constZField(2.5) }
     const t2 = resolveTurn({
-      allies: [a], casts: [{ allyId: 'a', trajectory: traj, initialSpeed: 12 }],
+      allies: [a], casts: [{ allyId: 'a', trajectory: traj, initialSpeed: 6 }],
       enemies: [{ ...t1.enemies[0] }], castingEnemyIds: [],
       obstacles: [], mechanics: { obstacles: false, enemyFire: true },
       activeOrbits: t1.orbits,
     })
-    // 結界は消滅せず持ち越され、味方弾を迎撃（clash が立つ）して guardian の被弾を軽減する
+    // 結界は消滅せず持ち越され、味方弾を迎撃（clash が立つ）して guardian を守る
     expect(t2.orbits.some((o) => o.owner === 'enemy')).toBe(true)
     expect(t2.clashes.length).toBeGreaterThan(0)
-    // 迎撃なし（バグ時）は full 命中 45 で hp=155。迎撃で減速し、被弾が軽くなる
-    expect(t2.enemies[0].hp).toBeGreaterThan(155)
+    // 威力で負けた弾は消滅し、guardian へは届かない（迎撃なし＝バグ時は命中して hp が減る）
+    expect(t2.allyShots[0].flight?.end).toBe('vanished')
+    expect(t2.enemies[0].hp).toBe(200)
   })
 
   it('光の敵結界は沈黙ターンでも内側の guardian を回復させる（#61）', () => {
@@ -519,7 +521,7 @@ describe('blocked の意味論（#64：自然失速＝壁止まりではない�
     })
     const shot = res.enemyShots[0]
     expect(shot.blocked).toBe(false)
-    expect(shot.hitAllyId).toBe('v')
+    expect(shot.hits.map((h) => h.targetId)).toContain('v')
     expect(res.allies[0].hp).toBeLessThan(100)
   })
 })
@@ -546,7 +548,7 @@ describe('火力型の掘削（#64：牽制でなく「1番奥まで掘れる」
       expect(res.enemyShots[0].carves.length).toBeGreaterThan(0)
       obstacles = res.obstacles
       allies = res.allies
-      if (res.enemyShots[0].hitAllyId) {
+      if (res.enemyShots[0].hits.length > 0) {
         hitTurn = t
         break
       }

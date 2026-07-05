@@ -91,8 +91,9 @@ describe('第5面以降は「全員おまかせ」連打では勝てない（#63
 
 /**
  * 第6面の勝ち筋の存在証明（過調整の回帰防止・#63）。対処プレイ：
- * 1. 予告✕と弾色を見て、反対極の持続結界を「極を覆う半径」で全員に張る（闇r6→光r7）。
- * 2. 崩し手を光弾（zRef）で撃ってひるみ（光の状態異常）ロックしながら削る。
+ * 1. 狙われやすい低HPの味方が「結界役」になり、両極の持続結界（闇r6・光r7）を自分の周囲に維持する。
+ *    パリィは威力の引き算で必ず片方が消える＝結界は撃ち合いで消耗するため、消えた極から張り直す。
+ * 2. 残る2人は崩し手を光弾（zRef）で撃ってひるみ（光の状態異常）ロックしながら削り切る。
  * 3. 残った番人は、封印核の右脇の回廊を「通過点フィット」（ゲーム内UI相当）の曲線で通して撃つ。
  * この手順で被弾なく・膜をほぼ削らずクリアできることを固定する。
  */
@@ -125,16 +126,21 @@ describe('第6面は対処プレイで勝てる（#63・勝ち筋の回帰防止
         .flatMap((al): AllyCast[] => {
           if (alive.length === 0) return []
           const rings = myRings(al.id)
-          // 弾色に合わせた反対極の結界（半径は予告✕の横ずれも覆う6/7。半径違い＝重ね張り可）
-          const needDark = alive.some((e) => e.role === 'ruptor' && e.element !== 'dark') && !rings.includes('dark')
-          const needLight = alive.some((e) => e.role === 'ruptor' && e.element === 'dark') && !rings.includes('light')
-          if (needDark) {
-            const traj: Trajectory = { mode: 'polar', f: () => 6, origin: al.pos, z: constZField(-FIELD.zRef), fieldR: prep.state.rField }
-            return [{ allyId: al.id, trajectory: traj, initialSpeed: FIELD.fixedSpeed }]
-          }
-          if (needLight) {
-            const traj: Trajectory = { mode: 'polar', f: () => 7, origin: al.pos, z: constZField(FIELD.zRef), fieldR: prep.state.rField }
-            return [{ allyId: al.id, trajectory: traj, initialSpeed: FIELD.fixedSpeed }]
+          // 結界役（先頭の味方＝低HPで狙われやすい）：両極の結界を自分の周囲に維持する。
+          // 弾色に合わせた反対極だけが迎撃できる（同極・中立は透過）ので闇r6・光r7の2枚構え。
+          // 消耗して消えた極から張り直す（半径違い＝重ね張り可）。
+          const darkCount = rings.filter((r) => r === 'dark').length
+          const lightCount = rings.filter((r) => r === 'light').length
+          const ruptorAlive = alive.some((e) => e.role === 'ruptor')
+          if (al.id === prep.state.allies[0].id && ruptorAlive) {
+            if (darkCount === 0) {
+              const traj: Trajectory = { mode: 'polar', f: () => 6, origin: al.pos, z: constZField(-FIELD.zRef), fieldR: prep.state.rField }
+              return [{ allyId: al.id, trajectory: traj, initialSpeed: FIELD.fixedSpeed }]
+            }
+            if (lightCount === 0) {
+              const traj: Trajectory = { mode: 'polar', f: () => 7, origin: al.pos, z: constZField(FIELD.zRef), fieldR: prep.state.rField }
+              return [{ allyId: al.id, trajectory: traj, initialSpeed: FIELD.fixedSpeed }]
+            }
           }
           const tgt = pick(al)
           if (tgt.role === 'guardian') {

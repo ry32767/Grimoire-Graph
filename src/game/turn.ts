@@ -36,7 +36,7 @@ import {
   applyDeltaVAtArc,
   type LossEvent,
 } from './physics'
-import { firstHitAmong, type Target } from './collision'
+import { allHitsAmong, type Target } from './collision'
 import { bulletCollision, resolveParry } from './parry'
 import { materialCells, obstacleOverlapsCircle } from './obstacle'
 import { carveAlong } from './carve'
@@ -75,9 +75,8 @@ export interface EnemyShot {
   damage: number
   /** 障害物を削った演出データ（#11） */
   carves: CarveBurst[]
-  /** 味方へ命中した時の対象IDと到達弧長（赤フラッシュ＋揺れ演出・#20） */
-  hitAllyId: string | null
-  hitArcLen: number
+  /** 命中した味方と到達弧長（貫通で複数命中しうる・弧長順。赤フラッシュ＋揺れ演出・#20） */
+  hits: { targetId: string; arcLen: number }[]
   /** 崩し手（#42）が計画した暴発点（z 場の極）。迎撃で速度0になれば暴発しない */
   misfirePos: Vec2 | null
   /** 暴発が実際に解決した（迎撃されず極まで届いた）か（#42） */
@@ -95,9 +94,8 @@ export interface AllyShot {
   misfirePos: Vec2 | null
   /** 障害物を削った演出データ（#11） */
   carves: CarveBurst[]
-  /** 発射型が命中した敵IDと到達弧長（赤フラッシュ＋揺れ演出・#20） */
-  hitEnemyId: string | null
-  hitArcLen: number
+  /** 発射型が命中した敵と到達弧長（貫通で複数命中しうる・弧長順。赤フラッシュ＋揺れ演出・#20） */
+  hits: { targetId: string; arcLen: number }[]
   /** 軌道型が掃射で当てた敵ID群（#20） */
   sweptEnemyIds: string[]
   /** 軌道型が壁に当たって霧散したか（#34：一度きりの霧散演出にする） */
@@ -329,8 +327,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
         reachedTarget: false,
         damage: 0,
         carves: [],
-        hitAllyId: null,
-        hitArcLen: 0,
+        hits: [],
         misfirePos: plan.misfirePos ?? null,
         misfired: false,
       })
@@ -384,6 +381,8 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
   // === 3. 防御：軌道型リングの迎撃 → 発射型のパリィ（敵弾を削る） ===
   // 減衰イベントは shot ごとに蓄積し、毎回「元の初速＋全減衰」で再シミュレートする
   // （軌道型→パリィなど複数防御の速度損を正しく重ねる）。
+  // 敵弾ごとの減衰イベントは §3b（時系列パリィ）でも使うため、shot と対で保持する
+  const shotCtxs: { shot: EnemyShot; losses: LossEvent[]; resim: () => void }[] = []
   for (const shot of enemyShots) {
     const initSpeed = shot.flight.samples[0]?.speed ?? 0
     const geom = shot.flight.samples // 幾何（位置・弧長）は減衰で変わらない
@@ -395,6 +394,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     const resim = () => {
       shot.flight = simulatePath(shot.path, initSpeed, enemyZByIdx, losses)
     }
+    shotCtxs.push({ shot, losses, resim })
 
     // 3z. 障害物は敵弾も削りながら遮る（味方の盾になる・#16）。削り切れず速度0で止まれば消滅。
     if (mechanics.obstacles && geom.length > 1) {
@@ -493,19 +493,46 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
         log.push({ kind: 'orbit', text: `${aName}の結界は敵弾に破られて消滅した` })
       }
     }
-    if (shot.blocked) continue
+  }
 
-    // 3b. 発射型のパリィ（反対極なら相殺）。#59：互いに削り合う（自弾も減速・消滅しうる）。
-    // 判定は「実衝突」（bulletCollision・#64）：両弾を同時刻で進め、parryHitDist まで近づいた
-    // 最初の点で相殺する。旧方式（幾何交点＋通過時刻ゲート）は正面撃ち返しでも最初の交点の
-    // 時刻差で弾かれ「パリィがほぼ成立しない」不具合があった。すれ違いは自然に不成立のまま。
-    for (const p of plans) {
-      if (shot.blocked) break // 敵弾が既に消えていれば以降のパリィは不要
-      if (p.kind !== 'projectile' || !p.freeFlight || p.freeFlight.samples.length < 2) continue
-      const col = bulletCollision(p.freeFlight.samples, shot.flight.samples, COMBAT.parryHitDist)
-      if (!col) continue
-      const pSample =
-        sampleAtLength(p.freeFlight, col.arcA) ?? p.freeFlight.samples[p.freeFlight.samples.length - 1]
+  // === 3b. 発射型のパリィ（時系列順に解決） ===
+  // 判定は「実衝突」（bulletCollision・#64）：両弾を同時刻で進め、parryHitDist まで近づいた
+  // 最初の点で相殺する。すれ違い（時刻差あり）は自然に不成立。
+  // 全（敵弾×自弾）ペアの衝突を洗い出し、**ゲーム時刻が最も早い衝突から**解決する
+  // （魔法の干渉は「同時刻に同じ場所に存在する」ときのみ・§3.8）。パリィのたびに両弾の
+  // 飛行（速度・到達時刻・消滅点）が変わるため、1件解決するごとに残りの衝突を再計算する。
+  // 勝ち残った弾は残威力で飛び続け、別の魔法と再びパリィしうる（多段パリィ）。
+  // 同じペアは最初の接触1回だけ判定する（同極・中立はその点ですり抜け確定）。
+  {
+    const donePairs = new Set<string>()
+    for (;;) {
+      let best: {
+        ctx: (typeof shotCtxs)[number]
+        p: AllyPlan
+        col: NonNullable<ReturnType<typeof bulletCollision>>
+        tau: number
+        key: string
+      } | null = null
+      for (let si = 0; si < shotCtxs.length; si++) {
+        const ctx = shotCtxs[si]
+        if (ctx.shot.blocked) continue
+        for (let pi = 0; pi < plans.length; pi++) {
+          const p = plans[pi]
+          if (p.kind !== 'projectile' || !p.freeFlight || p.freeFlight.samples.length < 2) continue
+          const key = `${si}:${pi}`
+          if (donePairs.has(key)) continue
+          const col = bulletCollision(p.freeFlight.samples, ctx.shot.flight.samples, COMBAT.parryHitDist)
+          if (!col) continue
+          const tau = timeToArc(p.freeFlight.samples, col.arcA)
+          if (!best || tau < best.tau) best = { ctx, p, col, tau, key }
+        }
+      }
+      if (!best) break
+      donePairs.add(best.key)
+      const { ctx, p, col } = best
+      const shot = ctx.shot
+      const flightP = p.freeFlight!
+      const pSample = sampleAtLength(flightP, col.arcA) ?? flightP.samples[flightP.samples.length - 1]
       const crossArc = col.arcB
       // 直前までの減衰を反映した現在の飛行から、衝突点（弧長基準）の速度を引く
       const eSample = sampleAtLength(shot.flight, crossArc) ?? shot.flight.samples[shot.flight.samples.length - 1]
@@ -518,10 +545,10 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       const eStr = strengthOf(eZ)
       const parry = resolveParry(pAttr, pSample.speed, pSample.speed * pStr, eAttr, eSample.speed, eSample.speed * eStr)
       if (parry.passthrough) continue
-      // 敵弾を削る
-      losses.push({ arcLen: crossArc, deltaV: eSample.speed - parry.speedB })
-      resim()
-      // 自弾も削る（#59・相互相殺）。自弾の衝突弧長で減速し、以後の交差・命中・障害物へ引き継ぐ
+      // 敵弾を削る（威力の引き算：負けた側は速度0＝消滅）
+      ctx.losses.push({ arcLen: crossArc, deltaV: eSample.speed - parry.speedB })
+      ctx.resim()
+      // 自弾も削る（相互相殺）。自弾の衝突弧長で減速し、以後の交差・命中・障害物へ引き継ぐ
       p.pLosses.push({ arcLen: pSample.arcLen, deltaV: pSample.speed - parry.speedA })
       p.freeFlight = simulateWithLosses(p.cast.trajectory, p.cast.initialSpeed, p.pLosses)
       // パリィの火花は2魔法の威力合計で大きくなる（#38）
@@ -589,9 +616,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       if (!inter.crossed || inter.enemyIndex === undefined || inter.ringZ === undefined) continue
       const pSample = flight.samples[Math.min(inter.enemyIndex, flight.samples.length - 1)]
       if (!pSample || pSample.speed <= 0) continue
-      // 命中後の交差は無視（敵に当たって解決する弾は、その先の結界と相互作用しない）
-      const hitNow = firstHitAmong(flight.samples, enemyTargets())
-      if (hitNow && pSample.arcLen >= hitNow.arcLen) continue
+      // 命中しても魔法は減速せず消えない（貫通）ため、敵に当たった先の結界とも相互作用する
       const vCross = inter.ringSpeed ?? 0 // 横断点での結界速度（#60：平均でない）
       if (vCross <= 0) continue
       const bZ = zfieldAt(p.cast.trajectory, inter.pos ?? pSample.pos)
@@ -825,8 +850,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
         flight: null,
         misfirePos: null,
         carves: p.carves,
-        hitEnemyId: null,
-        hitArcLen: 0,
+        hits: [],
         sweptEnemyIds,
         broken: p.ringBroken,
         ringSpeed: p.ringSpeed,
@@ -839,16 +863,16 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     const traj = p.cast.trajectory
     const path: ZPoint[] = flight.samples.map((s) => ({ pos: s.pos, z: zfieldAt(traj, s.pos) }))
     let misfirePos: Vec2 | null = null
-    let hitEnemyId: string | null = null
-    let hitArcLen = 0
+    const hits: { targetId: string; arcLen: number }[] = []
     // 敵結界による減速・霧散はセクション 4.5 で飛行（減衰イベント）へ反映済み。
     // ここでは更新済みの飛行に対して素直に命中判定する（hit.speed は結界の減速を含む）。
-    const hit = firstHitAmong(flight.samples, enemyTargets())
-    if (hit && hit.speed > 0) {
-      hitEnemyId = hit.id
-      hitArcLen = hit.arcLen
+    // 命中しても魔法は減速せず消えない（貫通）：通過した全対象に威力分のダメージを与える。
+    for (const hit of allHitsAmong(flight.samples, enemyTargets())) {
+      if (hit.speed <= 0) continue
       const idx = enemies.findIndex((e) => e.id === hit.id)
+      if (idx < 0) continue
       const enemy = enemies[idx]
+      hits.push({ targetId: hit.id, arcLen: hit.arcLen })
       const z = zfieldAt(traj, hit.pos)
       const dmg = computeDamage(hit.speed, z, enemy.element)
       enemies[idx] = {
@@ -861,7 +885,9 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
         kind: 'playerHit',
         text: `${nameOf(allies, p.cast.allyId)}→${enemy.name}に命中！ 速${dmg.speed.toFixed(1)}×強${dmg.strength.toFixed(1)}×相性${dmg.affinity} = ${dmg.damage.toFixed(0)}`,
       })
-    } else if (flight.end === 'invalid') {
+    }
+    // 貫通のため命中と暴発は両立する：途中で命中しても、軌道がエラー点まで届けばそこで暴発する
+    if (flight.end === 'invalid') {
       // 暴発（関数エラー・#3/#9）：敵＋近くの味方を巻き込む AoE
       misfirePos = flight.endPos
       // endSpeed は samples 空でも v0(=初速) を保持するため常に正しい
@@ -909,7 +935,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
         kind: 'misfire',
         text: `${nameOf(allies, p.cast.allyId)}の術式が綻び暴発！ ${mis.damage.toFixed(0)} のAoE`,
       })
-    } else {
+    } else if (hits.length === 0) {
       log.push({ kind: 'miss', text: `${nameOf(allies, p.cast.allyId)}の弾は外れた` })
     }
     allyShots.push({
@@ -919,8 +945,7 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       flight,
       misfirePos,
       carves: p.carves,
-      hitEnemyId,
-      hitArcLen,
+      hits,
       sweptEnemyIds: [],
       broken: false,
       ringSpeed: 0,
@@ -1025,35 +1050,36 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     }
   }
 
-  // === 6. 敵弾が味方へ命中（パス上で最初に当たった味方。逸れれば回避） ===
+  // === 6. 敵弾が味方へ命中（貫通：パス上で触れた全味方に威力分のダメージ。逸れれば回避） ===
   for (const shot of enemyShots) {
     // 崩し手の弾（#42）は通常の命中でなく 6b の暴発で解決する（極の直前で式が破れる）
     if (shot.blocked || shot.misfirePos) continue
     const allyTargets: Target[] = allies
       .filter((a) => a.hp > 0)
       .map((a) => ({ id: a.id, pos: a.pos, radius: GAME.allyHitbox }))
-    const hit = firstHitAmong(shot.flight.samples, allyTargets)
-    if (!hit || hit.speed <= 0) continue
-    const bZ = zfieldAt(shot.traj, hit.pos)
-    const bAttr = attributeOf(bZ)
-    const bStr = strengthOf(bZ)
-    const idx = allies.findIndex((a) => a.id === hit.id)
-    if (idx < 0) continue
-    const damage = hit.speed * bStr * affinityMultiplier(bAttr, allies[idx].element)
-    allies[idx] = {
-      ...allies[idx],
-      hp: Math.max(0, allies[idx].hp - damage),
-      statuses: addStatus(allies[idx].statuses, makeStatus(bAttr, bStr)),
+    // 命中しても敵弾は減速せず消えない（貫通）：通過した全味方に命中する
+    for (const hit of allHitsAmong(shot.flight.samples, allyTargets)) {
+      if (hit.speed <= 0) continue
+      const bZ = zfieldAt(shot.traj, hit.pos)
+      const bAttr = attributeOf(bZ)
+      const bStr = strengthOf(bZ)
+      const idx = allies.findIndex((a) => a.id === hit.id)
+      if (idx < 0) continue
+      const damage = hit.speed * bStr * affinityMultiplier(bAttr, allies[idx].element)
+      allies[idx] = {
+        ...allies[idx],
+        hp: Math.max(0, allies[idx].hp - damage),
+        statuses: addStatus(allies[idx].statuses, makeStatus(bAttr, bStr)),
+      }
+      shot.reachedTarget = true
+      shot.damage += damage
+      shot.hits.push({ targetId: allies[idx].id, arcLen: hit.arcLen })
+      popups.push({ pos: allies[idx].pos, amount: damage, kind: bAttr, targetId: allies[idx].id, trigger: 'flash' })
+      log.push({
+        kind: 'enemyHit',
+        text: `${nameOf(enemies, shot.enemyId)}の術式が${allies[idx].name}に命中！ ${damage.toFixed(0)} ダメージ`,
+      })
     }
-    shot.reachedTarget = true
-    shot.damage = damage
-    shot.hitAllyId = allies[idx].id
-    shot.hitArcLen = hit.arcLen
-    popups.push({ pos: allies[idx].pos, amount: damage, kind: bAttr, targetId: allies[idx].id, trigger: 'flash' })
-    log.push({
-      kind: 'enemyHit',
-      text: `${nameOf(enemies, shot.enemyId)}の術式が${allies[idx].name}に命中！ ${damage.toFixed(0)} ダメージ`,
-    })
   }
 
   // === 6b. 崩し手の暴発（#42・05-enemies §5.4b）：迎撃されず z 場の極まで届いた敵弾は、

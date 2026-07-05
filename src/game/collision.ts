@@ -89,3 +89,17 @@ export function firstHitAmong(samples: FlightSample[], targets: Target[]): Targe
   }
   return best
 }
+
+/**
+ * 魔法が通過する全対象への命中を弧長順に返す（貫通・多段ヒット）。
+ * 命中しても魔法は減速せず消えないため、パスが触れた対象すべてに命中する
+ * （対象ごとに最初の接触点1回）。速度0で消えた弾はサンプル列がそこで終わるため当たらない。
+ */
+export function allHitsAmong(samples: FlightSample[], targets: Target[]): TargetHit[] {
+  const hits: TargetHit[] = []
+  for (const tg of targets) {
+    const h = firstHit(samples, tg.pos, tg.radius)
+    if (h) hits.push({ ...h, id: tg.id })
+  }
+  return hits.sort((a, b) => a.arcLen - b.arcLen)
+}
