@@ -64,8 +64,6 @@
 | `tough` | 0.32 | 1.7 |
 | `unbreakable` | 0 | 1 |
 
-**`NEUTRAL_NORMAL_STRENGTH = 2`（#68）**：中立(無属性)の `normal` 壁の削り強度倍率。中立 normal 壁は属性関係なく「属性壁の最硬（同極 aff=0.5 → 係数1.5）」の 2 倍＝`carveCost×3` の速度損で固定される（`src/game/obstacle.ts` の `carveSpeedLoss`）。旧 `fragile` の置換先（[04-magic.md](04-magic.md) §4.4）。
-
 ## RUPTOR（崩し手・#42／[05b-enemy-archetypes.md](05b-enemy-archetypes.md) §4）
 
 z 場に極（1/x 型の特異点）を仕込み、狙点で暴発させる敵の z 場パラメータ。

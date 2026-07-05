@@ -613,10 +613,8 @@ describe('暴発の壁破壊（#41）', () => {
   }
 
   it('AoE 内の壁素材を削る（範囲内の点が素材でなくなる）', () => {
-    // 壁は暴発点 (0,~7) より奥（下端 8.6>7）に置く：弾は壁に触れず (0,7) で暴発し、その AoE(半径5)が
-    // 壁を削る。中立 normal 壁は #68 で硬いため、暴発点に重ねると弾が壁で止まって暴発しない点に注意。
-    const wall: Obstacle = { id: 'w', element: 'neutral', solids: [{ x: 0, y: 11, r: 2.4 }], carves: [] }
-    expect(isSolidAt(wall, { x: 0, y: 11 })).toBe(true)
+    const wall: Obstacle = { id: 'w', element: 'neutral', solids: [{ x: 0, y: 9, r: 2.4 }], carves: [] }
+    expect(isSolidAt(wall, { x: 0, y: 9 })).toBe(true)
     const res = resolveTurn({
       allies: [ally('m', { x: 0, y: 0 })],
       casts: [cast('m', upMisfire)],
@@ -627,7 +625,7 @@ describe('暴発の壁破壊（#41）', () => {
     })
     const w2 = res.obstacles.find((o) => o.id === 'w')!
     expect(w2.carves.length).toBeGreaterThan(0)
-    expect(isSolidAt(w2, { x: 0, y: 11 })).toBe(false) // AoE 内の素材は消えた
+    expect(isSolidAt(w2, { x: 0, y: 9 })).toBe(false) // AoE 内の素材は消えた
     // 暴発ログが出ている
     expect(res.log.some((l) => l.kind === 'misfire')).toBe(true)
   })
