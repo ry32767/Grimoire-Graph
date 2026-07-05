@@ -261,7 +261,8 @@ describe('新レイアウトの成立条件（壁は tough・迂回型はカバ�
 
   it('内部の戦術壁は tough（面ごとに所定数以上）', () => {
     expect(toughCount(1)).toBeGreaterThanOrEqual(2) // 第2面：左右の柱列
-    expect(toughCount(2)).toBeGreaterThanOrEqual(5) // 第3面：仕切り・L柱・両塔・影のカバー
+    // 第3面は相性削りの教材面：仕切り・影のカバーは normal（教材例外）、L柱・両塔が tough
+    expect(toughCount(2)).toBeGreaterThanOrEqual(3)
     expect(toughCount(3)).toBeGreaterThanOrEqual(4) // 第4面：全幅壁・渦2本・弓手のカバー
     expect(toughCount(4)).toBeGreaterThanOrEqual(10) // 第5面：列柱8・射手カバー2
     expect(toughCount(5)).toBeGreaterThanOrEqual(5) // 第6面：光柱2・崩し手カバー3
@@ -283,8 +284,8 @@ describe('新レイアウトの成立条件（壁は tough・迂回型はカバ�
     expect(dist(oni.pos, boss.pos)).toBeLessThanOrEqual(10)
   })
 
-  // 迂回型は「最寄り味方への直射線上に tough 素材」＝カバーの陰に立つ（基準2の幾何条件）
-  const coveredFromNearestAlly = (idx: number, name: string): boolean => {
+  // 迂回型は「最寄り味方への直射線上に遮蔽（既定は tough）」＝カバーの陰に立つ（基準2の幾何条件）
+  const coveredFromNearestAlly = (idx: number, name: string, kinds: (string | undefined)[]): boolean => {
     const s = STAGES[idx]
     const e = s.enemies.find((x) => x.name === name)!
     const allies = s.allyPositions ?? makeParty().map((a) => a.pos)
@@ -292,19 +293,20 @@ describe('新レイアウトの成立条件（壁は tough・迂回型はカバ�
     const L = dist(e.pos, nearest)
     for (let d = 0; d <= L; d += 0.4) {
       const p = { x: e.pos.x + ((nearest.x - e.pos.x) * d) / L, y: e.pos.y + ((nearest.y - e.pos.y) * d) / L }
-      if (s.obstacles.some((o) => o.kind === 'tough' && isSolidAt(o, p))) return true
+      if (s.obstacles.some((o) => kinds.includes(o.kind) && isSolidAt(o, p))) return true
     }
     return false
   }
 
   it.each([
-    ['第3面', 2, '祭壇の影'],
-    ['第4面', 3, '坑道の弓手'],
-    ['第5面', 4, '鏡像の射手（闇）'],
-    ['第5面', 4, '鏡像の射手（光）'],
-    ['第7面', 6, '守護者の眷属（迂回）'],
-  ] as const)('%s：%s は最寄り味方への直射線が tough カバーで遮られている', (_s, idx, name) => {
-    expect(coveredFromNearestAlly(idx, name)).toBe(true)
+    // 第3面のカバーは相性削りの教材面につき normal（kind 未指定。掘れば数ターンで開通）
+    ['第3面', 2, '祭壇の影', [undefined]],
+    ['第4面', 3, '坑道の弓手', ['tough']],
+    ['第5面', 4, '鏡像の射手（闇）', ['tough']],
+    ['第5面', 4, '鏡像の射手（光）', ['tough']],
+    ['第7面', 6, '守護者の眷属（迂回）', ['tough']],
+  ] as const)('%s：%s は最寄り味方への直射線がカバー壁で遮られている', (_s, idx, name, kinds) => {
+    expect(coveredFromNearestAlly(idx, name, [...kinds])).toBe(true)
   })
 
   it('第6面：崩し手3体はそれぞれ至近（8以内）に tough の岩塊カバーを持つ', () => {

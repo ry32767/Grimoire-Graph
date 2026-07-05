@@ -499,6 +499,25 @@ describe('壁の見た目すり抜けの根絶（#64：削りの早期打ち切�
 })
 
 describe('blocked の意味論（#64：自然失速＝壁止まりではない）', () => {
+  it('敵弾が味方を通過した後に壁の中で止まっても、停止点までの命中は有効', () => {
+    // 仕様決定：壁で止まる弾も「それまで」は当たる（AI 事前評価との乖離解消・spec §9）。
+    // 構図：敵(0,20) → 味方(0,5) → 全幅の厚い壁（y -8..0）。弾は味方に命中してから壁で止まる。
+    const victim = ally('v', { x: 0, y: 5 }, 100, 'light')
+    const wallN = rectWall({ x: -30, y: -8, w: 60, h: 8 }, 'normal')
+    const res = resolveTurn({
+      allies: [victim],
+      casts: [],
+      enemies: [baseEnemy({ pos: { x: 0, y: 20 }, role: 'breaker' })],
+      castingEnemyIds: ['e0'],
+      obstacles: [wallN],
+      mechanics: { obstacles: true, enemyFire: true },
+    })
+    const shot = res.enemyShots[0]
+    expect(shot.blocked).toBe(true) // 壁の中で停止している
+    expect(shot.hits.map((h) => h.targetId)).toContain('v') // それでも停止点より前の命中は有効
+    expect(res.allies[0].hp).toBeLessThan(100)
+  })
+
   it('敵弾が対象の先で自然失速（z 減速）しても、途中の味方への命中は無効化されない', () => {
     // castZField=-3（|z|>zRef＝減速場）：弾は味方を過ぎたあたりで速度0になる（end=vanished）。
     // 修正前は obstacles のある面で end==='vanished' を一律 blocked にしていたため、
