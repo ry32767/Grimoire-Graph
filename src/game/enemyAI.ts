@@ -371,6 +371,16 @@ export function planEnemyShot(
         return sign * FIELD.zPeak * Math.pow(t, COMBAT.breakerRampPow)
       }
       zCands = [...zCands, { z: ramp, zVal: sign * FIELD.zPeak }]
+      // 高難度（LVL≥breakerDrillMinLevel）は「掘削用の弱い一定場」を両極で試す（05b §5.1）：
+      // |z|=breakerDrillZ(=1.5) は加速域（|z|<zRef）のまま高速を保ち、削りの速度損に耐える。
+      // さらに z を壁の反対極に合わせられれば削りの速度損は ×0.5（相性1.5）になり、
+      // 色つきの壁を3倍安く掘り抜ける。おまかせ（zWeak）は対象の反対極しか試さないため、
+      // 高難度の火力型はここで掘削効率が上回る。開けた地形ではランプ候補が採点で勝つ。
+      if ((enemy.level ?? 7) >= COMBAT.breakerDrillMinLevel) {
+        for (const m of [COMBAT.breakerDrillZ, -COMBAT.breakerDrillZ]) {
+          if (!zCands.some((c) => c.zVal === m)) zCands = [...zCands, { z: constZField(m), zVal: m }]
+        }
+      }
     }
     aims.push({ ally, aimPos, zCands })
 

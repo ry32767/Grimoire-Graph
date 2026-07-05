@@ -723,3 +723,37 @@ describe('火力型の掘削は「掘れば道が開く」壁だけを狙う（�
     expect(carvesPerTurn.slice(3)).toEqual([0, 0, 0])
   })
 })
+
+describe('高難度の火力型は掘削用の弱い一定場を両極で使う（掘削がおまかせに劣らない）', () => {
+  // 闇の厚壁（h=6）×光の味方狙い：素の z 候補（対象の反対極＝闇）は壁と同極で削りが高くつく。
+  // 高難度（LVL≥COMBAT.breakerDrillMinLevel）は壁の反対極（光）の弱場（|z|=breakerDrillZ）も試し、
+  // 速度損 ×0.5 で3倍安く掘り抜ける（おまかせの zWeak は対象の反対極しか試さない＝この差で上回る）。
+  const digTurns = (level: number): number => {
+    let allies = [ally('v', { x: 0, y: -15 }, 5000, 'light')]
+    const e = baseEnemy({ pos: { x: 0, y: 20 }, role: 'breaker', families: ['arc', 'abs', 'poly34'], level })
+    let obstacles: Obstacle[] = [
+      { id: 'wall', element: 'dark', solids: [], rects: [{ x: -30, y: 0, w: 60, h: 6 }], carves: [], kind: 'normal' },
+    ]
+    for (let t = 1; t <= 10; t++) {
+      const res = resolveTurn({
+        allies, casts: [], enemies: [e], castingEnemyIds: ['e0'],
+        obstacles, mechanics: { obstacles: true, enemyFire: true },
+      })
+      obstacles = res.obstacles
+      allies = res.allies
+      if (res.enemyShots[0].hits.length > 0) return t
+    }
+    return -1
+  }
+
+  it('LVL6：同極で削りにくい闇の厚壁を、壁の反対極の弱場で安く掘り抜き2ターン以内に命中する', () => {
+    const t = digTurns(6)
+    expect(t).toBeGreaterThan(0)
+    expect(t).toBeLessThanOrEqual(2)
+  })
+
+  it('LVL3（低難度）には解禁されず、同じ壁の突破に高難度より時間がかかる（従来挙動）', () => {
+    const t = digTurns(3)
+    expect(t === -1 || t > 2).toBe(true)
+  })
+})

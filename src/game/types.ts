@@ -199,7 +199,11 @@ export interface Enemy {
   directedAura?: boolean
   /** 種族（05c 図鑑・#46）。描画専用でロジックには影響させない。 */
   species?: EnemySpecies
-  /** LVL（1〜7・06b）。ティア演出（外見・強化度合いの表現）用。ロジックには影響させない。 */
+  /**
+   * LVL（1〜7・06b）。ティア演出（外見・強化度合いの表現）に加え、高難度の解禁ゲートに使う：
+   * LVL≥COMBAT.breakerDrillMinLevel(=5) の火力型は掘削用の弱い一定場を候補に持つ（05b §5.1）。
+   * 未指定（テスト・変異体）は最上位（7）扱い。
+   */
   level?: number
 }
 
