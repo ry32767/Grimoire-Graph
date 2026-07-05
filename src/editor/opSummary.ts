@@ -14,6 +14,10 @@ export function opSummary(op: ObstacleOp): string {
       return `列柱 x:${op.params.x0}〜${op.params.x1}`
     case 'spiralArm':
       return `螺旋 (${op.params.cx}, ${op.params.cy})`
+    case 'disc':
+      return `円 (${op.params.cx}, ${op.params.cy}) r${op.params.r}`
+    case 'rect':
+      return `矩形自由 (${op.params.x}, ${op.params.y}) ${op.params.w}×${op.params.h}`
     case 'ring':
       return `リング (${op.params.cx}, ${op.params.cy})`
     case 'roomWalls':

@@ -66,6 +66,18 @@ function opArgs(op: ObstacleOp, rField: number): string[] {
       if (p.r0 !== undefined) args.push(num(p.r0))
       return args
     }
+    case 'disc': {
+      const p = op.params
+      const args = [num(p.cx), num(p.cy), num(p.r), str(p.element)]
+      if (p.kind) args.push(str(p.kind))
+      return args
+    }
+    case 'rect': {
+      const p = op.params
+      const args = [num(p.x), num(p.y), num(p.w), num(p.h), str(p.element)]
+      if (p.kind) args.push(str(p.kind))
+      return args
+    }
     case 'ring': {
       const p = op.params
       const args = [num(p.cx), num(p.cy), num(p.radius), str(p.element)]

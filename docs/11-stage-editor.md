@@ -57,6 +57,8 @@
 
 | ヘルパー | 編集項目 |
 |---|---|
+| `disc(cx, cy, r, element, kind)` | **任意半径の円（柱）1個**（#68・自由配置）：中心座標、半径、属性、種別 |
+| `rect(x, y, w, h, element, kind)` | **任意サイズの矩形の壁1枚**（#68・自由な部屋）：左下座標、幅、高さ、属性、種別 |
 | `pillar(cx, y0, n, element, kind)` | 中心x、開始y、段数n、属性、種別 |
 | `block(x0, y0, cols, rows, element, kind)` | 開始座標、列数、行数、属性、種別 |
 | `wall(x0, x1, y0, rows, element, kind)` | 始点x、終点x、開始y、段数、属性、種別 |

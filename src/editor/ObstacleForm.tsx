@@ -26,6 +26,47 @@ export default function ObstacleForm({ op, onChange, onDelete }: Props) {
     )
   }
 
+  if (op.kind === 'disc') {
+    const p = op.params
+    return (
+      <div className="obstacle-form">
+        <NumField label="中心 x (cx)" value={p.cx} onChange={(v) => onChange({ ...op, params: { ...p, cx: v } })} />
+        <NumField label="中心 y (cy)" value={p.cy} onChange={(v) => onChange({ ...op, params: { ...p, cy: v } })} />
+        <NumField label="半径 (r)" value={p.r} onChange={(v) => onChange({ ...op, params: { ...p, r: Math.max(0.1, v) } })} />
+        <label>
+          属性
+          <ElementSelect value={p.element} onChange={(v) => onChange({ ...op, params: { ...p, element: v } })} />
+        </label>
+        <label>
+          種別
+          <KindSelect value={p.kind} fallback="normal" onChange={(v) => onChange({ ...op, params: { ...p, kind: v } })} />
+        </label>
+        {del}
+      </div>
+    )
+  }
+
+  if (op.kind === 'rect') {
+    const p = op.params
+    return (
+      <div className="obstacle-form">
+        <NumField label="左下 x (x)" value={p.x} onChange={(v) => onChange({ ...op, params: { ...p, x: v } })} />
+        <NumField label="左下 y (y)" value={p.y} onChange={(v) => onChange({ ...op, params: { ...p, y: v } })} />
+        <NumField label="幅 (w)" value={p.w} onChange={(v) => onChange({ ...op, params: { ...p, w: Math.max(0.1, v) } })} />
+        <NumField label="高さ (h)" value={p.h} onChange={(v) => onChange({ ...op, params: { ...p, h: Math.max(0.1, v) } })} />
+        <label>
+          属性
+          <ElementSelect value={p.element} onChange={(v) => onChange({ ...op, params: { ...p, element: v } })} />
+        </label>
+        <label>
+          種別
+          <KindSelect value={p.kind} fallback="normal" onChange={(v) => onChange({ ...op, params: { ...p, kind: v } })} />
+        </label>
+        {del}
+      </div>
+    )
+  }
+
   if (op.kind === 'pillar') {
     const p = op.params
     return (

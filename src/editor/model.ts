@@ -5,7 +5,7 @@
 import type { BossPhase, Enemy, Mechanics, Obstacle, ObstacleKind, Stage, Vec2 } from '../game/types'
 import { FIELD } from '../data/constants'
 import { STAGES } from '../data/stages'
-import { block, colonnade, pillar, ring, roomWalls, roomWallsOpenEnds, spiralArm, wall } from '../data/stageBuilders'
+import { block, colonnade, disc, pillar, rect, ring, roomWalls, roomWallsOpenEnds, spiralArm, wall } from '../data/stageBuilders'
 
 /** 柱（縦）op のパラメータ。stageBuilders.pillar と1:1対応。 */
 export interface PillarParams {
@@ -52,6 +52,23 @@ export interface SpiralArmParams {
   element: Obstacle['element']
   r0?: number
 }
+/** 任意半径の円（柱）op のパラメータ（#68）。stageBuilders.disc と1:1対応。 */
+export interface DiscParams {
+  cx: number
+  cy: number
+  r: number
+  element: Obstacle['element']
+  kind?: ObstacleKind
+}
+/** 任意サイズの矩形の壁 op のパラメータ（#68・自由な部屋）。stageBuilders.rect と1:1対応。 */
+export interface RectParams {
+  x: number
+  y: number
+  w: number
+  h: number
+  element: Obstacle['element']
+  kind?: ObstacleKind
+}
 /** リング op のパラメータ。stageBuilders.ring と1:1対応。 */
 export interface RingParams {
   cx: number
@@ -87,6 +104,8 @@ export type ObstacleOp =
   | { id: string; kind: 'wall'; params: WallParams }
   | { id: string; kind: 'colonnade'; params: ColonnadeParams }
   | { id: string; kind: 'spiralArm'; params: SpiralArmParams }
+  | { id: string; kind: 'disc'; params: DiscParams }
+  | { id: string; kind: 'rect'; params: RectParams }
   | { id: string; kind: 'ring'; params: RingParams }
   | { id: string; kind: 'roomWalls'; params: RoomWallsParams }
   | { id: string; kind: 'roomWallsOpenEnds'; params: RoomWallsOpenEndsParams }
@@ -133,6 +152,10 @@ function compileOp(op: ObstacleOp, rField: number): Obstacle[] {
       return colonnade(op.params.x0, op.params.x1, op.params.step, op.params.y0, op.params.n, op.params.elems)
     case 'spiralArm':
       return [spiralArm(op.params.cx, op.params.cy, op.params.n, op.params.turns, op.params.phase, op.params.element, op.params.r0)]
+    case 'disc':
+      return [disc(op.params.cx, op.params.cy, op.params.r, op.params.element, op.params.kind)]
+    case 'rect':
+      return [rect(op.params.x, op.params.y, op.params.w, op.params.h, op.params.element, op.params.kind)]
     case 'ring':
       return [ring(op.params.cx, op.params.cy, op.params.radius, op.params.element, op.params.kind, op.params.n)]
     case 'roomWalls':

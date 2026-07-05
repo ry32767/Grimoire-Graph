@@ -26,6 +26,24 @@ describe('compileObstaclesWithOps', () => {
     expect(compiled[1].opId).toBe(ring.id)
   })
 
+  it('disc は任意半径の円1個、rect は自由サイズの矩形1枚を生成（#68）', () => {
+    const d: ObstacleOp = { id: 'd', kind: 'disc', params: { cx: 3, cy: -2, r: 6.5, element: 'neutral' } }
+    const [disc] = compileObstacles([d], 30)
+    expect(disc.solids).toEqual([{ x: 3, y: -2, r: 6.5 }])
+    expect(disc.rects ?? []).toHaveLength(0)
+    const rc: ObstacleOp = { id: 'rc', kind: 'rect', params: { x: -4, y: -3, w: 8, h: 5, element: 'light', kind: 'tough' } }
+    const [rect] = compileObstacles([rc], 30)
+    expect(rect.rects).toEqual([{ x: -4, y: -3, w: 8, h: 5 }])
+    expect(rect.kind).toBe('tough')
+    // ドラッグ移動：disc は cx/cy、rect は x/y がずれる
+    const d2 = moveOpBy(d, { x: 1, y: 2 })
+    expect(d2.kind === 'disc' && d2.params.cx).toBe(4)
+    expect(d2.kind === 'disc' && d2.params.cy).toBe(0)
+    const rc2 = moveOpBy(rc, { x: -1, y: 3 })
+    expect(rc2.kind === 'rect' && rc2.params.x).toBe(-5)
+    expect(rc2.kind === 'rect' && rc2.params.y).toBe(0)
+  })
+
   it('compileObstacles は op ごとの内訳を合算した件数になる（roomWalls=4枚）', () => {
     const room: ObstacleOp = { id: 'r', kind: 'roomWalls', params: { xL: -5, xR: 5, yB: -5, yT: 5 } }
     const flat = compileObstacles([room], 30)

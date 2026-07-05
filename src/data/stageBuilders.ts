@@ -129,6 +129,14 @@ export function obRect(element: Obstacle['element'], rects: Rect[], kind?: Obsta
   const base = { id: `o${oseq++}`, element, solids: [], rects, carves: [] }
   return kind ? { ...base, kind } : base
 }
+/** 任意半径の円（柱）1個（#68）：(cx, cy) 中心・半径 r の単一の solid。エディタで自由配置する。 */
+export function disc(cx: number, cy: number, r: number, element: Obstacle['element'], kind?: ObstacleKind): Obstacle {
+  return ob(element, [{ x: cx, y: cy, r }], kind)
+}
+/** 任意サイズの矩形の壁1枚（#68・自由な部屋）：左下 (x, y)・幅 w・高さ h。 */
+export function rect(x: number, y: number, w: number, h: number, element: Obstacle['element'], kind?: ObstacleKind): Obstacle {
+  return obRect(element, [{ x, y, w, h }], kind)
+}
 /** 縦の柱：(cx, y0) から上へ n 個の円を積んだブロブ */
 export function pillar(cx: number, y0: number, n: number, element: Obstacle['element'], kind?: ObstacleKind): Obstacle {
   return ob(

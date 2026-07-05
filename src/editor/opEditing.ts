@@ -37,6 +37,10 @@ export function moveOpBy(op: ObstacleOp, delta: Vec2): ObstacleOp {
       }
     case 'spiralArm':
       return { ...op, params: { ...op.params, cx: op.params.cx + delta.x, cy: op.params.cy + delta.y } }
+    case 'disc':
+      return { ...op, params: { ...op.params, cx: op.params.cx + delta.x, cy: op.params.cy + delta.y } }
+    case 'rect':
+      return { ...op, params: { ...op.params, x: op.params.x + delta.x, y: op.params.y + delta.y } }
     case 'ring':
       return { ...op, params: { ...op.params, cx: op.params.cx + delta.x, cy: op.params.cy + delta.y } }
     case 'roomWalls':
@@ -69,6 +73,8 @@ export function moveOpBy(op: ObstacleOp, delta: Vec2): ObstacleOp {
 
 /** 「＋壁を追加」で選べる op 種別（raw は既存ステージ取り込み専用のため選択肢に出さない）。 */
 export const ADDABLE_OP_KINDS = [
+  'disc',
+  'rect',
   'pillar',
   'block',
   'wall',
@@ -82,6 +88,8 @@ export type AddableOpKind = (typeof ADDABLE_OP_KINDS)[number]
 
 /** op 種別ごとの表示名（docs/11-stage-editor.md §4.1）。 */
 export const OP_KIND_LABELS: Record<AddableOpKind, string> = {
+  disc: '円・任意半径（disc）',
+  rect: '矩形・自由サイズ（rect）',
   pillar: '柱（pillar）',
   block: '矩形ブロック（block）',
   wall: '横壁（wall）',
@@ -96,6 +104,10 @@ export const OP_KIND_LABELS: Record<AddableOpKind, string> = {
 export function createDefaultOp(kind: AddableOpKind): ObstacleOp {
   const id = nextOpId()
   switch (kind) {
+    case 'disc':
+      return { id, kind, params: { cx: 0, cy: 0, r: 3, element: 'neutral' } }
+    case 'rect':
+      return { id, kind, params: { x: -5, y: -5, w: 10, h: 10, element: 'neutral' } }
     case 'pillar':
       return { id, kind, params: { cx: 0, y0: 0, n: 5, element: 'neutral' } }
     case 'block':
