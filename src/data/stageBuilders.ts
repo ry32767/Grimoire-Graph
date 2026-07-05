@@ -173,6 +173,7 @@ export function spiralArm(
   phase: number,
   element: Obstacle['element'],
   r0 = 2.5,
+  kind?: ObstacleKind,
 ): Obstacle {
   return ob(
     element,
@@ -181,6 +182,7 @@ export function spiralArm(
       const rad = r0 + 0.9 * t
       return { x: cx + rad * Math.cos(t), y: cy + rad * Math.sin(t), r: R }
     }),
+    kind,
   )
 }
 /** 横一列に連続する壁（円を overlap させて x0→x1 を切れ目なく覆う）。rows 段重ね。 */
@@ -260,6 +262,7 @@ export function colonnade(
   y0: number,
   n: number,
   elems: Obstacle['element'][],
+  kind?: ObstacleKind,
 ): Obstacle[] {
-  return spanX(x0, x1, step).map((x, i) => pillar(x, y0, n, elems[i % elems.length]))
+  return spanX(x0, x1, step).map((x, i) => pillar(x, y0, n, elems[i % elems.length], kind))
 }

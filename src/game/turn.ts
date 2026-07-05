@@ -1052,8 +1052,10 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
 
   // === 6. 敵弾が味方へ命中（貫通：パス上で触れた全味方に威力分のダメージ。逸れれば回避） ===
   for (const shot of enemyShots) {
-    // 崩し手の弾（#42）は通常の命中でなく 6b の暴発で解決する（極の直前で式が破れる）
-    if (shot.blocked || shot.misfirePos) continue
+    // 崩し手の弾（#42）は通常の命中でなく 6b の暴発で解決する（極の直前で式が破れる）。
+    // blocked（壁の中で停止・パリィ消滅）でも除外しない：飛行サンプルは停止点で打ち切られて
+    // いるため、停止点より前に通過した味方への命中は有効（味方弾 §5 と同じ扱い・AI 事前評価とも一致）
+    if (shot.misfirePos) continue
     const allyTargets: Target[] = allies
       .filter((a) => a.hp > 0)
       .map((a) => ({ id: a.id, pos: a.pos, radius: GAME.allyHitbox }))
