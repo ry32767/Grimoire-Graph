@@ -62,8 +62,8 @@
 | `wall(x0, x1, y0, rows, element, kind)` | 始点x、終点x、開始y、段数、属性、種別 |
 | `colonnade(x0, x1, step, y0, n, elems[])` | 始点x、終点x、柱間隔、開始y、段数、属性配列（順に割当） |
 | `ring(cx, cy, radius, element, kind)` | 中心座標、半径、属性、種別 |
-| `roomWalls(xL, xR, yB, yT, rField)` | 部屋の左右上下、場半径（囲い＝unbreakable） |
-| `roomWallsOpenEnds(xL, xR, rField)` | 部屋の左右、場半径（上下は開放） |
+| `roomWalls(xL, xR, yB, yT, rField, element, kind)` | 部屋の左右上下、属性、種別（既定値 neutral/unbreakable） |
+| `roomWallsOpenEnds(xL, xR, rField)` | 部屋の左右（属性・種別は固定＝neutral/unbreakable） |
 | `spiralArm(cx, cy, n, turns, phase, element)` | 中心座標、点数、巻き数、位相、属性（雰囲気演出用・当たり判定あり） |
 
 種別（`kind`）は `normal`/`fragile`/`tough`/`unbreakable`（04-magic §4.4）から選択。
@@ -80,7 +80,7 @@
 
 ### 4.4 部屋の囲いプリセット（旧・翼壁／#50対応）
 
-- 選択中の壁（帯状の障害物）に対して「部屋の囲いを自動追加」ボタンを用意する。押すと、現在の`rField`に合わせて `roomWalls`（または左右のみの `roomWallsOpenEnds`）を生成し、四方（または左右）を`unbreakable`で囲う（06b §5.6 の設計をワンクリックで適用）。
+- 右側パネルの壁一覧の下に「部屋の囲いを追加」ボタン（四方／左右のみ）を用意する。押すと、現在の`rField`に合わせて `roomWalls`（または左右のみの `roomWallsOpenEnds`）を生成し、四方（または左右）を`unbreakable`で囲う（06b §5.6 の設計をワンクリックで適用）。
 - 生成後のパラメータは通常どおり編集・微調整できる（自動生成は出発点であり、確定値ではない）。
 
 ---
@@ -161,19 +161,19 @@
 
 ## 10. 受け入れ条件
 
-- [ ] エディタは開発ビルドでのみ到達可能で、本番ビルドには含まれない／表示されない
-- [ ] キャンバス描画・座標変換は本編の`draw.ts`/`coords.ts`を流用し、エディタ専用の別実装を持たない
-- [ ] 壁（`pillar`/`block`/`wall`/`colonnade`/`spiralArm`/`ring`/`roomWalls`）を追加・編集・削除でき、パラメータ変更が実際の当たり判定素材としてリアルタイムに反映される
-- [ ] 障害物どうしの意図しない重なりが、キャンバス上で警告表示される
-- [ ] 選択中の壁に「部屋の囲いを自動追加」を適用すると、現行の`roomWalls`/`roomWallsOpenEnds`（`unbreakable`）が生成される
-- [ ] `rField`を編集すると境界円が即時更新され、境界外に出たオブジェクトが警告表示される
-- [ ] 敵の追加時、種族・ティア選択に応じて05cの初期値（HP/family/z場）が自動入力され、以後上書きできる
-- [ ] 敵のfamily/z場選択肢は、選んだLVL・パターンに応じて05b §2の許可表どおりに制限される
-- [ ] 自由入力の式評価はmathjsのみで行われる（`eval`/`new Function`不使用）
-- [ ] 多重詠唱・断末魔を持つボスの設定（castCount・パターンプール・HP閾値）を編集できる
-- [ ] 「テストプレイ」で編集中の定義のまま戦闘が開始し、`instability`の初期値を指定できる。終了後はエディタ画面に戻る
-- [ ] 「リセット」で編集内容が基準状態に巻き戻る（確認を挟む）
-- [ ] 「書き出し」で、`stages.ts`に貼り付け可能なTSコード片が生成される
+- [x] エディタは開発ビルドでのみ到達可能で、本番ビルドには含まれない／表示されない（`import.meta.env.DEV`・`App.tsx` でのみマウント）
+- [x] キャンバス描画・座標変換は本編の`draw.ts`/`coords.ts`を流用し、エディタ専用の別実装を持たない（`BattleCanvas`を流用）
+- [x] 壁（`pillar`/`block`/`wall`/`colonnade`/`spiralArm`/`ring`/`roomWalls`/`roomWallsOpenEnds`）を追加・編集・削除でき、パラメータ変更が実際の当たり判定素材としてリアルタイムに反映される（`ObstaclePanel`・`opEditing.ts`）
+- [x] 障害物どうしの意図しない重なりが、キャンバス上で警告表示される（`ObstacleOverlay`・`overlap.ts`）
+- [x] 選択中の壁に「部屋の囲いを自動追加」を適用すると、現行の`roomWalls`/`roomWallsOpenEnds`（`unbreakable`）が生成される（`roomPresetOp`・`opEditing.ts` §118〜129）
+- [x] `rField`を編集すると境界円が即時更新され、境界外に出たオブジェクトが警告表示される（`StageEditor` §125〜134）
+- [x] 敵の追加時、種族・ティア選択に応じて05cの初期値（HP/family/z場）が自動入力され、以後上書きできる（`EnemyPanel`/`enemyTiers.ts`）
+- [x] 敵のfamily/z場選択肢は、選んだLVL・パターンに応じて05b §2の許可表どおりに制限される（`enemyRules.allowedFamilies`/`allowedZFields`・`enemyRules.test.ts`）
+- [x] 自由入力の式評価はmathjsのみで行われる（`eval`/`new Function`不使用。`src/game/functions.ts`の`parseZExpression`を再利用）
+- [x] 多重詠唱・断末魔を持つボスの設定（castCount・パターンプール・HP閾値）を編集できる（`EnemyBossSection`・`BossPhasesPanel`。断末魔自体はengine側の固定演出のため内容編集は対象外）
+- [x] 「テストプレイ」で編集中の定義のまま戦闘が開始し、`instability`の初期値を指定できる。終了後はエディタ画面に戻る（`App.startTestPlay`/`endTestPlay`・本編の進行状況とはスナップショットで分離）
+- [x] 「リセット」で編集内容が基準状態に巻き戻る（確認を挟む）（`StageEditor.handleReset`・インライン確認）
+- [x] 「書き出し」で、`stages.ts`に貼り付け可能なTSコード片が生成される（`exportStage.exportToTS`・JSON版`exportToJSON`も併設。`ExportBar`でクリップボードコピー）
 
 ---
 
