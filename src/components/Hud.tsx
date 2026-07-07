@@ -91,53 +91,51 @@ function InstabilityMeter({ count }: { count: number }) {
   )
 }
 
-interface Props {
-  allies: Ally[]
-  enemies: Enemy[]
-  activeAllyId?: string | null
-  /** 膜の摩耗（04b）。visible=初回崩壊後のみメーターを出す（第1幕は隠蔽） */
-  instability?: { count: number; visible: boolean }
-  /** 味方行のタップで関数編集へ（#48）。未指定なら非タップ。 */
-  onSelectAlly?: (id: string) => void
-  impairedIds?: string[]
-  /** このターンで術式を設定/変更した味方ID（#49：準備状況✓） */
-  touchedIds?: string[]
-}
+type Props =
+  | {
+      side: 'ally'
+      allies: Ally[]
+      activeAllyId?: string | null
+      /** 膜の摩耗（04b）。visible=初回崩壊後のみメーターを出す（第1幕は隠蔽） */
+      instability?: { count: number; visible: boolean }
+      /** 味方行のタップで関数編集へ（#48）。未指定なら非タップ。 */
+      onSelectAlly?: (id: string) => void
+      impairedIds?: string[]
+      /** このターンで術式を設定/変更した味方ID（#49：準備状況✓） */
+      touchedIds?: string[]
+    }
+  | { side: 'enemy'; enemies: Enemy[] }
 
-export default function Hud({
-  allies,
-  enemies,
-  activeAllyId,
-  instability,
-  onSelectAlly,
-  impairedIds = [],
-  touchedIds = [],
-}: Props) {
-  return (
-    <div className="hud panel">
-      <div className="hud-col">
-        <div className="hud-label">自陣営{onSelectAlly ? '（タップで関数編集）' : ''}</div>
-        {allies.map((a) => (
-          <HpRow
-            key={a.id}
-            name={a.name}
-            hp={a.hp}
-            maxHp={a.maxHp}
-            active={a.id === activeAllyId}
-            statuses={a.statuses}
-            impaired={impairedIds.includes(a.id)}
-            ready={touchedIds.includes(a.id)}
-            onSelect={onSelectAlly ? () => onSelectAlly(a.id) : undefined}
-          />
-        ))}
-        {instability?.visible && <InstabilityMeter count={instability.count} />}
-      </div>
-      <div className="hud-col">
+/** 陣営ステータス（#UI刷新3）：盤面の四隅に浮かせる小ウィジェット。味方＝左下・敵＝右下。 */
+export default function Hud(props: Props) {
+  if (props.side === 'enemy') {
+    return (
+      <div className="hud-side panel enemy">
         <div className="hud-label">敵陣営</div>
-        {enemies.map((e) => (
+        {props.enemies.map((e) => (
           <HpRow key={e.id} name={e.name} hp={e.hp} maxHp={e.maxHp} enemy statuses={e.statuses} />
         ))}
       </div>
+    )
+  }
+  const { allies, activeAllyId, instability, onSelectAlly, impairedIds = [], touchedIds = [] } = props
+  return (
+    <div className="hud-side panel ally">
+      <div className="hud-label">自陣営{onSelectAlly ? '（タップで関数編集）' : ''}</div>
+      {allies.map((a) => (
+        <HpRow
+          key={a.id}
+          name={a.name}
+          hp={a.hp}
+          maxHp={a.maxHp}
+          active={a.id === activeAllyId}
+          statuses={a.statuses}
+          impaired={impairedIds.includes(a.id)}
+          ready={touchedIds.includes(a.id)}
+          onSelect={onSelectAlly ? () => onSelectAlly(a.id) : undefined}
+        />
+      ))}
+      {instability?.visible && <InstabilityMeter count={instability.count} />}
     </div>
   )
 }

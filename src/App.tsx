@@ -999,10 +999,50 @@ export default function App() {
   const activePreview = previews[activeAllyId]
   const anyCastable = battle.allies.some((a) => a.hp > 0 && !impairedIds.includes(a.id))
 
+  // 下部中央スロットは1枠：文脈バー／術式編集カード／通常コマンドドックは排他表示（#UI刷新3）
+  const bottomSlotTaken = view === 'edit' || (composing && (fitPickActive || zAdjustMode))
+
   return (
     <div className="app">
       <div className="battle" data-view={view}>
-        <div className="battle-left">
+        {/* 盤面：画面いっぱいの主役。以下のウィジェットは全てこの上に浮かせる（#UI刷新3） */}
+        <div className="canvas-wrap">
+          <BattleCanvas
+            allies={battle.allies}
+            enemies={battle.enemies}
+            obstacles={battle.obstacles}
+            rField={battle.rField}
+            activeAllyId={composing ? activeAllyId : null}
+            playerPaths={composing ? playerPaths : undefined}
+            misfirePoints={composing ? misfirePoints : undefined}
+            zField={composing ? activeZField ?? undefined : undefined}
+            showZField={composing}
+            standingOrbits={composing ? standingOrbits : undefined}
+            ghostPaths={composing ? ghostPaths : undefined}
+            ghostMisfires={composing ? ghostMisfires : undefined}
+            anomaly={anomalyLevel(instability)}
+            misfireBand={varianceOf(instability) > 0 ? misfireRadiusBand(instability) : undefined}
+            doom={collapseProximity(instability)}
+            collapse={collapsePlaying}
+            onCollapseDone={() => {
+              setCollapsePlaying(false)
+              playSfx('gameover')
+              // テストプレイ中（#67 §7）は結果画面を出さず、そのままエディタへ戻る
+              if (testPlayActive) endTestPlay()
+              else setScreen('gameover')
+            }}
+            animation={animation}
+            onAnimationDone={onAnimationDone}
+            fitPoints={composing ? fitPoints : undefined}
+            onFieldClick={composing && fitPickActive ? onFieldClick : undefined}
+            pickMode={composing && fitPickActive}
+            onAim={composing && !fitPickActive && activeComposer?.mode === 'rotate' ? aimAt : undefined}
+            aimAngle={composing && activeComposer?.mode === 'rotate' ? activeComposer.angle : undefined}
+          />
+        </div>
+
+        {/* 左上：ステージ情報＋メニュー（旧・下部の≡メニューをここへ集約） */}
+        <div className="stage-widget info-corner">
           <div className="phase-bar">
             <span>
               {testPlayActive && <span className="boss-tag">テストプレイ</span>}
@@ -1013,201 +1053,168 @@ export default function App() {
               ターン {battle.turn}・{composing ? '作成フェーズ' : '解決フェーズ'}
             </span>
           </div>
+          <div className="menu-wrap">
+            <button
+              className="btn small menu-toggle"
+              aria-haspopup="true"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((o) => !o)}
+            >
+              <span aria-hidden="true">≡</span> メニュー
+            </button>
+            {menuOpen && (
+              <>
+                <div className="menu-backdrop" onClick={() => setMenuOpen(false)} />
+                <div className="menu-pop">
+                  <button className="btn small" onClick={() => { setGuideOpen(true); setMenuOpen(false) }}>遊び方</button>
+                  <button className="btn small" onClick={() => { setCodexOpen(true); setMenuOpen(false) }}>図鑑</button>
+                  <button
+                    className={`btn small sound-toggle${muted ? ' muted' : ''}`}
+                    onClick={() => { ensureAudio(); setMutedState(toggleMuted()) }}
+                  >
+                    {muted ? '音オフ' : '音オン'}
+                  </button>
+                  {testPlayActive && (
+                    <button className="btn small" onClick={() => { setMenuOpen(false); endTestPlay() }}>
+                      <span aria-hidden="true">■</span> テストプレイ中断 → エディタへ
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* 右上：戦闘ログ */}
+        <div className="stage-widget log-corner">
+          <BattleLog log={battle.log} collapsed={logCollapsed} onToggle={() => setLogCollapsed((v) => !v)} />
+        </div>
+
+        {/* 左下：味方ステータス（タップで術式編集カードを開く） */}
+        <div className="stage-widget party-widget">
           <Hud
+            side="ally"
             allies={battle.allies}
-            enemies={battle.enemies}
             activeAllyId={activeAllyId}
             instability={{ count: instability, visible: collapseSeen }}
             onSelectAlly={composing ? switchAlly : undefined}
             impairedIds={impairedIds}
             touchedIds={[...touchedAllies]}
           />
-          <div className="canvas-wrap">
-            <BattleCanvas
-              allies={battle.allies}
-              enemies={battle.enemies}
-              obstacles={battle.obstacles}
-              rField={battle.rField}
-              activeAllyId={composing ? activeAllyId : null}
-              playerPaths={composing ? playerPaths : undefined}
-              misfirePoints={composing ? misfirePoints : undefined}
-              zField={composing ? activeZField ?? undefined : undefined}
-              showZField={composing}
-              standingOrbits={composing ? standingOrbits : undefined}
-              ghostPaths={composing ? ghostPaths : undefined}
-              ghostMisfires={composing ? ghostMisfires : undefined}
-              anomaly={anomalyLevel(instability)}
-              misfireBand={varianceOf(instability) > 0 ? misfireRadiusBand(instability) : undefined}
-              doom={collapseProximity(instability)}
-              collapse={collapsePlaying}
-              onCollapseDone={() => {
-                setCollapsePlaying(false)
-                playSfx('gameover')
-                // テストプレイ中（#67 §7）は結果画面を出さず、そのままエディタへ戻る
-                if (testPlayActive) endTestPlay()
-                else setScreen('gameover')
-              }}
-              animation={animation}
-              onAnimationDone={onAnimationDone}
-              fitPoints={composing ? fitPoints : undefined}
-              onFieldClick={composing && fitPickActive ? onFieldClick : undefined}
-              pickMode={composing && fitPickActive}
-              onAim={composing && !fitPickActive && activeComposer?.mode === 'rotate' ? aimAt : undefined}
-              aimAngle={composing && activeComposer?.mode === 'rotate' ? activeComposer.angle : undefined}
-            />
-            {/* 戦闘ログは盤面の左下に重ねる半透明オーバーレイ（畳める・#UI刷新）。縦スペースを食わない。 */}
-            <BattleLog log={battle.log} collapsed={logCollapsed} onToggle={() => setLogCollapsed((v) => !v)} />
-          </div>
-
-          {/* 盤面（ステージ）側：発射・メニュー・ログ（HUDは盤面の上に表示・スマホは view=stage で表示） */}
-          <div
-            className="stage-pane"
-            data-mode={composing && fitPickActive ? 'fit' : composing && zAdjustMode ? 'z' : 'normal'}
-          >
-            {/* 盤面で点を選んでそのままフィット（#54・#UI刷新2：PCもシートが閉じるため常時表示） */}
-            {composing && fitPickActive && (
-              <div className="stage-bar fit-bar">
-                <div className="hint">
-                  通したい点を<strong>盤面にタップ</strong> → フィットで曲線を合わせる。
-                </div>
-                <div className="action-row">
-                  <button className="btn primary" disabled={fitPoints.length < 1} onClick={runFit}>
-                    フィット（{fitPoints.length}）
-                  </button>
-                  <button className="btn" disabled={fitPoints.length < 1} onClick={clearFitPoints}>
-                    クリア
-                  </button>
-                  <button className="btn" onClick={() => setFitPickActive(false)}>
-                    やめる
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* 盤面の属性場を見ながら z を調整（#54・#UI刷新2：PCもシートが閉じるため常時表示） */}
-            {composing && zAdjustMode && activeComposer && (
-              <div className="stage-bar z-bar">
-                <div className="section-title">属性の高さ z = f(x,y)（場を見ながら調整）</div>
-                <ZFieldControls composer={activeComposer} onChange={onChange} />
-                <button className="btn primary" onClick={endZAdjust}>
-                  ✓ 調整を終える
-                </button>
-              </div>
-            )}
-
-            <div className="stage-normal">
-              {composing && anyCastable && (
-                <button className="btn おまかせ batch-recommend" onClick={recommendAll}>
-                  全員おまかせ（当たる術式を自動設定）
-                </button>
-              )}
-              <div className="stage-actions">
-                {composing && (
-                  <button className="btn open-sheet" onClick={() => setView('edit')}>
-                    術式を組む
-                  </button>
-                )}
-                <button className={`btn primary fire-all${confirmArmed ? ' danger' : ''}`} onClick={() => fireAll()}>
-                  {confirmArmed
-                    ? '崩壊の危険 ― それでも発射'
-                    : anyCastable
-                      ? '全員発射'
-                      : '次のターンへ'}
-                </button>
-                <div className="menu-wrap">
-                <button
-                  className="btn small menu-toggle"
-                  aria-haspopup="true"
-                  aria-expanded={menuOpen}
-                  onClick={() => setMenuOpen((o) => !o)}
-                >
-                  <span aria-hidden="true">≡</span> メニュー
-                </button>
-                {menuOpen && (
-                  <>
-                    <div className="menu-backdrop" onClick={() => setMenuOpen(false)} />
-                    <div className="menu-pop">
-                      <button className="btn small" onClick={() => { setGuideOpen(true); setMenuOpen(false) }}>遊び方</button>
-                      <button className="btn small" onClick={() => { setCodexOpen(true); setMenuOpen(false) }}>図鑑</button>
-                      <button
-                        className={`btn small sound-toggle${muted ? ' muted' : ''}`}
-                        onClick={() => { ensureAudio(); setMutedState(toggleMuted()) }}
-                      >
-                        {muted ? '音オフ' : '音オン'}
-                      </button>
-                      {testPlayActive && (
-                        <button className="btn small" onClick={() => { setMenuOpen(false); endTestPlay() }}>
-                          <span aria-hidden="true">■</span> テストプレイ中断 → エディタへ
-                        </button>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
-              </div>
-            </div>
-          </div>
         </div>
 
-        {/* 術式編集シート：味方選択／「術式を組む」で開くコマンドメニュー型オーバーレイ（#UI刷新2） */}
+        {/* 右下：敵ステータス */}
+        <div className="stage-widget enemy-widget">
+          <Hud side="enemy" enemies={battle.enemies} />
+        </div>
+
+        {/* 下中央：通過点フィット／z調整の文脈バー、または通常のコマンドドック */}
+        {composing && fitPickActive && (
+          <div className="stage-widget composer-card panel fit-bar">
+            <div className="hint">
+              通したい点を<strong>盤面にタップ</strong> → フィットで曲線を合わせる。
+            </div>
+            <div className="action-row">
+              <button className="btn primary" disabled={fitPoints.length < 1} onClick={runFit}>
+                フィット（{fitPoints.length}）
+              </button>
+              <button className="btn" disabled={fitPoints.length < 1} onClick={clearFitPoints}>
+                クリア
+              </button>
+              <button className="btn" onClick={() => setFitPickActive(false)}>
+                やめる
+              </button>
+            </div>
+          </div>
+        )}
+        {composing && zAdjustMode && activeComposer && (
+          <div className="stage-widget composer-card panel z-bar">
+            <div className="section-title">属性の高さ z = f(x,y)（場を見ながら調整）</div>
+            <ZFieldControls composer={activeComposer} onChange={onChange} />
+            <button className="btn primary" onClick={endZAdjust}>
+              ✓ 調整を終える
+            </button>
+          </div>
+        )}
+        {!bottomSlotTaken && (
+          <div className="stage-widget command-dock">
+            {composing && anyCastable && (
+              <button className="btn おまかせ" onClick={recommendAll}>
+                おまかせ
+              </button>
+            )}
+            {composing && (
+              <button className="btn" onClick={() => setView('edit')}>
+                術式
+              </button>
+            )}
+            <button className={`btn primary fire-all${confirmArmed ? ' danger' : ''}`} onClick={() => fireAll()}>
+              {confirmArmed ? '崩壊の危険 ― 発射' : anyCastable ? '発射' : '次のターンへ'}
+            </button>
+          </div>
+        )}
+
+        {/* 術式編集カード：味方タップ／「術式」ボタンで開く盤面上のカード（#UI刷新3） */}
         {view === 'edit' && <div className="sheet-backdrop" onClick={() => setView('stage')} />}
-        <div className="battle-right">
-          {composing && activeComposer && activePreview ? (
-            <>
-              <div className="ally-tabs">
-                <button className="btn small back-to-stage" onClick={() => setView('stage')}>
-                  ← 盤面へ
-                </button>
-                {battle.allies.map((a) => {
-                  const impaired = impairedIds.includes(a.id)
-                  const dead = a.hp <= 0
-                  return (
-                    <button
-                      key={a.id}
-                      className={`btn small ally-tab${a.id === activeAllyId ? ' selected' : ''}${dead ? ' dead' : ''}`}
-                      disabled={dead}
-                      onClick={() => switchAlly(a.id)}
-                    >
-                      {a.name}
-                      {impaired && !dead ? '（ひるみ）' : ''}
-                    </button>
-                  )
-                })}
+        {view === 'edit' && (
+          <div className="stage-widget composer-card panel">
+            {composing && activeComposer && activePreview ? (
+              <>
+                <div className="ally-tabs">
+                  <button className="btn small back-to-stage" onClick={() => setView('stage')} aria-label="盤面へ戻る">
+                    ✕
+                  </button>
+                  {battle.allies.map((a) => {
+                    const impaired = impairedIds.includes(a.id)
+                    const dead = a.hp <= 0
+                    return (
+                      <button
+                        key={a.id}
+                        className={`btn small ally-tab${a.id === activeAllyId ? ' selected' : ''}${dead ? ' dead' : ''}`}
+                        disabled={dead}
+                        onClick={() => switchAlly(a.id)}
+                      >
+                        {a.name}
+                        {impaired && !dead ? '（ひるみ）' : ''}
+                      </button>
+                    )
+                  })}
+                </div>
+                <FunctionPanel
+                  allyName={battle.allies.find((a) => a.id === activeAllyId)?.name ?? ''}
+                  composer={activeComposer}
+                  onChange={onChange}
+                  preview={activePreview}
+                  onRecommend={recommend}
+                  onOpenCodex={() => setCodexOpen(true)}
+                  fitPickActive={fitPickActive}
+                  fitPointCount={fitPoints.length}
+                  onToggleFitPick={toggleFitPick}
+                  onRunFit={runFit}
+                  onClearFitPoints={clearFit}
+                  onAdjustZOnStage={adjustZOnStage}
+                />
+                <div className="action-row">
+                  <button className={`btn primary fire-all${confirmArmed ? ' danger' : ''}`} onClick={() => fireAll()}>
+                    {confirmArmed
+                      ? '崩壊の危険 ― それでも発射'
+                      : anyCastable
+                        ? '全員発射'
+                        : '次のターンへ'}
+                  </button>
+                  <button className="btn small" onClick={() => setView('stage')}>
+                    盤面へ戻る
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div>
+                <div className="section-title">解決中…</div>
+                <p className="hint">魔法が進行・解決しています。</p>
               </div>
-              <FunctionPanel
-                allyName={battle.allies.find((a) => a.id === activeAllyId)?.name ?? ''}
-                composer={activeComposer}
-                onChange={onChange}
-                preview={activePreview}
-                onRecommend={recommend}
-                onOpenCodex={() => setCodexOpen(true)}
-                fitPickActive={fitPickActive}
-                fitPointCount={fitPoints.length}
-                onToggleFitPick={toggleFitPick}
-                onRunFit={runFit}
-                onClearFitPoints={clearFit}
-                onAdjustZOnStage={adjustZOnStage}
-              />
-              <div className="action-row">
-                <button className={`btn primary fire-all${confirmArmed ? ' danger' : ''}`} onClick={() => fireAll()}>
-                  {confirmArmed
-                    ? '崩壊の危険 ― それでも発射'
-                    : anyCastable
-                      ? '全員発射'
-                      : '次のターンへ'}
-                </button>
-                <button className="btn small" onClick={() => setView('stage')}>
-                  盤面へ戻る
-                </button>
-              </div>
-            </>
-          ) : (
-            <div className="panel">
-              <div className="section-title">解決中…</div>
-              <p className="hint">魔法が進行・解決しています。</p>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
       </div>
 
       {confirmFire && (
