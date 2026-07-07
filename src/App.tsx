@@ -195,6 +195,8 @@ export default function App() {
   // #49：未設定の味方がいる時の発射確認オーバーレイ
   const [confirmFire, setConfirmFire] = useState(false)
   const [codexOpen, setCodexOpen] = useState(false)
+  // #UI刷新：戦闘ログは盤面の隅に重ねる半透明オーバーレイ。畳み開きの状態
+  const [logCollapsed, setLogCollapsed] = useState(false)
   // #23：図鑑用に「遭遇した敵」を記録（セッション内・永続化しない）
   const [seenEnemies, setSeenEnemies] = useState<Set<string>>(new Set())
   const [guideOpen, setGuideOpen] = useState(false)
@@ -1011,6 +1013,15 @@ export default function App() {
               ターン {battle.turn}・{composing ? '作成フェーズ' : '解決フェーズ'}
             </span>
           </div>
+          <Hud
+            allies={battle.allies}
+            enemies={battle.enemies}
+            activeAllyId={activeAllyId}
+            instability={{ count: instability, visible: collapseSeen }}
+            onSelectAlly={composing ? switchAlly : undefined}
+            impairedIds={impairedIds}
+            touchedIds={[...touchedAllies]}
+          />
           <div className="canvas-wrap">
             <BattleCanvas
               allies={battle.allies}
@@ -1044,23 +1055,15 @@ export default function App() {
               onAim={composing && !fitPickActive && activeComposer?.mode === 'rotate' ? aimAt : undefined}
               aimAngle={composing && activeComposer?.mode === 'rotate' ? activeComposer.angle : undefined}
             />
+            {/* 戦闘ログは盤面の左下に重ねる半透明オーバーレイ（畳める・#UI刷新）。縦スペースを食わない。 */}
+            <BattleLog log={battle.log} collapsed={logCollapsed} onToggle={() => setLogCollapsed((v) => !v)} />
           </div>
 
-          {/* 盤面（ステージ）側：HP・キャラ選択・発射・メニュー（スマホは view=stage で表示） */}
+          {/* 盤面（ステージ）側：発射・メニュー・ログ（HUDは盤面の上に表示・スマホは view=stage で表示） */}
           <div
             className="stage-pane show-stage"
             data-mode={composing && fitPickActive ? 'fit' : composing && zAdjustMode ? 'z' : 'normal'}
           >
-            <Hud
-              allies={battle.allies}
-              enemies={battle.enemies}
-              activeAllyId={activeAllyId}
-              instability={{ count: instability, visible: collapseSeen }}
-              onSelectAlly={composing ? switchAlly : undefined}
-              impairedIds={impairedIds}
-              touchedIds={[...touchedAllies]}
-            />
-
             {/* スマホ：盤面で点を選んでそのままフィット（#54） */}
             {composing && fitPickActive && (
               <div className="stage-bar fit-bar show-mobile">
@@ -1095,13 +1098,13 @@ export default function App() {
             <div className="stage-normal">
               {composing && anyCastable && (
                 <button className="btn おまかせ batch-recommend" onClick={recommendAll}>
-                  ✨ 全員おまかせ（当たる術式を自動設定）
+                  全員おまかせ（当たる術式を自動設定）
                 </button>
               )}
               <div className="stage-actions">
                 <button className={`btn primary fire-all${confirmArmed ? ' danger' : ''}`} onClick={() => fireAll()}>
                   {confirmArmed
-                    ? '⚠ 崩壊の危険 ― それでも発射'
+                    ? '崩壊の危険 ― それでも発射'
                     : anyCastable
                       ? '全員発射'
                       : '次のターンへ'}
@@ -1113,7 +1116,7 @@ export default function App() {
                   aria-expanded={menuOpen}
                   onClick={() => setMenuOpen((o) => !o)}
                 >
-                  ≡ メニュー
+                  <span aria-hidden="true">≡</span> メニュー
                 </button>
                 {menuOpen && (
                   <>
@@ -1122,14 +1125,14 @@ export default function App() {
                       <button className="btn small" onClick={() => { setGuideOpen(true); setMenuOpen(false) }}>遊び方</button>
                       <button className="btn small" onClick={() => { setCodexOpen(true); setMenuOpen(false) }}>図鑑</button>
                       <button
-                        className="btn small"
+                        className={`btn small sound-toggle${muted ? ' muted' : ''}`}
                         onClick={() => { ensureAudio(); setMutedState(toggleMuted()) }}
                       >
-                        {muted ? '🔇 音オフ' : '🔊 音オン'}
+                        {muted ? '音オフ' : '音オン'}
                       </button>
                       {testPlayActive && (
                         <button className="btn small" onClick={() => { setMenuOpen(false); endTestPlay() }}>
-                          ■ テストプレイ中断 → エディタへ
+                          <span aria-hidden="true">■</span> テストプレイ中断 → エディタへ
                         </button>
                       )}
                     </div>
@@ -1138,7 +1141,6 @@ export default function App() {
               </div>
               </div>
             </div>
-            <BattleLog log={battle.log} />
           </div>
         </div>
 
@@ -1183,7 +1185,7 @@ export default function App() {
               <div className="action-row show-mobile">
                 <button className={`btn primary fire-all${confirmArmed ? ' danger' : ''}`} onClick={() => fireAll()}>
                   {confirmArmed
-                    ? '⚠ 崩壊の危険 ― それでも発射'
+                    ? '崩壊の危険 ― それでも発射'
                     : anyCastable
                       ? '全員発射'
                       : '次のターンへ'}

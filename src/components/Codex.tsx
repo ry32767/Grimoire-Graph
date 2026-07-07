@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ROTATE_PRESETS, POLAR_PRESETS, defaultCoeffs, buildTrajectory, type Preset } from '../game/functions'
 import { sampleTrajectory, validPrefix } from '../game/coords'
 import { COLORS } from '../render/theme'
@@ -175,8 +175,17 @@ interface Props {
   onClose: () => void
 }
 
+type Tab = 'rotate' | 'polar' | 'enemy'
+
 export default function Codex({ activePresetId, seenEnemies, onClose }: Props) {
   const seen = seenEnemies ?? new Set<string>()
+  const seenCount = [...ENEMY_CATALOG].filter((e) => seen.has(e.name)).length
+  const [tab, setTab] = useState<Tab>('rotate')
+  const tabs: { key: Tab; label: string }[] = [
+    { key: 'rotate', label: '回転 y=g(x)' },
+    { key: 'polar', label: '極座標 r=f(θ)' },
+    { key: 'enemy', label: `敵図鑑（${seenCount}/${ENEMY_CATALOG.length}）` },
+  ]
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -186,26 +195,38 @@ export default function Codex({ activePresetId, seenEnemies, onClose }: Props) {
             閉じる
           </button>
         </div>
-        <div className="section-title">A. 回転 y=g(x)（狙う角度θで回転）</div>
-        <div className="codex-grid">
-          {ROTATE_PRESETS.map((p) => (
-            <Card key={p.id} preset={p} active={p.id === activePresetId} />
+        <div className="codex-tabs">
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              className={`btn small codex-tab${tab === t.key ? ' selected' : ''}`}
+              onClick={() => setTab(t.key)}
+            >
+              {t.label}
+            </button>
           ))}
         </div>
-        <div className="section-title">B. 極座標 r=f(θ)（全方向）</div>
-        <div className="codex-grid">
-          {POLAR_PRESETS.map((p) => (
-            <Card key={p.id} preset={p} active={p.id === activePresetId} />
-          ))}
-        </div>
-        <div className="section-title">
-          C. 敵図鑑（{[...ENEMY_CATALOG].filter((e) => seen.has(e.name)).length}/{ENEMY_CATALOG.length}）
-        </div>
-        <div className="codex-grid">
-          {ENEMY_CATALOG.map((e) => (
-            <EnemyCard key={e.name} entry={e} seen={seen.has(e.name)} />
-          ))}
-        </div>
+        {tab === 'rotate' && (
+          <div className="codex-grid">
+            {ROTATE_PRESETS.map((p) => (
+              <Card key={p.id} preset={p} active={p.id === activePresetId} />
+            ))}
+          </div>
+        )}
+        {tab === 'polar' && (
+          <div className="codex-grid">
+            {POLAR_PRESETS.map((p) => (
+              <Card key={p.id} preset={p} active={p.id === activePresetId} />
+            ))}
+          </div>
+        )}
+        {tab === 'enemy' && (
+          <div className="codex-grid">
+            {ENEMY_CATALOG.map((e) => (
+              <EnemyCard key={e.name} entry={e} seen={seen.has(e.name)} />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )

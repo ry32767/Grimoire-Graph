@@ -150,14 +150,30 @@ export default function FunctionPanel(props: Props) {
       )}
 
       <button className="btn おまかせ" onClick={props.onRecommend} title="無難に当たるおすすめ術式">
-        ✨ おまかせ（当たる術式）
+        おまかせ（当たる術式）
       </button>
 
       {preview.selfMisfireWarning && (
-        <div className="warn">⚠ 足元で暴発（自爆）の恐れ。原点近くで発散する式です。</div>
+        <div className="warn">足元で暴発（自爆）の恐れ。原点近くで発散する式です。</div>
       )}
 
-      {/* 詳細設定（係数・自由式・θ・z 場・計算補助）は折りたたみ（#48） */}
+      {/* 属性の z 場 z=f(x,y)（#30/#21）：毎ターン触る主操作として前面に出す（#UI刷新）。
+          光⇔闇のグラデ枠で属性軸を象徴する。編集中は盤面に場を常時プレビュー（#55）。 */}
+      <div className="zfield-primary">
+        <div className="section-title">
+          <span className="ld-swatch" aria-hidden="true" />
+          属性の高さ z = f(x,y)（光⇔闇）
+          <span className="every-turn">毎ターン</span>
+        </div>
+        {props.onAdjustZOnStage && (
+          <button className="btn small show-mobile adjust-z-stage" onClick={props.onAdjustZOnStage}>
+            盤面で属性を調整（場を見ながら）
+          </button>
+        )}
+        <ZFieldControls composer={c} onChange={onChange} />
+      </div>
+
+      {/* 詳細設定（係数・自由式・θ・計算補助）は折りたたみ（#48） */}
       <button
         className="btn small disclosure"
         aria-expanded={advancedOpen}
@@ -225,17 +241,6 @@ export default function FunctionPanel(props: Props) {
               <div className="hint">発射方向は<strong>盤面のクリック／ドラッグ</strong>でも決められる（#47）。</div>
             </>
           )}
-
-          {/* 属性の z 場 z=f(x,y)（#30/#21）。編集中は常に場をプレビュー表示（#55） */}
-          <div className="zfield-section">
-            <div className="section-title">属性の高さ z = f(x,y)（光⇔闇）</div>
-            {props.onAdjustZOnStage && (
-              <button className="btn small show-mobile adjust-z-stage" onClick={props.onAdjustZOnStage}>
-                🎨 盤面で属性を調整（場を見ながら）
-              </button>
-            )}
-            <ZFieldControls composer={c} onChange={onChange} />
-          </div>
 
           <div className="section-title">計算補助</div>
           <div className="readout">
