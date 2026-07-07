@@ -1061,12 +1061,12 @@ export default function App() {
 
           {/* 盤面（ステージ）側：発射・メニュー・ログ（HUDは盤面の上に表示・スマホは view=stage で表示） */}
           <div
-            className="stage-pane show-stage"
+            className="stage-pane"
             data-mode={composing && fitPickActive ? 'fit' : composing && zAdjustMode ? 'z' : 'normal'}
           >
-            {/* スマホ：盤面で点を選んでそのままフィット（#54） */}
+            {/* 盤面で点を選んでそのままフィット（#54・#UI刷新2：PCもシートが閉じるため常時表示） */}
             {composing && fitPickActive && (
-              <div className="stage-bar fit-bar show-mobile">
+              <div className="stage-bar fit-bar">
                 <div className="hint">
                   通したい点を<strong>盤面にタップ</strong> → フィットで曲線を合わせる。
                 </div>
@@ -1084,9 +1084,9 @@ export default function App() {
               </div>
             )}
 
-            {/* スマホ：盤面の属性場を見ながら z を調整（#54） */}
+            {/* 盤面の属性場を見ながら z を調整（#54・#UI刷新2：PCもシートが閉じるため常時表示） */}
             {composing && zAdjustMode && activeComposer && (
-              <div className="stage-bar z-bar show-mobile">
+              <div className="stage-bar z-bar">
                 <div className="section-title">属性の高さ z = f(x,y)（場を見ながら調整）</div>
                 <ZFieldControls composer={activeComposer} onChange={onChange} />
                 <button className="btn primary" onClick={endZAdjust}>
@@ -1102,6 +1102,11 @@ export default function App() {
                 </button>
               )}
               <div className="stage-actions">
+                {composing && (
+                  <button className="btn open-sheet" onClick={() => setView('edit')}>
+                    術式を組む
+                  </button>
+                )}
                 <button className={`btn primary fire-all${confirmArmed ? ' danger' : ''}`} onClick={() => fireAll()}>
                   {confirmArmed
                     ? '崩壊の危険 ― それでも発射'
@@ -1144,12 +1149,13 @@ export default function App() {
           </div>
         </div>
 
-        {/* 編集側：選んだキャラの関数を組む（スマホは view=edit で表示） */}
-        <div className="battle-right show-edit">
+        {/* 術式編集シート：味方選択／「術式を組む」で開くコマンドメニュー型オーバーレイ（#UI刷新2） */}
+        {view === 'edit' && <div className="sheet-backdrop" onClick={() => setView('stage')} />}
+        <div className="battle-right">
           {composing && activeComposer && activePreview ? (
             <>
               <div className="ally-tabs">
-                <button className="btn small show-mobile back-to-stage" onClick={() => setView('stage')}>
+                <button className="btn small back-to-stage" onClick={() => setView('stage')}>
                   ← 盤面へ
                 </button>
                 {battle.allies.map((a) => {
@@ -1182,7 +1188,7 @@ export default function App() {
                 onClearFitPoints={clearFit}
                 onAdjustZOnStage={adjustZOnStage}
               />
-              <div className="action-row show-mobile">
+              <div className="action-row">
                 <button className={`btn primary fire-all${confirmArmed ? ' danger' : ''}`} onClick={() => fireAll()}>
                   {confirmArmed
                     ? '崩壊の危険 ― それでも発射'
