@@ -3,7 +3,8 @@ import { ROTATE_PRESETS, POLAR_PRESETS, defaultCoeffs, buildTrajectory, type Pre
 import { sampleTrajectory, validPrefix } from '../game/coords'
 import { COLORS } from '../render/theme'
 import { STAGES } from '../data/stages'
-import { speciesOf } from '../render/species'
+import { speciesOf, tierOf } from '../render/species'
+import EnemyPortrait from './EnemyPortrait'
 import type { Enemy, EnemySpecies } from '../game/types'
 
 /** 種族の説明（05c §0/§6：モチーフ・見分け方・ティアで変わる点の一言）。 */
@@ -49,6 +50,7 @@ interface EnemyEntry {
   maxHp: number
   role?: Enemy['role']
   species: EnemySpecies
+  tier: 1 | 2 | 3
   boss?: boolean
 }
 const ENEMY_CATALOG: EnemyEntry[] = (() => {
@@ -65,6 +67,7 @@ const ENEMY_CATALOG: EnemyEntry[] = (() => {
         maxHp: e.maxHp,
         role: e.role,
         species: speciesOf(e),
+        tier: tierOf(e.level),
         boss: e.boss,
       })
     }
@@ -94,9 +97,12 @@ function EnemyCard({ entry, seen }: { entry: EnemyEntry; seen: boolean }) {
   const sp = entry.boss ? null : SPECIES_INFO[entry.species]
   return (
     <div className={`codex-card enemy-card ${entry.element}`}>
-      <div>
-        <strong>{entry.name}</strong>
-        {sp && <span className="formula">{sp.name}</span>}
+      <div className="enemy-card-head">
+        <EnemyPortrait species={entry.species} tier={entry.tier} element={entry.element} boss={entry.boss} />
+        <div>
+          <strong>{entry.name}</strong>
+          {sp && <span className="formula">{sp.name}</span>}
+        </div>
       </div>
       <div className="desc">
         属性：{elementLabel(entry.element)}／得意：{FAMILY_LABEL[entry.family]}／戦：

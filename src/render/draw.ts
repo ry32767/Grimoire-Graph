@@ -458,7 +458,7 @@ function golemEyeColor(e: Pick<Enemy, 'guardZSign' | 'element'>): string {
  * 種族スプライトを (cx,cy) 中心・半径 r で描く（05c §0/§6・#46）。
  * boss は専用描画（drawBossSprite）へ回すため、ここでは扱わない。
  */
-function drawSpeciesSprite(
+export function drawSpeciesSprite(
   ctx: CanvasRenderingContext2D,
   cx: number,
   cy: number,
@@ -526,7 +526,7 @@ function drawScale(
  * bossPhase(0/1/2) で装甲剥離・天秤の傾き・核の露出が段階的に進み、
  * finale='cast' で断末魔（激しい揺れ＋3つの綻び）、outcome='cleared'（finale='done'）で撃破後の崩壊。
  */
-function drawBossSprite(
+export function drawBossSprite(
   ctx: CanvasRenderingContext2D,
   cx: number,
   cy: number,
