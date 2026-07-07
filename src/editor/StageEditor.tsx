@@ -9,6 +9,8 @@ import { compileObstaclesWithOps, fromStage, toStage, type EditorStage, type Obs
 import { roomPresetOp } from './opEditing'
 import { detectOverlaps } from './overlap'
 import { useEditorPointer } from './useEditorPointer'
+import { useEditorKeyboard } from './useEditorKeyboard'
+import { useHistory } from './useHistory'
 import { useSquareFrame } from './useSquareFrame'
 import ObstacleOverlay from './ObstacleOverlay'
 import ObstaclePanel from './ObstaclePanel'
@@ -46,10 +48,22 @@ function obstacleOutOfBounds(o: Obstacle, rField: number): boolean {
 
 export default function StageEditor({ onBack, onTestPlay }: Props) {
   const [stageIndex, setStageIndex] = useState(0)
-  const [stage, setStage] = useState<EditorStage>(() => fromStage(0))
+  const {
+    state: stage,
+    set: setStage,
+    setWithoutHistory: setStageDrag,
+    checkpoint: checkpointHistory,
+    undo,
+    redo,
+    reset: resetHistory,
+    canUndo,
+    canRedo,
+  } = useHistory<EditorStage>(() => fromStage(0))
   // テストプレイ用の instability 初期値（デバッグ入力・§7）とリセットのインライン確認（§8）
   const [testInstability, setTestInstability] = useState(0)
   const [resetConfirm, setResetConfirm] = useState(false)
+  // グリッドスナップ（#67 CAD風操作性）：既定OFF。ONだとドラッグの基準点をグリッドへ丸める
+  const [snapEnabled, setSnapEnabled] = useState(false)
 
   const compiled = useMemo(
     () => compileObstaclesWithOps(stage.obstacleOps, stage.rField),
@@ -98,10 +112,19 @@ export default function StageEditor({ onBack, onTestPlay }: Props) {
   const setBossPhases = (phases: BossPhase[]) => setStage((s) => ({ ...s, bossPhases: phases }))
 
   // キャンバス上の選択・ドラッグ（障害物・敵・味方を1系統の onAim へ束ねる・#67）。
-  const moveEnemyTo = (id: string, pos: Vec2) =>
-    setStage((s) => ({ ...s, enemies: s.enemies.map((e) => (e.id === id ? { ...e, pos } : e)) }))
   const moveAllyTo = (index: number, pos: Vec2) =>
     setStage((s) => {
+      const base = s.allyPositions ?? PARTY.map((a) => ({ ...a.pos }))
+      return { ...s, allyPositions: base.map((p, i) => (i === index ? pos : p)) }
+    })
+  // ドラッグ中専用（履歴を積まない版・#67 CAD風操作性）：checkpointHistory がドラッグ開始時に
+  // 一度だけ履歴を積むので、ドラッグ中の連続更新はここを通して1操作にまとめる。
+  const updateOpDrag = (next: ObstacleOp) =>
+    setStageDrag((s) => ({ ...s, obstacleOps: s.obstacleOps.map((o) => (o.id === next.id ? next : o)) }))
+  const moveEnemyToDrag = (id: string, pos: Vec2) =>
+    setStageDrag((s) => ({ ...s, enemies: s.enemies.map((e) => (e.id === id ? { ...e, pos } : e)) }))
+  const moveAllyToDrag = (index: number, pos: Vec2) =>
+    setStageDrag((s) => {
       const base = s.allyPositions ?? PARTY.map((a) => ({ ...a.pos }))
       return { ...s, allyPositions: base.map((p, i) => (i === index ? pos : p)) }
     })
@@ -110,12 +133,28 @@ export default function StageEditor({ onBack, onTestPlay }: Props) {
     compiled,
     stage.enemies,
     allyPositions,
-    updateOp,
-    moveEnemyTo,
-    moveAllyTo,
+    updateOpDrag,
+    moveEnemyToDrag,
+    moveAllyToDrag,
+    checkpointHistory,
+    snapEnabled,
   )
   const selectedOpId = selection?.kind === 'obstacle' ? selection.id : null
   const selectedEnemyId = selection?.kind === 'enemy' ? selection.id : null
+
+  useEditorKeyboard({
+    selection,
+    obstacleOps: stage.obstacleOps,
+    enemies: stage.enemies,
+    allyPositions,
+    updateOp,
+    deleteOp,
+    updateEnemy,
+    deleteEnemy,
+    moveAllyTo,
+    undo,
+    redo,
+  })
 
   // キャンバスと同じ正方形になるようオーバーレイの実寸を追従させる（§4.2：警告ハイライト用）。
   const { ref: canvasWrapRef, size: frameSize } = useSquareFrame<HTMLDivElement>()
@@ -135,7 +174,7 @@ export default function StageEditor({ onBack, onTestPlay }: Props) {
 
   const selectStage = (i: number) => {
     setStageIndex(i)
-    setStage(fromStage(i))
+    resetHistory(fromStage(i))
     setSelection(null)
     setResetConfirm(false)
   }
@@ -143,7 +182,7 @@ export default function StageEditor({ onBack, onTestPlay }: Props) {
   // リセット（§8）：現在の編集内容を、開いている既存ステージの元定義へ巻き戻す
   // （fromStage は STAGES の不変データから毎回同じ内容を再構成する純粋関数＝基準状態そのもの）。
   const handleReset = () => {
-    setStage(fromStage(stageIndex))
+    resetHistory(fromStage(stageIndex))
     setSelection(null)
     setResetConfirm(false)
   }
@@ -164,6 +203,7 @@ export default function StageEditor({ onBack, onTestPlay }: Props) {
           />
           <ObstacleOverlay
             compiled={compiled}
+            obstacleOps={stage.obstacleOps}
             selectedOpId={selectedOpId}
             overlaps={overlaps}
             rField={stage.rField}
@@ -190,6 +230,19 @@ export default function StageEditor({ onBack, onTestPlay }: Props) {
         <button className="btn small" onClick={onBack}>
           ← タイトルへ戻る
         </button>
+        {/* CAD風ツールバー（#67）：Undo/Redo・グリッドスナップ。矢印キーでナッジ・Deleteで削除も可 */}
+        <div className="editor-toolbar">
+          <button className="btn small" onClick={undo} disabled={!canUndo} title="元に戻す（Ctrl+Z）">
+            ↶ 元に戻す
+          </button>
+          <button className="btn small" onClick={redo} disabled={!canRedo} title="やり直す（Ctrl+Shift+Z）">
+            ↷ やり直す
+          </button>
+          <label className="snap-toggle">
+            <input type="checkbox" checked={snapEnabled} onChange={(e) => setSnapEnabled(e.target.checked)} />
+            グリッドにスナップ
+          </label>
+        </div>
         <StageSettingsPanel
           stageIndex={stageIndex}
           level={stage.level}

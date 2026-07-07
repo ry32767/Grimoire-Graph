@@ -10,10 +10,19 @@ import type { CompiledOp, ObstacleOp } from './model'
 import { hitTestOp, moveOpBy } from './opEditing'
 import { hitTestEnemy } from './enemyEditing'
 import { hitTestAlly } from './allyEditing'
+import { hitTestHandle, resizeOpBy } from './resizeHandles'
+import { snapToGrid } from './snap'
 
 /** 選択対象（障害物 op／敵／味方のいずれか）。null は未選択。 */
 export type EditorSelection =
   | { kind: 'obstacle'; id: string }
+  | { kind: 'enemy'; id: string }
+  | { kind: 'ally'; index: number }
+  | null
+
+/** ドラッグ中の内部ターゲット。障害物は選択ハンドルを掴んでいれば handle にそのIDが入る（#67）。 */
+type DragTarget =
+  | { kind: 'obstacle'; id: string; handle?: string }
   | { kind: 'enemy'; id: string }
   | { kind: 'ally'; index: number }
   | null
@@ -26,17 +35,23 @@ export function useEditorPointer(
   updateOp: (next: ObstacleOp) => void,
   moveEnemyTo: (id: string, pos: Vec2) => void,
   moveAllyTo: (index: number, pos: Vec2) => void,
+  /** ドラッグ開始時に1回だけ呼ばれる：Undo履歴のチェックポイント（#67 CAD風操作性）。 */
+  checkpoint: () => void,
+  /** ON のときドラッグの基準点をグリッドへスナップする（#67 CAD風操作性）。 */
+  snapEnabled: boolean,
 ) {
   const [selection, setSelection] = useState<EditorSelection>(null)
   const draggingRef = useRef(false)
   const anchorRef = useRef<Vec2 | null>(null)
-  const targetRef = useRef<EditorSelection>(null)
+  const targetRef = useRef<DragTarget>(null)
+  const checkpointedRef = useRef(false)
 
   useEffect(() => {
     const endDrag = () => {
       draggingRef.current = false
       anchorRef.current = null
       targetRef.current = null
+      checkpointedRef.current = false
     }
     window.addEventListener('pointerup', endDrag)
     window.addEventListener('pointercancel', endDrag)
@@ -46,10 +61,22 @@ export function useEditorPointer(
     }
   }, [])
 
-  const handleFieldPointer = (m: Vec2) => {
+  const handleFieldPointer = (mRaw: Vec2) => {
+    const m = snapEnabled ? snapToGrid(mRaw) : mRaw
     if (!draggingRef.current) {
-      // ジェスチャー開始（ポインタダウン相当）：味方→敵→障害物の順にヒットテストして選択する
+      // ジェスチャー開始（ポインタダウン相当）。
+      // 既に障害物が選択中なら、まず選択ハンドル（リサイズ）を最優先でヒットテストする（#67）。
       draggingRef.current = true
+      if (selection?.kind === 'obstacle') {
+        const selectedOp = obstacleOps.find((o) => o.id === selection.id)
+        const handleId = selectedOp ? hitTestHandle(selectedOp, m) : null
+        if (handleId) {
+          targetRef.current = { kind: 'obstacle', id: selection.id, handle: handleId }
+          anchorRef.current = m
+          return
+        }
+      }
+      // 味方→敵→障害物の順にヒットテストして選択する
       const allyHit = hitTestAlly(allyPositions, m)
       const enemyHit = allyHit === null ? hitTestEnemy(enemies, m) : null
       let target: EditorSelection = null
@@ -68,7 +95,26 @@ export function useEditorPointer(
     const target = targetRef.current
     anchorRef.current = m
     if (!anchor || !target) return
+
+    if (target.kind === 'obstacle' && target.handle) {
+      // リサイズ：ハンドルはドラッグの絶対座標へそのまま追従させる（相対delta方式の移動とは別系統）
+      if (m.x === anchor.x && m.y === anchor.y) return
+      const op = obstacleOps.find((o) => o.id === target.id)
+      if (!op) return
+      if (!checkpointedRef.current) {
+        checkpoint()
+        checkpointedRef.current = true
+      }
+      updateOp(resizeOpBy(op, target.handle, m))
+      return
+    }
+
     const delta = { x: m.x - anchor.x, y: m.y - anchor.y }
+    if (delta.x === 0 && delta.y === 0) return
+    if (!checkpointedRef.current) {
+      checkpoint()
+      checkpointedRef.current = true
+    }
     if (target.kind === 'obstacle') {
       const op = obstacleOps.find((o) => o.id === target.id)
       if (op) updateOp(moveOpBy(op, delta))

@@ -2,11 +2,13 @@
 // 重なり警告を SVG で重ねて描く。draw.ts/BattleCanvas のキャンバス描画には一切手を加えない。
 import type { Viewport } from '../game/coords'
 import { scaleOf, toScreen } from '../game/coords'
-import type { CompiledOp } from './model'
+import type { CompiledOp, ObstacleOp } from './model'
 import type { OverlapMark } from './overlap'
+import { getResizeHandles } from './resizeHandles'
 
 interface Props {
   compiled: CompiledOp[]
+  obstacleOps: ObstacleOp[]
   selectedOpId: string | null
   overlaps: OverlapMark[]
   rField: number
@@ -15,10 +17,12 @@ interface Props {
 }
 
 /** 選択中 op・重なり警告を薄いオーバーレイとして描く（pointer-events:none でクリックは下のキャンバスへ通す）。 */
-export default function ObstacleOverlay({ compiled, selectedOpId, overlaps, rField, internal }: Props) {
+export default function ObstacleOverlay({ compiled, obstacleOps, selectedOpId, overlaps, rField, internal }: Props) {
   const vp: Viewport = { width: internal, height: internal, unitsRadius: rField }
   const s = scaleOf(vp)
   const selected = compiled.find((c) => c.opId === selectedOpId)
+  const selectedOp = obstacleOps.find((o) => o.id === selectedOpId)
+  const handles = selectedOp ? getResizeHandles(selectedOp) : []
 
   return (
     <svg
@@ -45,6 +49,10 @@ export default function ObstacleOverlay({ compiled, selectedOpId, overlaps, rFie
           })}
         </g>
       ))}
+      {handles.map((h) => {
+        const p = toScreen(h.pos, vp)
+        return <rect key={h.id} className="resize-handle" x={p.x - 5} y={p.y - 5} width={10} height={10} />
+      })}
     </svg>
   )
 }

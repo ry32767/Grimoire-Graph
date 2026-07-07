@@ -64,3 +64,9 @@
   - **没入感の一筆**：body に中央を照らし周縁を沈めるヴィネット（scanline と併用）、`.canvas-wrap::after` で盤面四隅に金の鉤枠、`div.story-text`（物語・結果本文）を「魔導書の頁」枠で囲う（タイトルのリード `p.story-text` は枠なしの軽い扱いのまま＝型セレクタで意図的に出し分け）。
   - **品質のフロア**：`:focus-visible` の金アウトラインを全体に付与（キーボードフォーカス可視）、`prefers-reduced-motion: reduce` で各アニメを実質停止。
   - 検証：typecheck・lint・build・全テスト（415 passed／balance の連打敗北＆対処勝利の両原則含む）green を確認。実機テストプレイ（1280×800／375×700）で崩れ・横スクロール・フォント割れ・オーバーレイのズーム被りが無いことを確認。
+- 2026-07-07（続々・UI刷新2：コマンドメニュー型バトル画面＋敵図鑑ポートレート＋CADエディタ）: `/goal` 要望（盤面が主役・関数設定はボタンで呼び出すUI・RPG画面構成の参考・CAD/PowerPoint風エディタ・敵図鑑の見た目）を受けた3フェーズ実装。**`src/game/` は一切変更していない**（表示・エディタUIのみ）。
+  - **敵図鑑ポートレート（#68）**：バトル中の敵描画と同じ `speciesStyle`/`drawSpeciesSprite`（`render/species`・`render/draw`）を `export` し、新規 `EnemyPortrait.tsx`（48×48canvas）で図鑑カードに表示。`.codex-card canvas` の汎用ルールとの specificity 衝突を実機テストプレイで発見・修正済み。
+  - **バトル画面のコマンドメニュー化**：盤面（canvas）を常時全幅の主役にし、術式編集（`FunctionPanel`/`ZFieldControls`、`.battle-right`）を既定非表示のオーバーレイシートへ変更（PC=右ドッキングパネル／モバイル=ボトムシート、`view:'stage'|'edit'` で開閉）。味方タップ・「術式を組む」ボタン・`.sheet-backdrop` クリックで開閉。点フィット／z調整の文脈バーは PC でもシートが閉じるようになったため `show-mobile` 限定を解除し全幅対応。`BattleCanvas` の座標変換・当たり判定は無変更（実機で照準=着弾を確認）。
+  - **ステージエディタの CAD 風操作性（#67 拡張）**：Undo/Redo（`useHistory.ts`・ドラッグは1操作にまとめる）、キーボード操作（矢印ナッジ・Delete・Ctrl+Z/Shift+Z、`useEditorKeyboard.ts`。テキスト入力中は素通し）、グリッドスナップのトグル（`snap.ts`）、選択ハンドルによるドラッグリサイズ（`resizeHandles.ts`・disc/ring=半径ハンドル・rect=角ハンドル）を追加。
+    - **スコープ外に据え置いたもの**（次の改修候補）：スマートガイド（他オブジェクトとの整列ガイド線）、複数選択（Shift+クリック／矩形選択）、pillar/block/wall/colonnade/spiralArm/roomWalls 等その他 op 種別へのリサイズハンドル拡張（現状は移動のみ・数値はパネルの入力欄で編集）、統一プロパティパネル（選択中オブジェクトの X/Y/W/H ライブ編集）、ツールパレット（選択/パンモード切替）。いずれも `src/editor/` の既存基盤（`opEditing.ts`・`useEditorPointer.ts`）に乗せて追加できる設計にしてある。
+  - 検証：各フェーズごとに typecheck・lint・test（415 passed）・build green を確認し、都度 `/testplay` 相当の実機（Playwright・1280×800／375×700）でシート開閉・照準=着弾・エディタの追加/削除/リサイズ/Undo/Redo/スナップ/入力欄干渉なしを確認してからコミット。
