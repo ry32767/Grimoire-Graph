@@ -185,3 +185,87 @@ describe('敵AIの攻撃計画（#2/#17）', () => {
     }
   })
 })
+
+// ===== #69：掘削（壁削り）の効率と多重サイン軌道 =====
+describe('掘削の軌道が最適化される（#69）', () => {
+  /** 厚い tough の横壁（x0..x1・厚み thickness）を1枚だけ置いた盤面。 */
+  const thickWall = (x0: number, x1: number, y: number, thickness: number): Obstacle => ({
+    id: 'w',
+    element: 'neutral',
+    solids: [],
+    rects: [{ x: x0, y: y - thickness / 2, w: x1 - x0, h: thickness }],
+    carves: [],
+    kind: 'tough',
+  })
+
+  it('火力型は壁を「斜めに舐める」のでなく最短の厚みを抜く軌道で掘る', async () => {
+    const { evaluateEnemyShot } = await import('./enemyPlanning/evaluate')
+    const THICK = 5
+    const wall = thickWall(-30, 30, 0, THICK)
+    // 敵は壁の真上、味方は真下。壁が厚くクリーン命中は無いので掘削フォールバックに入る
+    const e: Enemy = { ...enemy({ x: 0, y: 18 }, 'line', 'light'), role: 'breaker', level: 6, castInitialSpeed: 8 }
+    const a = ally('a', { x: 0, y: -18 }, 'dark')
+    const plan = planEnemyShot(e, [a], [wall], [], [e], 40)
+    expect(plan).not.toBeNull()
+    const ev = evaluateEnemyShot(plan!.trajectory, e.castInitialSpeed, [wall], [], { aimPos: a.pos })
+    // 素材の中を通る長さが「壁の厚みの2倍」を超えるような、壁沿いに長く舐める軌道は選ばれない
+    expect(ev.materialLenBefore).toBeLessThan(THICK * 2)
+    // かつ、実際に素材を削っている（牽制で終わっていない）
+    expect(ev.materialLenBefore - ev.materialLenAfter).toBeGreaterThan(0)
+  })
+
+  it('掘り進めるほど残り素材が減り、同じトンネルを掘り続ける', async () => {
+    const { evaluateEnemyShot } = await import('./enemyPlanning/evaluate')
+    const wall = thickWall(-30, 30, 0, 5)
+    const e: Enemy = { ...enemy({ x: 0, y: 18 }, 'line', 'light'), role: 'breaker', level: 6, castInitialSpeed: 8 }
+    const a = ally('a', { x: 0, y: -18 }, 'dark')
+    const obstacles = [wall]
+    let prevRemain = Infinity
+    for (let turn = 0; turn < 3; turn++) {
+      const plan = planEnemyShot(e, [a], obstacles, [], [e], 40)!
+      const ev = evaluateEnemyShot(plan.trajectory, e.castInitialSpeed, obstacles, [], { aimPos: a.pos })
+      // 本番と同じ削りを盤面へ反映する（次ターンの計画は掘った穴を見る）
+      const cloned = obstacles.map((o) => ({ ...o, carves: [...o.carves] }))
+      evaluateEnemyShot(plan.trajectory, e.castInitialSpeed, cloned, [], { aimPos: a.pos })
+      obstacles[0] = cloned[0]
+      expect(ev.materialLenAfter).toBeLessThanOrEqual(prevRemain + 1e-6)
+      prevRemain = ev.materialLenAfter
+    }
+  })
+})
+
+describe('多重サイン（harmonic・#69）', () => {
+  it('フーリエ正弦級数フィットは g(0)=g(L)=0 を厳密に満たし、通過点へ寄る', async () => {
+    const { fitRouteToFamilies } = await import('./enemyPlanning/routeFit')
+    const origin = { x: 0, y: 0 }
+    // ジグザグに折れる経路（柱の隙間を縫う想定）
+    const route = [origin, { x: 10, y: 6 }, { x: 20, y: -6 }, { x: 30, y: 5 }, { x: 40, y: 0 }]
+    const fits = fitRouteToFamilies(route, origin, ['harmonic'])
+    expect(fits).toHaveLength(1)
+    const f = fits[0]
+    expect(f.family).toBe('harmonic')
+    // 基底 sin(kπx/L) は両端で必ず 0＝狙点を外さない
+    expect(Math.abs(f.g(0))).toBeLessThan(1e-9)
+    expect(Math.abs(f.g(f.goalX))).toBeLessThan(1e-9)
+    // 式（自由入力へ転記する形）も同じ形を表す
+    expect(f.expr).toContain('sin(')
+  })
+
+  it('harmonic の直接候補は複数のサイン波の重ね合わせで、単純な弧より多く向きを変える', async () => {
+    const { familyTrajectories } = await import('./enemyPlanning/trajectories')
+    const z = () => 0
+    const trajs = familyTrajectories('harmonic', { x: 0, y: 0 }, 0, z, 20, 40)
+    expect(trajs.length).toBeGreaterThan(0)
+    // 代表候補の g(x) が 0..40 の間で3回以上向きを変える（人手では追いにくいうねり）
+    const g = trajs[0].mode === 'rotate' ? trajs[0].g : null
+    expect(g).not.toBeNull()
+    let turns = 0
+    let prev = g!(0.5) - g!(0)
+    for (let x = 1; x <= 40; x += 0.5) {
+      const d = g!(x) - g!(x - 0.5)
+      if ((prev > 0 && d < 0) || (prev < 0 && d > 0)) turns++
+      if (Math.abs(d) > 1e-12) prev = d
+    }
+    expect(turns).toBeGreaterThanOrEqual(3)
+  })
+})
