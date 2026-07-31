@@ -1,39 +1,185 @@
-/* ステージエディタ専用スタイル（#67）。2カラム（キャンバス＋パネル）＋下部ボタンバー。 */
-.stage-editor {
+/* ステージエディタ専用スタイル（#67・UI設計仕様書 §5）。v9 の CAD 構成：
+   上部リボン（工具/素材パレット）＋左右の定規＋右カラム＋下部ステータスバー。
+   配色は DESIGN.md のトークン（tokens.css）を参照（HEX直書き禁止・三原則1：構造は鋼青
+   --edge-lite/--cursor、警告は橙 --warn。金・紫は属性専用）。素材識別色だけは固定値（§2.5 苔と同様）。 */
+.stage-editor.cad {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-areas:
-    'canvas panel'
-    'bar panel';
+    'ribbon ribbon'
+    'stage  right'
+    'status status';
   height: 100vh;
   width: 100%;
-  gap: 0;
-  background: #10121a;
-  color: #e2e2f0;
+  gap: 8px;
+  padding: 8px;
+  background: var(--bg);
+  color: var(--text);
 }
 
-.stage-editor-canvas {
-  grid-area: canvas;
+/* ===== リボン（工具/素材/テストプレイ） ===== */
+.cad-ribbon {
+  grid-area: ribbon;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+}
+.cad-group {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding-right: 10px;
+  border-right: 1px solid var(--edge-lite);
+}
+.cad-group .gl {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-right: 4px;
+}
+.tool {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  cursor: pointer;
+  background: var(--win-2);
+  box-shadow:
+    inset 0 0 0 2px var(--edge-dark),
+    inset 0 0 0 3px var(--edge-lite);
+  color: var(--text-dim);
+  font-size: 15px;
+  font-family: var(--font);
+}
+.tool .tt {
+  font-size: 8px;
+}
+.tool.on {
+  color: var(--cursor);
+  box-shadow:
+    inset 0 0 0 2px var(--edge-dark),
+    inset 0 0 0 3px var(--cursor);
+}
+.tool:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+/* 素材識別色（壁の見た目・固定値。トークン化対象外の素材パレット） */
+.mat-swatch {
+  width: 14px;
+  height: 14px;
+  display: block;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+.mat-normal { background: #8a7a5a; }
+.mat-fragile { background: #a06a8a; }
+.mat-tough { background: #4a8fa0; }
+.mat-unbreak { background: #55607a; }
+
+.snap-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.cad-spacer {
+  flex: 1;
+}
+.cad-testset {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  box-shadow: inset 0 0 0 1px var(--edge-lite);
+}
+.cad-testset .gl2 {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.cad-testset input[type='number'] {
+  width: 3.6em;
+  background: var(--win-2);
+  border: none;
+  box-shadow: inset 0 0 0 2px var(--edge-dark), inset 0 0 0 3px var(--edge-lite);
+  color: var(--text);
+  font-family: var(--expr);
+  padding: 4px 6px;
+}
+
+/* ===== ステージ（左・定規＋キャンバス） ===== */
+.cad-stage {
+  grid-area: stage;
   position: relative;
+  min-height: 0;
+  min-width: 0;
+}
+.cad-rulers {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  grid-template-rows: 20px 1fr;
+  height: 100%;
+  padding: 0;
+}
+.cad-corner {
+  background: var(--win-2);
+  box-shadow: inset 0 0 0 1px var(--edge-lite);
   display: flex;
   align-items: center;
   justify-content: center;
+  font-size: 9px;
+  color: var(--text-dim);
+}
+.ruler {
+  background: var(--win-2);
+  box-shadow: inset 0 0 0 1px var(--edge-lite);
+  position: relative;
   overflow: hidden;
+}
+.ruler.top {
+  background-image: repeating-linear-gradient(90deg, var(--edge-lite) 0 1px, transparent 1px 20px);
+}
+.ruler.left {
+  background-image: repeating-linear-gradient(0deg, var(--edge-lite) 0 1px, transparent 1px 20px);
+}
+/* 目盛りの数字。位置（left/top/right/bottom/transform）は JSX 側でインライン指定する
+   （端は内側寄せ・中間は中央）。ここでは共通の見た目と、軸に沿う固定オフセットだけ。 */
+.ruler .rn {
+  position: absolute;
+  font-family: var(--expr);
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.ruler.top .rn {
+  top: 3px;
+}
+.ruler.left .rn {
+  left: 3px;
+}
+.cad-canvas {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   min-height: 0;
+  min-width: 0;
 }
 
-.stage-editor-canvas canvas {
-  max-width: 100%;
-  max-height: 100%;
-}
-
-/* キャンバスと同じ正方形（JSで実測して幅高さを揃える・#67 §4.2）。障害物の選択枠・重なり警告の
-   SVGオーバーレイをこの上にぴったり重ねる。 */
+/* キャンバスと同じ正方形（JSで実測して幅高さを揃える）。障害物の選択枠・重なり警告の
+   SVGオーバーレイをこの上にぴったり重ねる。石板の二重縁で囲う（DESIGN.md §4.1）。 */
 .stage-editor-frame {
   position: relative;
+  box-shadow:
+    inset 0 0 0 2px var(--edge-dark),
+    inset 0 0 0 3px var(--edge-lite);
 }
-
 .stage-editor-frame canvas,
 .stage-editor-overlay {
   position: absolute;
@@ -43,113 +189,110 @@
   max-width: none;
   max-height: none;
 }
+.stage-editor-canvas canvas {
+  max-width: 100%;
+  max-height: 100%;
+}
 
+/* 十字カーソル（ホバー位置・v9） */
+.crosshair-v,
+.crosshair-h {
+  position: absolute;
+  background: rgba(159, 179, 255, 0.4);
+  pointer-events: none;
+  z-index: 3;
+}
+.crosshair-v { width: 1px; top: 0; bottom: 0; }
+.crosshair-h { height: 1px; left: 0; right: 0; }
+
+/* 選択＝鋼青（--cursor）。属性色（金・紫）は使わない（三原則1）。 */
 .stage-editor-overlay .selection-mark circle,
 .stage-editor-overlay .selection-mark rect {
   fill: none;
-  stroke: #55e0ff;
+  stroke: var(--cursor);
   stroke-width: 2;
 }
-
 .stage-editor-overlay .overlap-mark {
-  fill: rgba(255, 90, 60, 0.28);
-  stroke: #ff5a3c;
+  fill: rgba(226, 160, 74, 0.24);
+  stroke: var(--warn);
   stroke-width: 1.5;
   stroke-dasharray: 4 3;
 }
-
 .stage-editor-overlay .character-selection-mark {
   fill: none;
-  stroke: #ffd166;
+  stroke: var(--cursor);
   stroke-width: 2.5;
 }
-
-/* 選択ハンドル（円/矩形のリサイズ・#67 CAD風操作性） */
 .stage-editor-overlay .resize-handle {
-  fill: #10121a;
-  stroke: #55e0ff;
+  fill: var(--win-2);
+  stroke: var(--cursor);
   stroke-width: 2;
 }
 
 .stage-editor-warning {
   position: absolute;
-  left: 8px;
+  left: 28px;
   bottom: 8px;
   right: 8px;
   padding: 6px 10px;
-  border-radius: 6px;
-  background: rgba(255, 90, 60, 0.18);
-  border: 1px solid #ff5a3c;
-  color: #ffcfc2;
+  background: rgba(226, 160, 74, 0.16);
+  border: 1px solid var(--warn);
+  color: var(--warn);
   font-size: 0.85rem;
   overflow-wrap: anywhere;
 }
 
+/* ===== 右カラム（ステージ/オブジェクト/プロパティ・既存パネルを石板カードで並べる） ===== */
+.cad-right {
+  grid-area: right;
+}
 .stage-editor-panel {
-  grid-area: panel;
   overflow-y: auto;
-  padding: 12px;
-  border-left: 1px solid #2a2d3a;
-  background: #161824;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
+  min-height: 0;
 }
-
 .stage-editor-panel section {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  padding: 10px;
+  background: var(--win);
+  box-shadow:
+    inset 0 0 0 2px var(--edge-dark),
+    inset 0 0 0 3px var(--edge-lite);
 }
-
-/* CAD風ツールバー（Undo/Redo・グリッドスナップ・#67） */
-.editor-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.snap-toggle {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: #b9aedd;
-}
-
 .stage-editor-panel h3 {
   margin: 0;
   font-size: 0.95rem;
-  color: #b9bcd6;
+  color: var(--cursor);
 }
-
 .stage-editor-panel label {
   display: flex;
   flex-direction: column;
   gap: 4px;
   font-size: 0.85rem;
-  color: #cfd2e6;
+  color: var(--text);
 }
-
 .stage-editor-panel label.checkbox-row {
   flex-direction: row;
   align-items: center;
   gap: 8px;
 }
-
 .stage-editor-panel select,
 .stage-editor-panel input[type='number'] {
-  background: #0f1119;
-  border: 1px solid #363a4d;
-  border-radius: 4px;
-  color: #e2e2f0;
+  background: var(--win-2);
+  border: none;
+  box-shadow: inset 0 0 0 2px var(--edge-dark), inset 0 0 0 3px var(--edge-lite);
+  color: var(--text);
+  font-family: var(--expr);
   padding: 4px 6px;
 }
-
 .stage-editor-panel .hint {
   margin: 0;
   font-size: 0.78rem;
-  color: #8a8fb0;
+  color: var(--text-dim);
 }
 
 .wall-list {
@@ -159,21 +302,19 @@
   max-height: 140px;
   overflow-y: auto;
 }
-
 .wall-list-item {
   text-align: left;
-  background: #0f1119;
-  border: 1px solid #363a4d;
-  border-radius: 4px;
-  color: #cfd2e6;
+  background: var(--win-2);
+  border: none;
+  box-shadow: inset 0 0 0 1px var(--edge-lite);
+  color: var(--text-dim);
   padding: 4px 6px;
   font-size: 0.8rem;
   cursor: pointer;
 }
-
 .wall-list-item.selected {
-  border-color: #55e0ff;
-  color: #eafcff;
+  box-shadow: inset 0 0 0 2px var(--cursor);
+  color: var(--text);
 }
 
 .room-preset-row {
@@ -182,17 +323,17 @@
   gap: 6px;
 }
 
-.obstacle-form {
+.obstacle-form,
+.enemy-form {
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 8px;
-  border: 1px solid #363a4d;
-  border-radius: 6px;
-  background: #0f1119;
+  box-shadow: inset 0 0 0 1px var(--edge-lite);
+  background: var(--win-2);
 }
-
-.obstacle-form label {
+.obstacle-form label,
+.enemy-form label {
   gap: 2px;
 }
 
@@ -201,102 +342,33 @@
   flex-direction: column;
   gap: 6px;
   font-size: 0.85rem;
-  color: #cfd2e6;
+  color: var(--text);
 }
-
 .elems-row {
   display: flex;
   align-items: center;
   gap: 6px;
 }
-
-.enemy-form {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 8px;
-  border: 1px solid #363a4d;
-  border-radius: 6px;
-  background: #0f1119;
-}
-
-.enemy-form label {
-  gap: 2px;
-}
-
 .pos-row {
   display: flex;
   align-items: flex-end;
   gap: 8px;
 }
-
 .pos-row label {
   flex: 1;
 }
-
 .ally-name {
   font-size: 0.8rem;
-  color: #cfd2e6;
+  color: var(--text);
   min-width: 5.5em;
 }
-
 .checkbox-grid {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 12px;
 }
-
-.expr-ok {
-  font-size: 0.75rem;
-  color: #6ee7a8;
-}
-
-.expr-ng {
-  font-size: 0.75rem;
-  color: #ff8f7a;
-}
-
-.stage-editor-bottombar {
-  grid-area: bar;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  padding: 10px 12px;
-  border-top: 1px solid #2a2d3a;
-  background: #12141e;
-}
-
-.testplay-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.testplay-controls label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.8rem;
-  color: #cfd2e6;
-}
-
-.testplay-controls input[type='number'] {
-  width: 4.5em;
-  background: #0f1119;
-  border: 1px solid #363a4d;
-  border-radius: 4px;
-  color: #e2e2f0;
-  padding: 4px 6px;
-}
-
-.reset-confirm {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.82rem;
-  color: #ffcfc2;
-}
+.expr-ok { font-size: 0.75rem; color: var(--hp-ok); }
+.expr-ng { font-size: 0.75rem; color: var(--hp-low); }
 
 .export-bar {
   display: flex;
@@ -304,31 +376,47 @@
   gap: 8px;
   flex-wrap: wrap;
 }
+.export-status { font-size: 0.78rem; }
+.export-status.ok { color: var(--hp-ok); }
+.export-status.ng { color: var(--hp-low); }
 
-.export-status {
-  font-size: 0.78rem;
+/* ===== ステータスバー ===== */
+.cad-status {
+  grid-area: status;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 12px;
+  font-family: var(--expr);
+  font-size: 14px;
+  color: var(--text-dim);
+  flex-wrap: wrap;
 }
-
-.export-status.ok {
-  color: #6ee7a8;
+.cad-status .k {
+  color: var(--cursor);
 }
-
-.export-status.ng {
-  color: #ff8f7a;
+.cad-status .spacer {
+  flex: 1;
+}
+.reset-confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: var(--warn);
 }
 
 @media (max-width: 860px) {
-  .stage-editor {
+  .stage-editor.cad {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) auto auto;
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
     grid-template-areas:
-      'canvas'
-      'panel'
-      'bar';
+      'ribbon'
+      'stage'
+      'right'
+      'status';
   }
-  .stage-editor-panel {
-    border-left: none;
-    border-top: 1px solid #2a2d3a;
+  .cad-right {
     max-height: 40vh;
   }
 }

@@ -9,6 +9,9 @@ import { firstHit } from './collision'
 import { traverseObstacles } from './turn'
 import { strengthOf } from './attribute'
 import { dist } from './coords'
+import { buildPlanningEnv } from './enemyPlanning/planningEnv'
+import { findRoute } from './enemyPlanning/routeSearch'
+import { fitRouteToFamilies } from './enemyPlanning/routeFit'
 import { FIELD, GAME, RECOMMEND } from '../data/constants'
 
 export interface RecommendResult {
@@ -35,6 +38,11 @@ interface Candidate {
   line?: { a: number; b: number }
   /** 狙い角の初期スロープ（aimAngle の補正に使う） */
   slope0: number
+  /**
+   * 狙い角を直に指定する候補（#69・経路探索フィット）。指定があれば aimAngle 補正を行わない
+   * （フィットは「敵位置を原点・狙点方向を +x」の局所フレームで作られているため）。
+   */
+  angle?: number
 }
 
 /** 数値を式へ描くとき、ごく小さい係数は 0 に丸めて式を簡潔に保つ。 */
@@ -110,6 +118,24 @@ export function recommendCast(from: Vec2, target: Enemy, obstacles: Obstacle[], 
         candidates.push(bulgeCandidate(L, midFrac, off))
       }
     }
+    // 経路探索フィット（#69）：柱や崩れた建造物が密に並ぶ面では、決め打ちの膨らみでは
+    // 隙間を通せない。敵AIと同じ「幾何経路探索 → family フィット」を味方の照準にも通し、
+    // 実際に通り抜けられる曲線（弧・折れ・捻れ）を候補に加える。
+    // clean（素材に触れない）が最優先、無ければ wallTunnel（1本だけ壁を掘る）も試す。
+    const env = buildPlanningEnv(obstacles, R)
+    const wideEnv = buildPlanningEnv(obstacles, R, RECOMMEND.wideClearance)
+    // 広い車線（素材から余裕を取った経路）→ 通常の余白 → 壁掘り の順に候補化する
+    const routes = [
+      findRoute(wideEnv, from, target.pos, 'clean'),
+      findRoute(env, from, target.pos, 'clean'),
+      findRoute(env, from, target.pos, 'wallTunnel'),
+    ]
+    for (const route of routes) {
+      if (!route) continue
+      for (const fit of fitRouteToFamilies(route.points, from, ['arc', 'abs', 'poly34'])) {
+        candidates.push({ g: fit.g, freeExpr: fit.expr, slope0: 0, angle: fit.angle })
+      }
+    }
   }
 
   let best: { score: number; cand: Candidate; angle: number; zConst: number } | null = null
@@ -119,8 +145,10 @@ export function recommendCast(from: Vec2, target: Enemy, obstacles: Obstacle[], 
     const zConst = sign * m
     const zField: ZField = () => zConst
     for (const cand of candidates) {
-      const baseAngle = aimAngle(from, target.pos, cand.slope0)
-      for (const dA of angleOffsets) {
+      const baseAngle = cand.angle ?? aimAngle(from, target.pos, cand.slope0)
+      // 経路フィット候補は狙い角そのものが解の一部なので、角度を振らずそのまま試す
+      const offs = cand.angle !== undefined ? [0] : angleOffsets
+      for (const dA of offs) {
         const angle = baseAngle + dA
         const traj: Trajectory = { mode: 'rotate', g: cand.g, angle, origin: from, z: zField, fieldR: R }
         const free = simulateFlight(traj, FIELD.fixedSpeed)

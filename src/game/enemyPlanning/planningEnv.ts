@@ -52,14 +52,19 @@ function nearMaterial(ob: Obstacle, p: Vec2, c: number): boolean {
   return true
 }
 
-/** 本番ジオメトリと同じ障害物・場を参照する PlanningEnv を構築する。 */
-export function buildPlanningEnv(obstacles: Obstacle[], fieldR?: number): PlanningEnv {
+/**
+ * 本番ジオメトリと同じ障害物・場を参照する PlanningEnv を構築する。
+ * clearance を明示すると「素材からその距離だけ離れた経路」しか通らなくなる（#69）：
+ * 柱の隙間の**真ん中**を通る経路が得られ、後段の family フィットが多少ずれても素材に触れない。
+ * 弾は硬い壁に一度触れただけで失速して消えるので、この余白が命中率を大きく左右する。
+ */
+export function buildPlanningEnv(obstacles: Obstacle[], fieldR?: number, clearance?: number): PlanningEnv {
   const R = fieldR ?? FIELD.rField
   const unbreakables = obstacles.filter((ob) => (ob.kind ?? 'normal') === 'unbreakable')
   return {
     fieldR: R,
     obstacles,
-    clearance: ENEMY_ROUTE_PLANNING.clearance,
+    clearance: clearance ?? ENEMY_ROUTE_PLANNING.clearance,
     isInField: (p) => Math.hypot(p.x, p.y) <= R,
     isMaterial: (p) => obstacles.some((ob) => isSolidAt(ob, p)),
     overlapsMaterial: (p, radius) => obstacles.some((ob) => nearMaterial(ob, p, radius)),

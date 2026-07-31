@@ -1,7 +1,7 @@
 // 敵AIの「見え方」と標的優先度（#35/#39・05-enemies §5.4b）。純粋関数。
 // enemyAI.ts（攻撃計画）と ruptorPlanner.ts（暴発計画）が共有する。
 import type { Ally, Enemy, EnemyFamily, Vec2 } from '../types'
-import { AVOIDER_FAMILIES } from './trajectories'
+import { ELITE_FIT_FAMILIES } from './trajectories'
 
 /** 闇の周回1重あたり、敵が見誤る距離（ユニット・#35）。ヒットボックスより大きく外す。 */
 const CONCEAL_JITTER = 3.5
@@ -41,11 +41,12 @@ export function enemyFamilies(enemy: Enemy): EnemyFamily[] {
 }
 
 /**
- * 迂回型・暴発型が使う family を AVOIDER_FAMILIES（abs/arc/poly34）に制限する（#46・05b §2）。
- * wave/exp/spiral/line は決して選ばれない。フィルタ結果が空（第1面の line 素 attacker 等）なら
+ * 迂回型・暴発型が使う family を「曲げて回り込める系統」（abs/arc/poly34＋harmonic・#46/#69）に
+ * 制限する（05b §2）。wave/exp/spiral/line は決して選ばれない。harmonic はステージ側で明示的に
+ * 付与した高難度個体だけが持つ。フィルタ結果が空（第1面の line 素 attacker 等）なら
  * 後方互換として元の family をそのまま返す（＝素の直進 attacker）。
  */
 export function avoiderFamiliesOf(enemy: Enemy): EnemyFamily[] {
-  const fams = enemyFamilies(enemy).filter((f) => AVOIDER_FAMILIES.includes(f))
+  const fams = enemyFamilies(enemy).filter((f) => ELITE_FIT_FAMILIES.includes(f))
   return fams.length > 0 ? fams : enemyFamilies(enemy)
 }

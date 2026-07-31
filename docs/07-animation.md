@@ -6,6 +6,55 @@ Canvas は内部解像度 `INTERNAL = 520`px 正方形、ビューポート `uni
 
 ---
 
+## 7.0 UI レイアウト（`screens.tsx` / `styles/tokens.css` / `styles/index.css`）
+
+### タイトル画面（`TitleScreen`）
+
+タイトルは、左の術式紋と右の説明・操作を並べる2カラム構成。画面全体は `min-height: 100svh`、
+幅は `min(100%, 1040px)`（`max-width: 1040px`）で、列幅は
+`minmax(260px, 0.78fr) minmax(0, 1.22fr)`、列間隔は
+`clamp(var(--space-8), 6vw, 72px)`。広幅では左寄せで表示する。
+
+- **術式紋**：`180×180` の SVG に、中心 `(90,90)`・半径 `62` の破線軌道、水平・垂直の座標軸、原点の `10×10` 矩形、光=`var(--light)`／闇=`var(--dark)` の2曲線を重ねる。外枠は幅 `min(100%, 340px)`・正方形・内側余白 `var(--space-6)`、下に `z = f(x, y)` を式用フォントで `clamp(20px, 3vw, 28px)` 表示する。
+- **ゲームフロー**：「敵の式を読む」`▸`「関数を描く」`▸`「同時発射」を、上下 `1px solid var(--edge-lite)` の帯に表示する。帯は幅 `100%`、上余白 `var(--space-6)`、内側余白 `var(--space-3) var(--space-4)`、文字サイズ `13px`。
+- **操作**：主 CTA は「魔導書をひらく」、副 CTA は「先に遊び方を見る」。操作列は左寄せ・上余白 `var(--space-6)`、その下に「PC・スマホ対応 ／ ブラウザだけで遊べます」を上余白 `var(--space-4)` で表示する。
+
+### レスポンシブと操作寸法
+
+ブレークポイントは `820px`。`max-width: 820px` ではタイトルを縦1列へリフローし、
+`justify-content: center`、間隔 `var(--space-6)`、中央揃えにする。全画面系の余白は
+`var(--space-8) var(--space-4) calc(var(--space-8) + env(safe-area-inset-bottom))`。
+術式紋は幅 `min(54vw, 210px)`・内側余白 `var(--space-4)`、本文領域とタイトル下の光闇罫線は中央揃え、
+リード文と説明文だけ左揃えにする。リード文は文字サイズ `16px`・上余白 `var(--space-4)`、
+ゲームフロー帯は横余白 `var(--space-2)`・文字サイズ `11px`。操作列は幅 `100%` で中央揃え、
+各ボタンは `flex: 1 1 160px`。
+
+狭幅での `.btn` と `.btn.small` の最小タップ高は、操作トークン `--touch-target: 44px` に統一する。
+`.btn` の内側余白は `10px 14px`。
+
+### 術式編集のドック／ボトムシート
+
+術式編集 `.msg-win-panel` は常に `position: fixed`・`z-index: 7` とし、画面幅で配置を切り替える。
+専用トークンは `--composer-dock-width: 520px`、`--composer-sheet-height: 48svh`、
+`--composer-gutter: 16px`。
+
+- **中幅以下（`max-width: 1080px`）**：画面下のボトムシートとして、`left: 50%`、`bottom: env(safe-area-inset-bottom)`、`transform: translateX(-50%)`、幅 `min(100%, 1180px)`、内側余白 `12px`、最大高 `48svh` で表示する。内容は縦スクロールし、`overscroll-behavior: contain`。編集中の盤面は `width: min(100%, 50svh, 620px)` に抑え、シートの上に盤面を残す。
+- **広幅（`min-width: 1081px`）**：盤面右の固定ドックへ切り替える。ドックは幅 `520px`、上下 `var(--space-2)`、右端は `max(var(--space-2), calc((100vw - 1180px) / 2 + var(--space-2)))`。`left: auto`、`transform: none`、`max-height: none`。編集中の `.battle` は `min-height: 100svh` とし、右側に `calc(520px + 16px)` 相当の余白を確保する。
+
+暗幕は表示しない。`App.tsx` が編集時に出す `.sheet-backdrop` は
+`background: transparent`・`pointer-events: none` のため、編集中も盤面のクリック／ドラッグを遮らない。
+閉じる操作は術式編集内の「×／盤面へ戻る」で行う。
+
+### 戦闘画面の下段幅
+
+盤面下の操作窓 `.bottom-bar` と敵公開フッター `.pc-footer` は、どちらも
+`width: min(100%, 860px)`・`margin-inline: auto` で中央に揃える。
+`.bottom-bar` は `210px 1fr` の2列・間隔 `10px`。`.pc-footer` は左右配置の flex、
+間隔 `12px`、内側余白 `12px 14px`。`max-width: 820px` では `.bottom-bar` を縦積みにし、
+ステータス窓を `order: 1`、コマンド窓を `order: 2` とする。
+
+---
+
 ## 7.1 解決演出のタイムライン（`BattleCanvas`）
 
 演出は **弾の実速度がそのまま再生速度になる**（演出の速さ＝弾の速さ）。`requestAnimationFrame` で駆動。

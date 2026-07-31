@@ -1,0 +1,56 @@
+/* =========================================================
+   デザイントークン（DESIGN.md 正典）
+   「苔むした遺跡の石板に刻まれた、古代式の端末」
+   属性色（光=金/闇=紫）はゲームの意味専用。UI構造は鋼青（edge-lite/cursor）。
+   HEX直書き禁止：実装は必ずこのファイルの変数を参照する。
+   ========================================================= */
+:root {
+  /* 2.1 基調（背景・面） */
+  --bg: #08070f;
+  --arena-bg: #0d0b16;
+  --win: #17132a;
+  --win-2: #100c1e;
+
+  /* 2.2 縁・構造（UIクロム） */
+  --edge-dark: #05040a;
+  --edge-lite: #7d8fc4;
+  --cursor: #9fb3ff;
+
+  /* 2.3 属性色（ゲームの意味専用・UI構造への使用禁止） */
+  --light: #f4c430;
+  --light-soft: #fff3c4;
+  --dark: #8a6fd6;
+  --dark-soft: #362a66;
+
+  /* 2.4 状態色 */
+  --text: #eef0fb;
+  --text-dim: #8b8fae;
+  --hp-ok: #6bd58c;
+  --hp-low: #e2596b;
+  --warn: #e2a04a;
+
+  /* 2.5 レイアウト・操作（4px基調。狭幅でも操作密度を落としすぎない） */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --touch-target: 44px;
+
+  /* 術式編集：広幅は盤面の横へ退避、狭幅は盤面を残す低いシート */
+  --composer-dock-width: 520px;
+  --composer-sheet-height: 48svh;
+  --composer-gutter: 16px;
+
+  /* 角丸ではなく角欠きで形を作る。動きもドット絵らしく短く切る。 */
+  --radius: 0;
+  --motion-fast: 90ms steps(2, end);
+
+  /* 3. タイポグラフィ（フォントファイル未同梱のためフォールバックスタックのみ） */
+  --font: 'Pixelify Sans', 'PixelMplus', 'DotGothic16', sans-serif;
+  --expr: 'VT323', monospace;
+
+  color-scheme: dark;
+}

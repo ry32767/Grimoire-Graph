@@ -4,6 +4,7 @@ import { FIELD } from '../data/constants'
 import { toScreen, scaleOf, visibleBounds, type Viewport } from '../game/coords'
 import { attributeOf, strengthOf } from '../game/attribute'
 import { COLORS } from './theme'
+import { ARENA, TOKENS } from './palette'
 import { getWallTexture } from './textures'
 import {
   speciesOf,
@@ -107,6 +108,18 @@ export function drawBackground(ctx: CanvasRenderingContext2D, vp: Viewport): voi
   ctx.fillStyle = COLORS.bg
   ctx.fillRect(0, 0, vp.width, vp.height)
 
+  // 光/闇の気配（DESIGN.md §4.3：左上に金・右下に紫をごく薄く）
+  const lightGlow = ctx.createRadialGradient(0, 0, 0, 0, 0, vp.width * 0.6)
+  lightGlow.addColorStop(0, ARENA.lightGlow)
+  lightGlow.addColorStop(1, 'rgba(244,196,48,0)')
+  ctx.fillStyle = lightGlow
+  ctx.fillRect(0, 0, vp.width, vp.height)
+  const darkGlow = ctx.createRadialGradient(vp.width, vp.height, 0, vp.width, vp.height, vp.width * 0.6)
+  darkGlow.addColorStop(0, ARENA.darkGlow)
+  darkGlow.addColorStop(1, 'rgba(138,111,214,0)')
+  ctx.fillStyle = darkGlow
+  ctx.fillRect(0, 0, vp.width, vp.height)
+
   // 画面に映る数学範囲をユニット境界へ丸める（スケール変更でも方眼が全体を覆う）
   const b = visibleBounds(vp)
   // 線が多すぎる極端なズームアウトでは間隔を倍々に広げて固まりを防ぐ（通常スケールでは 1）
@@ -150,8 +163,15 @@ export function drawBackground(ctx: CanvasRenderingContext2D, vp: Viewport): voi
   ctx.lineTo(o.x, vp.height)
   ctx.stroke()
 
-  // 場外境界
-  ctx.strokeStyle = 'rgba(120,110,180,0.4)'
+  // 原点マーカー（DESIGN.md §4.3：cursor色の6px角＋濃縁）
+  ctx.fillStyle = TOKENS.cursor
+  ctx.strokeStyle = TOKENS.edgeDark
+  ctx.lineWidth = 1
+  ctx.fillRect(o.x - 3, o.y - 3, 6, 6)
+  ctx.strokeRect(o.x - 3, o.y - 3, 6, 6)
+
+  // 場外境界（rField：真円・鋼青の縁）
+  ctx.strokeStyle = TOKENS.edgeLite
   ctx.beginPath()
   ctx.arc(o.x, o.y, vp.unitsRadius * scaleOf(vp), 0, Math.PI * 2)
   ctx.stroke()
@@ -696,6 +716,7 @@ const FAMILY_LABEL: Record<Enemy['family'], string> = {
   exp: '昇り',
   poly34: '捻れ',
   abs: '折れ',
+  harmonic: '重波',
 }
 
 /** 敵の得意関数（系統）を表す小さなドット記号（#17：見た目で判別）。 */
@@ -739,6 +760,15 @@ function drawFamilyGlyph(
     ctx.moveTo(cx - 9, cy - 6)
     ctx.lineTo(cx, cy + 6)
     ctx.lineTo(cx + 9, cy - 6)
+    ctx.stroke()
+  } else if (family === 'harmonic') {
+    // 重波（#69）：周期の違うサイン波の重ね合わせ＝繰り返さないうねり
+    for (let i = 0; i <= 18; i++) {
+      const x = -9 + i
+      const y = -(Math.sin(x * 0.75) * 3.5 + Math.sin(x * 1.45 + 1.1) * 2 + Math.sin(x * 2.3 + 2.3) * 1.1)
+      if (i === 0) ctx.moveTo(cx + x, cy + y)
+      else ctx.lineTo(cx + x, cy + y)
+    }
     ctx.stroke()
   } else {
     // spiral：渦巻き

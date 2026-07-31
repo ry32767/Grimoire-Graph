@@ -36,6 +36,24 @@ interface Props {
 
 const attrLabel = (a: string) => (a === 'light' ? '光' : a === 'dark' ? '闇' : '中立')
 
+// プリセットアイコン（DESIGN.md §5「プリセットアイコン」）：形の記号で選ぶ。式名の文字列は出さない。
+const PRESET_ICON: Record<string, string> = {
+  line: '╱',
+  parabola: '◠',
+  sine: '〜',
+  exp: '⤴',
+  abs: '∨',
+  circle: '○',
+  spiral: '⟳',
+  rose: '❀',
+  limacon: '∾',
+}
+
+/** 数式の整形表示（DESIGN.md §3）：`*` 省略・`-`→`−`・`^2`→`²`（表示専用・入力は生の式のまま）。 */
+function formatExprPretty(expr: string): string {
+  return expr.replace(/\*/g, '').replace(/\^2\b/g, '²').replace(/-/g, '−')
+}
+
 export default function FunctionPanel(props: Props) {
   const { composer: c, onChange, preview } = props
   const [freeDraft, setFreeDraft] = useState(c.freeExpr)
@@ -82,7 +100,7 @@ export default function FunctionPanel(props: Props) {
   const canFit = c.mode === 'rotate' && preview.kind === 'projectile' && c.fitParams.length > 0
 
   return (
-    <div className="panel func-panel">
+    <div className="panel func-panel rwin">
       <div className="panel-head">
         <span className="panel-ally">{props.allyName} の術式</span>
         <span className={`kind-badge ${preview.kind}`}>
@@ -90,29 +108,44 @@ export default function FunctionPanel(props: Props) {
         </span>
       </div>
 
-      {/* 形（プリセット）をプルダウンで選ぶ（#48：ボタンを減らす） */}
-      <div className="form-row">
-        <label className="form-label">形</label>
-        <select
-          className="select"
-          value={`${c.mode}:${c.presetId}`}
-          onChange={(e) => {
-            const [mode, id] = e.target.value.split(':')
-            if (mode !== c.mode) switchMode(mode as 'rotate' | 'polar')
-            selectPreset(id)
-          }}
-        >
-          <optgroup label="発射型（回転 y=g(x)）">
-            {ROTATE_PRESETS.map((p) => (
-              <option key={p.id} value={`rotate:${p.id}`}>{p.name}</option>
-            ))}
-          </optgroup>
-          <optgroup label="軌道型（極座標 r=f(θ)）">
-            {POLAR_PRESETS.map((p) => (
-              <option key={p.id} value={`polar:${p.id}`}>{p.name}</option>
-            ))}
-          </optgroup>
-        </select>
+      {/* 形（プリセット）を preset-icon で選ぶ（DESIGN.md §5：式名の文字列ではなく形の記号） */}
+      <div className="form-row preset-group">
+        <label className="form-label">発射</label>
+        <div className="preset-row">
+          {ROTATE_PRESETS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              title={p.name}
+              className={`preset-icon${c.mode === 'rotate' && c.presetId === p.id ? ' selected' : ''}`}
+              onClick={() => {
+                if (c.mode !== 'rotate') switchMode('rotate')
+                selectPreset(p.id)
+              }}
+            >
+              {PRESET_ICON[p.id] ?? '?'}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="form-row preset-group">
+        <label className="form-label">軌道</label>
+        <div className="preset-row">
+          {POLAR_PRESETS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              title={p.name}
+              className={`preset-icon${c.mode === 'polar' && c.presetId === p.id ? ' selected' : ''}`}
+              onClick={() => {
+                if (c.mode !== 'polar') switchMode('polar')
+                selectPreset(p.id)
+              }}
+            >
+              {PRESET_ICON[p.id] ?? '?'}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="preset-desc">{preset?.description ?? '自由入力式'}</div>
 
@@ -207,6 +240,16 @@ export default function FunctionPanel(props: Props) {
 
           <div className="free-input-wrap">
             <div className="section-title">自由入力（{c.mode === 'polar' ? 'θ の式・θ は t' : 'x の式'}）</div>
+            <div className="expr-box">
+              <div className="expr-pretty">
+                {c.mode === 'polar' ? 'r = ' : 'y = '}
+                {formatExprPretty(c.freeExpr)}
+              </div>
+              <div className="expr-raw">
+                {c.mode === 'polar' ? 'r = ' : 'y = '}
+                {c.freeExpr}
+              </div>
+            </div>
             <div className="free-input">
               <input
                 type="text"

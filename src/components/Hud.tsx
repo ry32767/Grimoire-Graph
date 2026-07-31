@@ -106,11 +106,14 @@ type Props =
     }
   | { side: 'enemy'; enemies: Enemy[] }
 
-/** 陣営ステータス（#UI刷新3）：盤面の四隅に浮かせる小ウィジェット。味方＝左下・敵＝右下。 */
+/**
+ * 陣営ステータス。敵＝盤面隅の小ウィジェット（enemy 側）、味方＝下部ステータス窓の中身（ally 側・
+ * DESIGN.md §5「ステータス窓」）。外枠の rwin はそれぞれの呼び出し側（App.tsx）が用意する。
+ */
 export default function Hud(props: Props) {
   if (props.side === 'enemy') {
     return (
-      <div className="hud-side panel enemy">
+      <div className="hud-side panel rwin rwin-flat enemy">
         <div className="hud-label">敵陣営</div>
         {props.enemies.map((e) => (
           <HpRow key={e.id} name={e.name} hp={e.hp} maxHp={e.maxHp} enemy statuses={e.statuses} />
@@ -119,22 +122,42 @@ export default function Hud(props: Props) {
     )
   }
   const { allies, activeAllyId, instability, onSelectAlly, impairedIds = [], touchedIds = [] } = props
+  // ステータス窓（DESIGN.md §5・UI設計仕様書 §2）：grid 5列（✓/名前/HPバー/状態/数値）。
   return (
-    <div className="hud-side panel ally">
-      <div className="hud-label">自陣営{onSelectAlly ? '（タップで関数編集）' : ''}</div>
-      {allies.map((a) => (
-        <HpRow
-          key={a.id}
-          name={a.name}
-          hp={a.hp}
-          maxHp={a.maxHp}
-          active={a.id === activeAllyId}
-          statuses={a.statuses}
-          impaired={impairedIds.includes(a.id)}
-          ready={touchedIds.includes(a.id)}
-          onSelect={onSelectAlly ? () => onSelectAlly(a.id) : undefined}
-        />
-      ))}
+    <div className="status-win">
+      {allies.map((a) => {
+        const ready = touchedIds.includes(a.id)
+        const dead = a.hp <= 0
+        const impaired = impairedIds.includes(a.id)
+        const pct = Math.max(0, Math.min(100, (a.hp / a.maxHp) * 100))
+        const hasFlinch = a.statuses.some((s) => s.kind === 'flinch')
+        const hasBurn = a.statuses.some((s) => s.kind === 'burn')
+        const tappable = !!onSelectAlly && !dead
+        const Tag = tappable ? 'button' : 'div'
+        return (
+          <Tag
+            key={a.id}
+            className={`status-row${a.id === activeAllyId ? ' active' : ''}${dead ? ' dead' : ''}${tappable ? ' tappable' : ''}`}
+            onClick={tappable ? () => onSelectAlly!(a.id) : undefined}
+            {...(tappable ? { type: 'button' as const } : {})}
+          >
+            <span className={`status-check${ready ? ' ready' : ' unset'}`} aria-hidden="true">
+              {ready ? '◎' : '・'}
+            </span>
+            <span className="nm">
+              {a.name}
+              {impaired && !dead ? '（ひるみ）' : ''}
+            </span>
+            <span className={`hp-bar${hasFlinch ? ' flinch' : ''}${hasBurn ? ' burn' : ''}`}>
+              <span className="hp-fill" style={{ width: `${pct}%` }} />
+            </span>
+            <StatusBadges statuses={a.statuses} />
+            <span className="status-num">
+              {Math.ceil(a.hp)}/{a.maxHp}
+            </span>
+          </Tag>
+        )
+      })}
       {instability?.visible && <InstabilityMeter count={instability.count} />}
     </div>
   )

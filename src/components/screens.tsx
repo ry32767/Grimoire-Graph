@@ -3,23 +3,40 @@ import { TITLE_TEXT } from '../data/story'
 
 export function TitleScreen({ onStart, onGuide }: { onStart: () => void; onGuide: () => void }) {
   return (
-    <div className="screen-center">
-      <h1 className="title-main">{TITLE_TEXT.title}</h1>
-      <div className="title-sub">{TITLE_TEXT.subtitle}</div>
-      <p className="story-text">{TITLE_TEXT.lead}</p>
-      <p className="story-text">
-        関数を「描いて」魔法に変える、ターン制の関数バトル。敵の式を読んでから、こちらの式で対抗しよう。
-      </p>
-      <div className="center-actions">
-        <button className="btn primary" onClick={onStart}>
-          はじめる
-        </button>
-        <button className="btn" onClick={onGuide}>
-          遊び方
-        </button>
+    <main className="screen-center title-screen">
+      <div className="title-emblem rwin rwin-flat" aria-hidden="true">
+        <svg viewBox="0 0 180 180" role="presentation">
+          <circle className="emblem-orbit" cx="90" cy="90" r="62" />
+          <path className="emblem-axis" d="M24 90h132M90 24v132" />
+          <path className="emblem-light" d="M26 116C52 116 56 52 89 52s38 64 65 64" />
+          <path className="emblem-dark" d="M26 70c24 0 34 42 61 42s39-42 67-42" />
+          <rect className="emblem-origin" x="85" y="85" width="10" height="10" />
+        </svg>
+        <div className="emblem-formula">z = f(x, y)</div>
       </div>
-      <div className="hint">推奨：デスクトップブラウザ（Chrome / Firefox / Safari 最新版）</div>
-    </div>
+
+      <div className="title-content">
+        <div className="title-kicker">FUNCTION BATTLE RPG</div>
+        <h1 className="title-main">{TITLE_TEXT.title}</h1>
+        <div className="title-sub">{TITLE_TEXT.subtitle}</div>
+        <p className="title-lead">{TITLE_TEXT.lead}</p>
+        <p className="title-pitch">
+          敵の術式を読み、関数を描き、3人の魔導士で同時に撃ち返す。数式がそのまま軌道と属性になる、約15分の冒険。
+        </p>
+        <div className="title-loop" aria-label="ゲームの流れ">
+          <span>敵の式を読む</span><i aria-hidden="true">▸</i><span>関数を描く</span><i aria-hidden="true">▸</i><span>同時発射</span>
+        </div>
+        <div className="center-actions">
+          <button className="btn primary" onClick={onStart}>
+            魔導書をひらく
+          </button>
+          <button className="btn" onClick={onGuide}>
+            先に遊び方を見る
+          </button>
+        </div>
+        <div className="hint title-device-note">PC・スマホ対応 ／ ブラウザだけで遊べます</div>
+      </div>
+    </main>
   )
 }
 

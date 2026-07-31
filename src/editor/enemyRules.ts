@@ -5,8 +5,8 @@ import type { EnemyFamily, EnemyRole, ZField } from '../game/types'
 import { sinCosZ } from '../data/stageBuilders'
 import { parseZExpression } from '../game/functions'
 
-/** 迂回型・暴発型が使える family（05b §2：LVLに関わらず常に有効な制約）。 */
-export const AVOIDER_FAMILIES: EnemyFamily[] = ['abs', 'arc', 'poly34']
+/** 迂回型・暴発型が使える family（05b §2：LVLに関わらず常に有効な制約。#69 で harmonic を追加）。 */
+export const AVOIDER_FAMILIES: EnemyFamily[] = ['abs', 'arc', 'poly34', 'harmonic']
 
 /** family の LVL 解放順（06b §3）。 */
 const FAMILY_UNLOCK: { level: number; family: EnemyFamily }[] = [
@@ -17,6 +17,7 @@ const FAMILY_UNLOCK: { level: number; family: EnemyFamily }[] = [
   { level: 4, family: 'spiral' },
   { level: 4, family: 'exp' },
   { level: 5, family: 'poly34' },
+  { level: 6, family: 'harmonic' }, // #69：多重サイン。終盤の強敵だけが使う
 ]
 
 /** LVL までに解放済みの family 一覧（role による絞り込みは allowedFamilies 側で行う）。 */

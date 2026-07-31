@@ -29,34 +29,30 @@
    8ビット・ドット絵調 / 光=金白・闇=紫藍・背景黒め・高コントラスト
    ========================================================= */
 :root {
-  /* 背景・枠 */
-  --bg: #0d0b14;
-  --bg-2: #14101e;
-  --grid: #1e2a6b;
-  --panel-bg: rgba(18, 14, 28, 0.92);
-  --panel-border: #4a3f6b;
-  --panel-bevel: #2a2342;
+  /* ---- 旧トークン名 → DESIGN.md 正典トークン（src/styles/tokens.css）の別名。
+     HEX直書きをここに復活させない。値は必ず tokens.css を参照する（DESIGN.md §7）。
+     --bg・--text・--text-dim は tokens.css と同名のため再宣言しない（自己参照の循環を避ける）。 ---- */
+  --bg-2: var(--win-2);
+  --grid: var(--edge-lite);
+  --panel-bg: var(--win);
+  --panel-border: var(--edge-lite);
+  --panel-bevel: var(--edge-dark);
 
   /* 光の理（金〜白・暖色） */
-  --light-1: #f4c430;
-  --light-2: #fff8e1;
+  --light-1: var(--light);
+  --light-2: var(--light-soft);
   /* 闇の理（紫〜藍） */
-  --dark-1: #7b5cc4;
-  --dark-2: #1e2a6b;
-  /* 中立 */
+  --dark-1: var(--dark);
+  --dark-2: var(--dark-soft);
+  /* 中立（属性を持たない構造色。トークン化対象外の暫定値） */
   --neutral: #3a3a46;
 
-  --text: #fff8e1;
-  --text-dim: #b9aedd;
-  --danger: #e85d75;
-  --ok: #6bd58c;
+  --danger: var(--hp-low);
+  --ok: var(--hp-ok);
 
-  /* 全テキスト共通の1書体（ドット）。数値/ロゴも和文本文もこれで揃える。 */
-  --font-body: 'DotGothic16', 'Press Start 2P', monospace;
-  /* 旧・欧文ロゴ用トークン。互換のため残すが実体は body と同一（＝完全統一）。 */
-  --font-pixel: var(--font-body);
-
-  color-scheme: dark;
+  /* UI全般は --font（Pixelify Sans/PixelMplus/DotGothic16）、数式・数値は --expr（VT323） */
+  --font-body: var(--font);
+  --font-pixel: var(--font);
 }
 
 * {
@@ -109,37 +105,48 @@ canvas {
   padding: 12px;
 }
 
-/* ---- ボタン ---- */
+/* ---- ボタン（DESIGN.md §4.2：押し込む石。角丸なし・ハード影・鋼青が構造色） ---- */
 .btn {
   background: var(--bg-2);
   color: var(--text);
-  border: 3px solid var(--panel-border);
-  box-shadow: 0 3px 0 #000;
+  border: 2px solid var(--edge-lite);
+  border-radius: 0;
+  box-shadow: 0 3px 0 var(--edge-dark);
   padding: 8px 14px;
   font-size: 13px;
   transition: transform 0.05s;
 }
-.btn:hover {
-  border-color: var(--light-1);
-  color: var(--light-1);
+.btn:hover,
+.btn:focus-visible {
+  border-color: var(--cursor);
+  color: var(--cursor);
 }
 .btn:active {
   transform: translateY(3px);
-  box-shadow: 0 0 0 #000;
+  box-shadow: 0 0 0 var(--edge-dark);
 }
-.btn.primary {
-  background: linear-gradient(180deg, #5a4a8a, #3a2f5e);
-  border-color: var(--light-1);
-  color: var(--light-2);
+/* gold：そのフェーズの最重要アクション（1画面1つ・DESIGN.md §2.3例外） */
+.btn.primary,
+.btn.gold {
+  background: linear-gradient(180deg, #3a2f10, var(--bg-2));
+  border-color: var(--light);
+  color: var(--light-soft);
+  box-shadow: 0 3px 0 #6b4e00;
+}
+.btn.primary:hover,
+.btn.gold:hover {
+  border-color: var(--light);
+  color: var(--light);
 }
 .btn.danger {
-  border-color: var(--danger);
-  color: var(--danger);
+  border-color: var(--hp-low);
+  color: var(--hp-low);
 }
+/* 選択状態は鋼青（属性色は使わない・DESIGN.md 三原則1） */
 .btn.selected {
-  background: #3a2f5e;
-  border-color: var(--light-1);
-  color: var(--light-1);
+  background: var(--win);
+  border-color: var(--cursor);
+  color: var(--cursor);
 }
 .btn:disabled {
   opacity: 0.4;
@@ -148,6 +155,16 @@ canvas {
 .btn.small {
   padding: 5px 9px;
   font-size: 12px;
+}
+/* ghost/テキスト：枠なし tertiary（補助アクション） */
+.btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--text-dim);
+}
+.btn.ghost:hover {
+  color: var(--cursor);
 }
 
 /* 見出し：欧文/ロゴ（h1＝タイトルロゴのみ）はドット絵欧文フォント、
@@ -161,7 +178,7 @@ h1 {
 h2,
 h3 {
   font-family: var(--font-body);
-  color: var(--light-1);
+  color: var(--cursor);
   line-height: 1.4;
 }
 
@@ -179,18 +196,89 @@ h3 {
 .screen-center {
   max-width: 720px;
   margin: 0 auto;
-  padding: 40px 24px;
+  padding: var(--space-12) var(--space-6);
   text-align: center;
   display: flex;
   flex-direction: column;
   gap: 18px;
   align-items: center;
 }
+.title-screen {
+  width: min(100%, 1040px);
+  min-height: 100svh;
+  max-width: 1040px;
+  display: grid;
+  grid-template-columns: minmax(260px, 0.78fr) minmax(0, 1.22fr);
+  align-content: center;
+  gap: clamp(var(--space-8), 6vw, 72px);
+  text-align: left;
+}
+.title-emblem {
+  width: min(100%, 340px);
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  justify-self: end;
+  padding: var(--space-6);
+  color: var(--edge-lite);
+}
+.title-emblem svg {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  filter: drop-shadow(4px 4px 0 var(--edge-dark));
+}
+.title-emblem path,
+.title-emblem circle {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+.emblem-orbit {
+  stroke: var(--edge-lite);
+  stroke-width: 2;
+  stroke-dasharray: 3 6;
+}
+.emblem-axis {
+  stroke: var(--edge-lite);
+  stroke-width: 1;
+  opacity: 0.45;
+}
+.emblem-light,
+.emblem-dark {
+  stroke-width: 4;
+  stroke-linecap: square;
+}
+.emblem-light { stroke: var(--light); }
+.emblem-dark { stroke: var(--dark); }
+.emblem-origin {
+  fill: var(--cursor);
+  stroke: var(--edge-dark);
+  stroke-width: 3;
+}
+.emblem-formula {
+  margin-top: calc(var(--space-4) * -1);
+  color: var(--light-soft);
+  font-family: var(--expr);
+  font-size: clamp(20px, 3vw, 28px);
+  letter-spacing: 0.08em;
+}
+.title-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+.title-kicker {
+  color: var(--cursor);
+  font-family: var(--expr);
+  font-size: 15px;
+  letter-spacing: 0.18em;
+}
 .title-main {
-  font-size: 38px;
+  font-size: clamp(38px, 5.3vw, 58px);
   color: var(--light-1);
   text-shadow: 4px 4px 0 var(--dark-2);
-  margin: 8px 0 0;
+  margin: var(--space-1) 0 0;
   position: relative;
 }
 /* 広い画面での余白を単調にしない一筆（光と闇の理を示す罫線・#UI改善） */
@@ -199,20 +287,54 @@ h3 {
   display: block;
   width: 120px;
   height: 3px;
-  margin: 16px auto 0;
+  margin: var(--space-3) 0 0;
   background: linear-gradient(90deg, var(--dark-1), var(--light-1));
 }
 @media (min-width: 900px) {
   .screen-center {
     max-width: 880px;
   }
-  .title-main {
-    font-size: 46px;
-  }
 }
 .title-sub {
   color: var(--text-dim);
   font-size: 15px;
+  margin-top: var(--space-3);
+}
+.title-lead {
+  margin: var(--space-6) 0 0;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.85;
+  max-width: 34em;
+}
+.title-pitch {
+  margin: var(--space-3) 0 0;
+  color: var(--text-dim);
+  line-height: 1.8;
+  max-width: 38em;
+}
+.title-loop {
+  width: 100%;
+  margin-top: var(--space-6);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  border-block: 1px solid var(--edge-lite);
+  color: var(--text);
+  font-size: 13px;
+}
+.title-loop i {
+  color: var(--cursor);
+  font-style: normal;
+}
+.title-content .center-actions {
+  justify-content: flex-start;
+  margin-top: var(--space-6);
+}
+.title-device-note {
+  margin-top: var(--space-4);
 }
 .clear-time {
   font-size: 12px;
@@ -257,30 +379,28 @@ div.story-text {
 }
 
 /* =========================================================
-   バトル画面レイアウト（#UI刷新3：盤面フルブリード＋四隅ウィジェット）
-   側パネルやドロワーで場を分割せず、盤面（canvas）を画面いっぱいの主役にし、
-   HUD・コマンド・ログ・術式編集はすべて盤面に直接重なる浮遊ウィジェットとして
-   四隅／下部中央に配置する（参考：docs/20200423_VisualTurnBattle.jfif・
-   docs/sinslayer103-e1619689058849.png）。盤面は正方形のまま画面中央に固定し、
-   ウィジェットは画面（.battle）基準で四隅に絶対配置する―― PC では盤面の左右
-   余白の上に、モバイルでは盤面自体の縁に重なる（画面幅に応じて自然にそうなる）。
+   バトル画面レイアウト（UI設計仕様書 §0/§2：PC＝盤面＋下部2窓の並列表示）
+   盤面（canvas）は固定高の主役として上段に、下段は
+   コマンド窓｜ステータス窓（bottom-bar）と 詠唱ウィンドウ（msg-win）を
+   同じスロットで排他表示する。戦闘ログ／ステージ情報は盤面右上・左上の
+   log-tab／info-corner として盤面の内側に重ねる（DESIGN.md §5）。
    ========================================================= */
 .battle {
   position: relative;
   width: 100%;
-  height: calc(100dvh - 16px);
-  min-height: 420px;
+  max-width: 1180px;
+  margin: 0 auto;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
+  flex-direction: column;
+  gap: 10px;
   padding: 8px;
 }
 
+/* 盤面は常に正方形（縦横比 1:1 を崩さない）。幅を「横幅・画面高さ」の小さい方で
+   決め、高さは aspect-ratio で追従させる（max-height で幅を固定して潰さない）。 */
 .canvas-wrap {
   position: relative;
-  width: 100%;
-  max-width: min(100%, calc(100dvh - 32px));
+  width: min(100%, 62vh, 620px);
   aspect-ratio: 1 / 1;
   background: var(--bg);
   border: 3px solid var(--panel-border);
@@ -295,7 +415,7 @@ div.story-text {
   display: block;
 }
 
-/* ---- 浮遊ウィジェットの共通土台。個別の位置クラスと組み合わせて使う ---- */
+/* ---- 盤面に重ねる隅ウィジェット（情報・ログ・敵陣営） ---- */
 .stage-widget {
   position: absolute;
   z-index: 5;
@@ -307,57 +427,81 @@ div.story-text {
   flex-direction: column;
   align-items: flex-start;
   gap: 4px;
-  max-width: min(50%, 280px);
+  max-width: min(60%, 280px);
 }
-.log-corner {
-  top: 8px;
-  right: 8px;
-  width: min(46%, 300px);
-}
-.party-widget {
+/* 敵陣営ステータスは盤面左下（右下は盤面ズームボタン専用にして被りを防ぐ）。 */
+.enemy-corner {
   bottom: 8px;
   left: 8px;
-  width: min(46%, 230px);
+  width: min(52%, 220px);
 }
-.enemy-widget {
-  bottom: 8px;
-  right: 8px;
-  width: min(46%, 230px);
+
+/* ---- 下段：コマンド窓｜ステータス窓（PC 並列・DESIGN.md §5）。 ---- */
+.bottom-bar {
+  display: grid;
+  grid-template-columns: 210px 1fr;
+  gap: 10px;
+  width: min(100%, 860px);
+  margin-inline: auto;
 }
-.command-dock {
-  bottom: 8px;
+.cmd-win-panel,
+.status-win-panel {
+  padding: 10px;
+}
+
+/* ---- 詠唱ウィンドウ（術式編集）。
+   狭〜中幅は盤面を上半分に残す低いボトムシート。広幅は下の media query で
+   盤面右のドックへ切り替える。どちらも盤面を暗転させない。 */
+.msg-win-panel {
+  position: fixed;
   left: 50%;
+  bottom: env(safe-area-inset-bottom);
   transform: translateX(-50%);
-  z-index: 6;
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  justify-content: center;
-  max-width: min(96%, 460px);
-}
-/* 横並びのドックでは「おまかせ」の幅いっぱい表示を無効化（縦積み前提の既定を上書き） */
-.command-dock .btn.おまかせ {
-  width: auto;
-}
-.composer-card {
-  bottom: 8px;
-  left: 50%;
-  transform: translateX(-50%);
+  width: min(100%, 1180px);
   z-index: 7;
-  width: min(94%, 640px);
-  max-height: min(78vh, 620px);
+  padding: 12px;
+  max-height: var(--composer-sheet-height);
   overflow-y: auto;
-  border-radius: 12px;
+  overscroll-behavior: contain;
 }
-/* 開閉中は背景クリックで閉じる（術式編集カード共通） */
+/* 盤面は暗転させず、編集したまま照準を動かせる。閉じる操作は×／盤面へ戻るで明示する。 */
 .sheet-backdrop {
   position: fixed;
   inset: 0;
   z-index: 6;
-  background: rgba(0, 0, 0, 0.35);
+  background: transparent;
+  pointer-events: none;
 }
 
-/* 盤面のメニュー（旧・下部の≡メニューを左上の情報ウィジェットへ集約・#UI刷新3） */
+/* 中幅以下ではシートの上端より上に盤面を収め、敵・予告線・z場を隠さない。 */
+@media (max-width: 1080px) {
+  .battle[data-view='edit'] .canvas-wrap {
+    width: min(100%, 50svh, 620px);
+  }
+}
+
+/* 広幅：盤面と術式を並べる。盤面を主役のまま左に、編集石板を右に固定する。 */
+@media (min-width: 1081px) {
+  .battle[data-view='edit'] {
+    min-height: 100svh;
+    justify-content: center;
+    padding-right: calc(var(--composer-dock-width) + var(--composer-gutter));
+  }
+  .battle[data-view='edit'] .canvas-wrap {
+    margin-inline: auto;
+  }
+  .msg-win-panel {
+    top: var(--space-2);
+    right: max(var(--space-2), calc((100vw - 1180px) / 2 + var(--space-2)));
+    bottom: var(--space-2);
+    left: auto;
+    width: var(--composer-dock-width);
+    max-height: none;
+    transform: none;
+  }
+}
+
+/* 盤面のメニュー（左上の情報ウィジェットに同居） */
 .menu-wrap {
   position: relative;
 }
@@ -381,22 +525,19 @@ div.story-text {
   min-width: 140px;
 }
 
-/* 盤面の文脈バー（点を選ぶ／属性を調整・#54）。composer-card と同じ下部中央スロット */
-.stage-bar {
+/* 敵公開フェーズ（UI設計仕様書 §1）：盤面下のフッター。ヒント文＋gold進行ボタン */
+.pc-footer {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px;
-  background: var(--panel-bg);
-  border: 3px solid var(--light-1);
-  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.5);
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  width: min(100%, 860px);
+  margin-inline: auto;
 }
-.stage-bar .action-row {
-  display: flex;
-  gap: 8px;
-}
-.stage-bar .action-row .btn {
-  flex: 1;
+.pc-footer .hint {
+  font-size: 13px;
+  color: var(--text-dim);
 }
 
 /* スマホ専用要素は PC では隠す（#48）。ユーティリティなので !important で確実に効かせる */
@@ -404,48 +545,126 @@ div.story-text {
   display: none !important;
 }
 
-/* ===== スマホ：ウィジェットを小さく・タップ領域を大きく（#48・#UI刷新3） ===== */
+/* ===== スマホ：盤面を残して下は縦積み・コマンドは横3ボタン（UI設計仕様書 §6） ===== */
 @media (max-width: 820px) {
+  .screen-center {
+    padding: var(--space-8) var(--space-4) calc(var(--space-8) + env(safe-area-inset-bottom));
+  }
+  .title-screen {
+    min-height: 100svh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: var(--space-6);
+    text-align: center;
+  }
+  .title-emblem {
+    width: min(54vw, 210px);
+    justify-self: auto;
+    align-self: center;
+    padding: var(--space-4);
+  }
+  .title-content {
+    align-items: center;
+  }
+  .title-main::after {
+    margin-inline: auto;
+  }
+  .title-lead,
+  .title-pitch {
+    text-align: left;
+  }
+  .title-lead {
+    font-size: 16px;
+    margin-top: var(--space-4);
+  }
+  .title-loop {
+    padding-inline: var(--space-2);
+    font-size: 11px;
+  }
+  .title-content .center-actions {
+    width: 100%;
+    justify-content: center;
+  }
+  .title-content .center-actions .btn {
+    flex: 1 1 160px;
+  }
   .show-mobile {
     display: flex !important;
   }
-  .party-widget,
-  .enemy-widget,
+  .battle {
+    padding: 6px;
+    gap: 6px;
+  }
+  /* スマホでも正方形を維持（max-height で幅を固定して潰さない）。幅を画面高さ側でも
+     制限したいので width の上限を下げる（高さは aspect-ratio で追従＝常に 1:1）。 */
+  .canvas-wrap {
+    width: min(100%, 52vh);
+  }
   .info-corner,
-  .log-corner {
+  .enemy-corner {
     font-size: 11px;
   }
-  .party-widget,
-  .enemy-widget {
-    width: min(48%, 180px);
-    /* コマンドドック（1行・下端固定）と重ならないよう、その上に避ける（#UI刷新3） */
-    bottom: 58px;
+  .enemy-corner {
+    width: min(56%, 180px);
   }
-  .log-corner {
-    width: min(48%, 220px);
+  .log-panel {
+    width: min(78%, 220px);
   }
   .log {
     max-height: 90px;
   }
-  /* コマンドドックは折り返さず1行に収める（3ボタンぶんだけコンパクトに・#UI刷新3） */
-  .command-dock {
-    flex-wrap: nowrap;
+  /* bottom-bar：ステータス窓を上、コマンドを下に縦積み（v9 のスマホ順序） */
+  .bottom-bar {
+    display: flex;
+    flex-direction: column;
   }
-  .command-dock .btn {
-    padding: 8px 10px;
-    font-size: 12px;
-    min-height: 38px;
+  .status-win-panel {
+    order: 1;
+  }
+  .cmd-win-panel {
+    order: 2;
+  }
+  /* コマンド窓は横3ボタンに変形（カーソル▶は隠す） */
+  .cmd-win {
+    flex-direction: row;
+  }
+  .cmd-item {
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 4px;
+    font-size: 11px;
+    text-align: center;
+    min-height: var(--touch-target);
+  }
+  .cmd-item .cmd-cursor {
+    display: none;
+  }
+  .status-row {
+    grid-template-columns: 14px 44px 1fr 46px;
+    font-size: 11px;
+  }
+  .status-row.tappable,
+  .preset-icon,
+  .log-tab,
+  .menu-toggle {
+    min-height: var(--touch-target);
+    min-width: var(--touch-target);
+  }
+  .status-row .status-badges {
+    display: none;
   }
   /* タップ領域を大きく（44px 目安） */
   .btn {
-    min-height: 42px;
+    min-height: var(--touch-target);
     padding: 10px 14px;
   }
   .btn.small {
-    min-height: 38px;
+    min-height: var(--touch-target);
   }
   .select {
-    min-height: 42px;
+    min-height: var(--touch-target);
   }
 }
 /* 魔導書のページ枠：四隅にだけ金の鉤枠を残す（内側2px枠を角マスクで切り出す・#UI刷新）。
@@ -469,47 +688,54 @@ div.story-text {
     linear-gradient(#000 0 0) bottom right / 18px 18px no-repeat;
 }
 
-/* ===== 戦闘ログ：右上の浮遊ウィジェット（畳める・#UI刷新3） =====
-   .log-corner（絶対配置）の中身として使うので、ここでは自身は静的配置。 */
-.log-overlay {
-  width: 100%;
-  background: rgba(13, 11, 20, 0.66);
-  border: 2px solid var(--panel-border);
-  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(2px);
-}
-.log-overlay .log-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  gap: 8px;
-  padding: 4px 8px;
-  background: rgba(30, 26, 46, 0.7);
-  border: none;
-  color: var(--light-1);
-  font-family: var(--font-body);
-  font-size: 10px;
-}
-.log-overlay .log-head:hover {
-  color: var(--light-2);
-}
-.log-overlay .log-head > span:first-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.log-overlay .log-caret {
-  color: var(--light-1);
+/* ===== 戦闘ログ：盤面右上の log-tab（常設）→ log-panel（開閉・DESIGN.md §5） ===== */
+.log-tab {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 6;
+  font-family: var(--font);
   font-size: 11px;
+  padding: 5px 8px;
+  cursor: pointer;
+  color: var(--text-dim);
+  background: var(--win);
+  border: none;
+  box-shadow:
+    inset 0 0 0 2px var(--edge-dark),
+    inset 0 0 0 3px var(--edge-lite);
+  clip-path: polygon(3px 0, calc(100% - 3px) 0, 100% 3px, 100% calc(100% - 3px), calc(100% - 3px) 100%, 3px 100%, 0 calc(100% - 3px), 0 3px);
 }
-.log-overlay .log {
-  max-height: 118px;
-  padding: 4px 8px 6px;
+.log-tab:hover {
+  color: var(--cursor);
+}
+.log-panel {
+  position: absolute;
+  top: 40px;
+  right: 8px;
+  width: min(72%, 230px);
+  max-height: 200px;
+  padding: 8px 10px;
+  z-index: 6;
+  overflow-y: auto;
+}
+.log-panel .log {
   margin: 0;
 }
-.log-overlay.collapsed .log {
-  display: none;
+.log-line {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.6;
+  border-top: 1px solid var(--edge-lite);
+  padding-top: 4px;
+  margin-top: 4px;
+  display: flex;
+  gap: 4px;
+}
+.log-line:first-child {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
 }
 /* 盤面の拡大縮小（ズーム）ボタン：盤面の右下に重ねる */
 .zoom-controls {
@@ -522,16 +748,16 @@ div.story-text {
   z-index: 3;
 }
 .zoom-controls button {
-  width: 34px;
-  height: 34px;
+  width: var(--touch-target);
+  height: var(--touch-target);
   padding: 0;
   font-size: 18px;
   line-height: 1;
   font-family: var(--font-pixel);
-  color: var(--light-1);
+  color: var(--cursor);
   background: rgba(13, 11, 20, 0.72);
   border: 2px solid var(--panel-border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   cursor: pointer;
   touch-action: manipulation;
 }
@@ -608,7 +834,7 @@ button.hp-row.tappable:hover {
 }
 .hp-row .edit-cue {
   flex: 0 0 auto;
-  color: var(--light-1);
+  color: var(--cursor);
   opacity: 0.7;
   font-size: 13px;
   width: 16px;
@@ -656,11 +882,14 @@ button.hp-row.tappable:hover {
   position: relative;
   overflow: hidden;
 }
+/* HPフィル：属性色フィル＋セル目地（DESIGN.md §4.4） */
 .hp-fill {
   display: block;
   height: 100%;
   min-height: 10px;
-  background: linear-gradient(180deg, var(--ok), #3aa05c);
+  background:
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.3) 0 1px, transparent 1px 6px),
+    linear-gradient(180deg, var(--ok), #3aa05c);
   transition: width 0.3s;
   box-shadow: 0 0 6px rgba(107, 213, 140, 0.5);
 }
@@ -668,7 +897,9 @@ button.hp-row.tappable:hover {
   box-shadow: 0 0 6px rgba(232, 93, 117, 0.5);
 }
 .hp-fill.enemy {
-  background: linear-gradient(180deg, var(--danger), #9c3650);
+  background:
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.3) 0 1px, transparent 1px 6px),
+    linear-gradient(180deg, var(--danger), #9c3650);
 }
 .hp-num {
   width: 56px;
@@ -718,7 +949,7 @@ button.hp-row.tappable:hover {
 }
 .panel-ally {
   font-size: 11px;
-  color: var(--light-1);
+  color: var(--cursor);
 }
 .kind-badge {
   font-size: 10px;
@@ -727,8 +958,8 @@ button.hp-row.tappable:hover {
   white-space: nowrap;
 }
 .kind-badge.projectile {
-  color: var(--light-1);
-  border-color: var(--light-1);
+  color: var(--cursor);
+  border-color: var(--cursor);
 }
 .kind-badge.orbit {
   color: #8ab0ff;
@@ -754,7 +985,7 @@ button.hp-row.tappable:hover {
 
 .section-title {
   font-size: 11px;
-  color: var(--light-1);
+  color: var(--cursor);
   margin: 4px 0 8px;
   border-bottom: 2px dotted var(--panel-bevel);
   padding-bottom: 4px;
@@ -779,7 +1010,7 @@ button.hp-row.tappable:hover {
   margin: 6px 0;
   padding: 5px 8px;
   background: rgba(0, 0, 0, 0.3);
-  border-left: 3px solid var(--light-1);
+  border-left: 3px solid var(--cursor);
 }
 
 /* フォーム行（プルダウン・#48） */
@@ -791,7 +1022,7 @@ button.hp-row.tappable:hover {
 }
 .form-label {
   font-size: 10px;
-  color: var(--light-1);
+  color: var(--cursor);
   flex: 0 0 auto;
   width: 28px;
 }
@@ -828,18 +1059,18 @@ button.hp-row.tappable:hover {
 .fit-section.primary .action-row {
   margin-top: 8px;
 }
-/* 「おまかせ」系ボタン：絵文字ではなく縁取りと背景の輝きで“おすすめ”を示す */
+/* 「おまかせ」系ボタン：補助アクション（tertiary）。gold は最重要1つに残すため鋼青の輝きで示す */
 .btn.おまかせ {
   width: 100%;
-  border-color: var(--light-1);
-  color: var(--light-1);
-  background: linear-gradient(180deg, rgba(244, 196, 48, 0.16), var(--bg-2));
+  border-color: var(--cursor);
+  color: var(--cursor);
+  background: linear-gradient(180deg, rgba(159, 179, 255, 0.14), var(--bg-2));
   box-shadow:
-    0 3px 0 #000,
-    0 0 0 1px rgba(244, 196, 48, 0.35) inset;
+    0 3px 0 var(--edge-dark),
+    0 0 0 1px rgba(159, 179, 255, 0.3) inset;
 }
 .btn.おまかせ:hover {
-  background: linear-gradient(180deg, rgba(244, 196, 48, 0.26), var(--bg-2));
+  background: linear-gradient(180deg, rgba(159, 179, 255, 0.24), var(--bg-2));
 }
 .btn.disclosure {
   width: 100%;
@@ -889,8 +1120,8 @@ button.hp-row.tappable:hover {
   border: 2px solid var(--panel-bevel);
   color: var(--light-2);
   padding: 6px 8px;
-  font-family: var(--font-body);
-  font-size: 14px;
+  font-family: var(--expr);
+  font-size: 18px;
 }
 .field-error {
   color: var(--danger);
@@ -921,8 +1152,8 @@ button.hp-row.tappable:hover {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--light-1);
-  box-shadow: 0 0 4px var(--light-1);
+  background: var(--cursor);
+  box-shadow: 0 0 4px var(--cursor);
 }
 .sound-toggle.muted::before {
   background: transparent;
@@ -1010,7 +1241,7 @@ button.hp-row.tappable:hover {
   color: var(--text-dim);
 }
 .log .info {
-  color: var(--light-1);
+  color: var(--cursor);
 }
 .log .miss {
   color: #888;
@@ -1066,7 +1297,7 @@ button.hp-row.tappable:hover {
   background: rgba(0, 0, 0, 0.3);
 }
 .codex-card.active {
-  border-color: var(--light-1);
+  border-color: var(--cursor);
 }
 .codex-card .formula {
   color: var(--light-1);
@@ -1091,7 +1322,7 @@ button.hp-row.tappable:hover {
 }
 .guide-title {
   font-size: 13px;
-  color: var(--light-1);
+  color: var(--cursor);
   margin: 4px 0 8px;
 }
 .guide-diagram {
@@ -1362,7 +1593,7 @@ code {
    ========================================================= */
 /* キーボードフォーカスを常に見える状態に（outline を消しっぱなしにしない） */
 :focus-visible {
-  outline: 2px solid var(--light-1);
+  outline: 2px solid var(--cursor);
   outline-offset: 2px;
 }
 /* 動きを減らす設定を尊重（HPバーの状態演出・メーター点滅などを止める） */
@@ -1374,4 +1605,286 @@ code {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
+}
+
+/* =========================================================
+   DESIGN.md §5 コンポーネント語彙（石板の文法）
+   既存の .panel/.btn とは並存する追加クラス。適用は既存要素へ className を足すだけ。
+   ========================================================= */
+
+/* ---- 石板ウィンドウ（.rwin）：角欠き・二重縁・苔・粒・ひび ---- */
+.rwin {
+  --notch: 3px;
+  /* ::after（ひび）の位置基準に static でも contain で十分（.stage-widget 等の
+     absolute/relative 指定はそちらの specificity・詳細度に関わらず維持される）。 */
+  contain: layout;
+  clip-path: polygon(
+    var(--notch) 0, calc(100% - var(--notch)) 0, 100% var(--notch),
+    100% calc(100% - var(--notch)), calc(100% - var(--notch)) 100%,
+    var(--notch) 100%, 0 calc(100% - var(--notch)), 0 var(--notch)
+  );
+  background-color: var(--win);
+  background-image:
+    radial-gradient(60px 40px at 4% 4%, rgba(78, 120, 84, 0.22), transparent 70%),
+    radial-gradient(60px 40px at 96% 4%, rgba(96, 132, 86, 0.18), transparent 70%),
+    radial-gradient(60px 40px at 4% 96%, rgba(70, 110, 78, 0.18), transparent 70%),
+    radial-gradient(60px 40px at 96% 96%, rgba(60, 100, 70, 0.16), transparent 70%),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.05) 0 1px, transparent 1px 3px);
+  box-shadow:
+    inset 0 0 0 2px var(--edge-dark),
+    inset 0 0 0 3px var(--edge-lite);
+  padding: 12px;
+}
+.rwin::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  right: 16%;
+  pointer-events: none;
+  opacity: 0.22;
+  background:
+    linear-gradient(78deg, transparent 48%, var(--edge-dark) 48.6%, transparent 49.4%) right / 60% 100% no-repeat,
+    linear-gradient(112deg, transparent 60%, var(--edge-dark) 60.6%, transparent 61.4%) right / 40% 60% no-repeat;
+}
+/* 小さい要素はひびを消す（潰れてノイズになる・DESIGN.md §4.1） */
+.rwin.rwin-flat::after,
+.log-panel.rwin::after,
+.glyph.rwin::after,
+.preset-icon.rwin::after,
+.tool.rwin::after,
+.canvas-wrap.rwin::after {
+  content: none;
+}
+.rwin h2,
+.rwin h3,
+.rwin .rwin-title {
+  text-shadow: 0 1px 0 rgba(5, 4, 10, 0.85);
+}
+
+/* ---- 系統グリフ（敵頭上・鋼青の丸枠） ---- */
+.glyph {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--edge-lite);
+  background: var(--win-2);
+  color: var(--edge-lite);
+  font-size: 14px;
+  flex: 0 0 auto;
+}
+
+/* ---- プリセットアイコン（形の記号で選ぶ） ---- */
+.preset-group {
+  align-items: flex-start;
+}
+.preset-group .form-label {
+  width: auto;
+  padding-top: 8px;
+}
+.preset-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.preset-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  min-height: 40px;
+  border: 2px solid var(--edge-lite);
+  background: var(--win-2);
+  color: var(--text-dim);
+  font-size: 16px;
+  cursor: pointer;
+}
+.preset-icon:hover {
+  color: var(--cursor);
+  border-color: var(--cursor);
+}
+.preset-icon.selected {
+  border-color: var(--cursor);
+  color: var(--cursor);
+  box-shadow: inset 0 0 0 1px var(--cursor);
+}
+
+/* ---- コマンド窓：縦リスト＋▶カーソル ---- */
+.cmd-win {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cmd-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  min-height: 36px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  text-align: left;
+  font-family: var(--font);
+  font-size: 13px;
+  cursor: pointer;
+}
+.cmd-item .cmd-cursor {
+  flex: 0 0 auto;
+  width: 1em;
+  color: var(--cursor);
+  visibility: hidden;
+}
+.cmd-item .cmd-icon {
+  flex: 0 0 auto;
+  color: var(--edge-lite);
+}
+.cmd-item:hover {
+  color: var(--cursor);
+}
+.cmd-item.active .cmd-cursor {
+  visibility: visible;
+}
+.cmd-item.active {
+  color: var(--cursor);
+}
+.cmd-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ---- ステータス窓：5列グリッド（✓/名前/HPバー/ラベル/数値） ---- */
+.status-win {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.status-row {
+  display: grid;
+  grid-template-columns: 16px 76px 1fr 34px 60px;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  text-align: left;
+  font-family: var(--font);
+  padding: 3px 4px;
+}
+.status-row.tappable {
+  cursor: pointer;
+}
+.status-row.dead {
+  opacity: 0.45;
+}
+.status-row.active .nm {
+  color: var(--light);
+}
+.status-row .nm {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.status-row .status-check {
+  text-align: center;
+}
+.status-row .status-check.ready {
+  color: var(--hp-ok);
+}
+.status-row .status-check.unset {
+  color: var(--text-dim);
+}
+.status-row .status-num {
+  font-family: var(--expr);
+  font-size: 14px;
+  text-align: right;
+}
+
+/* ---- 詠唱ウィンドウ（術式編集）：ヘッダ＋サブタブ＋アクション行 ---- */
+.msg-win {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.msg-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 2px solid var(--edge-lite);
+}
+.msg-subtabs {
+  display: flex;
+  gap: 6px;
+}
+.msg-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+/* 数式の二段表示（DESIGN.md §3）：上段=整形、下段=生の式 */
+.expr-box {
+  font-family: var(--expr);
+}
+.expr-box .expr-pretty {
+  font-size: 24px;
+  color: var(--light-soft);
+}
+.expr-box .expr-raw {
+  font-size: 16px;
+  color: var(--text-dim);
+}
+.expr-editrow input {
+  font-family: var(--expr);
+  font-size: 18px;
+}
+
+/* ---- z強度ゲージの現在値・注釈行 ---- */
+.zgauge-readout {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+.zgauge-readout .zval {
+  font-family: var(--expr);
+  font-size: 16px;
+}
+.zgauge-readout .zval.light {
+  color: var(--light);
+}
+.zgauge-readout .zval.dark {
+  color: var(--dark);
+}
+
+/* ---- 点フィット文脈バー ---- */
+.fitmode-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+}
+.fitmode-bar .fitmode-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  flex: 1 1 auto;
+}
+.fitmode-bar .fitmode-actions {
+  display: flex;
+  gap: 8px;
+}
+.pick-dot {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: var(--cursor);
+  border: 1px solid var(--edge-dark);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
 }

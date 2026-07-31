@@ -2,7 +2,7 @@
 // 簡略評価で最終採用しない：削りは本番と同一の carveAlong、密度は同一の OBSTACLE_STEP、
 // 結界は本番と同じ ringInterception＋相互相殺の減速で評価し、AI判定と本番解決のズレを無くす。
 // 各イベントは弧長つきで返す＝呼び出し側が「命中前 or 極到達前」だけを数えられる。
-import type { Flight, Obstacle, Trajectory, Vec2 } from '../types'
+import type { Flight, FlightSample, Obstacle, Trajectory, Vec2 } from '../types'
 import { sampleTrajectory, validPrefix, pathTermination } from '../coords'
 import { simulatePath, sampleAtLength, type LossEvent } from '../physics'
 import { carveAlong, densifyGeom, OBSTACLE_STEP } from '../carve'
@@ -32,11 +32,21 @@ export interface ShotEvaluation {
   /** パス終端（ruptor では暴発点＝極の直前） */
   endPos: Vec2
   pathLength: number
+  /**
+   * この候補の経路が「素材の中を通る長さ」（#69・掘削効率の指標）。
+   * before＝撃つ前、after＝この一撃で削った後。opts.aimPos があれば狙いへの最接近点までで測る。
+   * after が小さいほど「あと少しで貫通する」＝掘削として効率が良い。壁を斜めに舐める軌道は
+   * before が大きいのに after がほとんど減らないので、この指標で自然に排除される。
+   */
+  materialLenBefore: number
+  materialLenAfter: number
 }
 
 /** 追加の折れ点候補 x（フィットの解析解）。familyTrajectories 候補は数値検出のみ。 */
 export interface EvaluateOptions {
   turnXs?: number[]
+  /** 掘削効率（materialLen*）を測る終端。指定するとこの点への最接近までで測る。 */
+  aimPos?: Vec2
 }
 
 /**
@@ -117,6 +127,8 @@ export function evaluateEnemyShot(
       stalled: true,
       endPos: path[0] ?? traj.origin ?? { x: 0, y: 0 },
       pathLength: 0,
+      materialLenBefore: 0,
+      materialLenAfter: 0,
     }
   }
   // 幾何の累積弧長（速度減衰と無関係にパス全長を測る）
@@ -138,17 +150,23 @@ export function evaluateEnemyShot(
     if (unbreakableArc !== null && touchesMaterial) break
   }
 
+  // 掘削効率の測定区間（#69）：狙いへの最接近点まで。指定が無ければ経路全体
+  const limitArc = opts.aimPos ? closestApproachArc(dense, opts.aimPos) : Infinity
+  const materialLenBefore = materialLength(dense, obstacles, limitArc)
+
   // 障害物の削り：本番の carveAlong をそのまま使う（obstacles は複製・losses は結界と共有）
   const losses: LossEvent[] = []
   const resim = (ls: LossEvent[]) => simulatePath(path, initialSpeed, zAtIdx, ls)
   const materialArcs: number[] = []
   let stalled = false
+  let materialLenAfter = materialLenBefore
   if (touchesMaterial) {
     const cloned = obstacles.map((ob) => ({ ...ob, carves: [...ob.carves] }))
     const r = carveAlong(flight.samples, cloned, zAtPos, losses, resim, flight)
     flight = r.flight
     for (const b of r.bursts) materialArcs.push(b.arcLen)
     stalled = r.vanished
+    materialLenAfter = materialLength(dense, cloned, limitArc)
   }
 
   // 結界（持続周回）の横断：本番（turn.ts）と同じ resolveParry で相殺する（判定のズレ防止）。
@@ -189,7 +207,40 @@ export function evaluateEnemyShot(
     stalled,
     endPos: path[path.length - 1],
     pathLength,
+    materialLenBefore,
+    materialLenAfter,
   }
+}
+
+/** 密なパスのうち、素材の内側を通る区間の長さ（limitArc まで）。 */
+function materialLength(dense: FlightSample[], obstacles: Obstacle[], limitArc: number): number {
+  let len = 0
+  for (let i = 1; i < dense.length; i++) {
+    if (dense[i].arcLen > limitArc) break
+    const step = dense[i].arcLen - dense[i - 1].arcLen
+    if (step <= 0) continue
+    // 区間の中点で判定（端点で判定すると境界の取りこぼし・二重計上が出る）
+    const mid = {
+      x: (dense[i].pos.x + dense[i - 1].pos.x) / 2,
+      y: (dense[i].pos.y + dense[i - 1].pos.y) / 2,
+    }
+    if (obstacles.some((ob) => isSolidAt(ob, mid))) len += step
+  }
+  return len
+}
+
+/** 狙い点へ最も近づくサンプルの弧長（掘削効率を「狙いまでの区間」で測るため）。 */
+function closestApproachArc(dense: FlightSample[], aim: Vec2): number {
+  let best = Infinity
+  let arc = Infinity
+  for (const s of dense) {
+    const d = Math.hypot(s.pos.x - aim.x, s.pos.y - aim.y)
+    if (d < best) {
+      best = d
+      arc = s.arcLen
+    }
+  }
+  return arc
 }
 
 /** 辞書式順位の比較（小さいほど良い・§11.3/§12.7）。a が b より良ければ負。 */

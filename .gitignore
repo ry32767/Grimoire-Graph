@@ -18,3 +18,6 @@ Thumbs.db
 
 # vite
 *.local
+
+# 自動復帰ウォッチドッグの制御ファイル（ローカル専用）
+tools/autoresume/STOP

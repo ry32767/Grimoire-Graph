@@ -10,9 +10,10 @@ import { densifyGeom, OBSTACLE_STEP } from './carve'
 import { attributeOf, strengthOf, affinityMultiplier, zfieldAt } from './attribute'
 import { ringEncloses, ringAverageAttr, ringCentroid, ringInterception, type RingPoint } from './orbit'
 import { constZField } from './zfields'
-import { COMBAT, FIELD, GAME } from '../data/constants'
+import { COMBAT, ENEMY_ROUTE_PLANNING, FIELD, GAME } from '../data/constants'
 import {
   AVOIDER_FAMILIES,
+  ELITE_FIT_FAMILIES,
   ABS_H_RATIO,
   aimAt,
   buildEnemyTrajectory,
@@ -21,8 +22,8 @@ import {
   enemyFlight,
 } from './enemyPlanning/trajectories'
 import { perceivedPos, threatScore, enemyFamilies, avoiderFamiliesOf } from './enemyPlanning/perception'
-import { buildPlanningEnv } from './enemyPlanning/planningEnv'
-import { findRoute } from './enemyPlanning/routeSearch'
+import { buildPlanningEnv, type PlanningEnv } from './enemyPlanning/planningEnv'
+import { findRoute, type Route } from './enemyPlanning/routeSearch'
 import { fitRouteToFamilies } from './enemyPlanning/routeFit'
 import { evaluateEnemyShot, compareRank } from './enemyPlanning/evaluate'
 import { planRuptorShot, buildRuptorZField } from './enemyPlanning/ruptorPlanner'
@@ -78,6 +79,7 @@ export const ARCHETYPES: Record<EnemyFamily, { label: string; glyph: EnemyFamily
   exp: { label: '昇り', glyph: 'exp' },
   poly34: { label: '捻れ', glyph: 'poly34' },
   abs: { label: '折れ', glyph: 'abs' },
+  harmonic: { label: '重波', glyph: 'harmonic' },
 }
 
 /**
@@ -219,6 +221,21 @@ export function planEnemyShots(
 const MANEUVER = 0.9
 
 /**
+ * クリーン経路を「広い車線優先」で集める（#69）。
+ * 弾は硬い壁に一度触れただけで失速して消えるため、隙間のギリギリを縫う経路は
+ * family フィットの誤差でほぼ確実に潰れる。まず余白 wideClearance で探し、
+ * 見つからなければ通常の余白でも探して、両方をフィット候補にする。
+ */
+function cleanRoutes(env: PlanningEnv, wide: PlanningEnv, from: Vec2, to: Vec2): Route[] {
+  const out: Route[] = []
+  const w = findRoute(wide, from, to, 'clean')
+  if (w) out.push(w)
+  const n = findRoute(env, from, to, 'clean')
+  if (n && (!w || Math.abs(n.length - w.length) > 0.5)) out.push(n)
+  return out
+}
+
+/**
  * 敵の攻撃を計画する（迂回型 attacker／火力型 breaker）。候補は本番物理（削り・結界減速込み）で
  * 評価し、辞書式 rank で選ぶ（§11.3）：
  *   [ clean優先(迂回型のみ), 壁内折れ点, 反対極結界の横断数, −期待ダメージ, 命中弧長 ]
@@ -255,17 +272,25 @@ export function planEnemyShot(
   // 迂回型（attacker）は abs/arc/poly34 のみに絞る（#46・05b §2）。
   const breaker = enemy.role === 'breaker'
   const families = breaker ? enemyFamilies(enemy) : avoiderFamiliesOf(enemy)
-  // 経路フィットに使える family（線・波の個体でも、迂回が要る局面では主力一式で回り込む）
-  const fitFams = families.filter((f) => AVOIDER_FAMILIES.includes(f))
+  // 経路フィットに使える family（線・波の個体でも、迂回が要る局面では主力一式で回り込む）。
+  // harmonic を持つ個体（#69・終盤の強敵）はフーリエ正弦級数フィットも候補に入る。
+  const fitFams = families.filter((f) => ELITE_FIT_FAMILIES.includes(f))
   const routeFams: readonly EnemyFamily[] = fitFams.length > 0 ? fitFams : AVOIDER_FAMILIES
   const env = obstacles.length > 0 ? buildPlanningEnv(obstacles, fieldR) : null
+  // 広い車線を優先する探索用の環境（#69）。素材から wideClearance だけ離れた経路を探す
+  const wideEnv =
+    obstacles.length > 0 ? buildPlanningEnv(obstacles, fieldR, ENEMY_ROUTE_PLANNING.wideClearance) : null
 
   // 採点結果（プロパティ経由＝クロージャ代入でも型の絞り込みが崩れない）
   const sel = { best: null as { plan: EnemyPlan; rank: readonly number[] } | null }
-  // 火力型の掘削候補（#64）：どの候補も命中しない＝壁が厚いとき、「1番奥まで掘り進める」
-  // 候補（停止点が狙いに最も近い＝carve 損失込みで最深到達）を布石として選ぶ。
-  // ランプ z（飛行中 |z|≈0＝最大加速）は速度が乗って carve 半径も大きく、自然に最深になる。
-  const drill = { best: null as { plan: EnemyPlan; depth: number } | null }
+  // 火力型の掘削候補（#64・#69）：どの候補も命中しない＝壁が厚いとき、壁を掘る一手を布石に選ぶ。
+  // 何を「良い掘削」とするか（#69：明らかに非効率な削り方の根絶）：
+  //   ① この一撃のあと、狙いまでの経路に**残る素材の長さ**が最小（＝あと少しで貫通する）
+  //   ② 同点なら、この一撃で**削り取った素材の長さ**が最大（＝仕事量が多い）
+  //   ③ さらに同点なら、狙いの近くまで到達している
+  // 壁を浅い角度で舐める軌道は「素材の中を長々と進むのに、ほとんど貫通に近づかない」ため
+  // ① で必ず負ける。壁へ正面から入る軌道（＝最短の厚みを抜く）が自然に選ばれる。
+  const drill = { best: null as { plan: EnemyPlan; rank: readonly number[] } | null }
   const trackDrill = (traj: Trajectory, ally: Ally, aimPos: Vec2, ev: ReturnType<typeof evaluateEnemyShot>): void => {
     const last = ev.flight.samples[ev.flight.samples.length - 1]
     if (!last) return
@@ -279,14 +304,17 @@ export function planEnemyShot(
     // (2) 狙いへ達する前に unbreakable（削れない壁）を横切る経路は、掘り進めても必ずそこで
     //     止まる＝トンネルは開通しない（手前で止まっている今も、掘り切った後も同じ）。
     if (ev.unbreakableArc !== null && ev.unbreakableArc < freeHit.arcLen) return
-    const depth = dist(last.pos, aimPos) // 小さいほど奥（狙いの近く）まで届いた
-    if (!drill.best || depth < drill.best.depth) {
-      drill.best = { plan: { trajectory: traj, targetId: ally.id, expectedDamage: 0 }, depth }
+    // (3) 実際に素材が減っていない一撃（＝硬すぎて弾かれただけ）は掘削の進捗にならない
+    const removed = ev.materialLenBefore - ev.materialLenAfter
+    if (removed <= 1e-6) return
+    const rank = [ev.materialLenAfter, -removed, dist(last.pos, aimPos)] as const
+    if (!drill.best || compareRank(rank, drill.best.rank) < 0) {
+      drill.best = { plan: { trajectory: traj, targetId: ally.id, expectedDamage: 0 }, rank }
     }
   }
   /** 候補を本番物理で評価し rank で採点する。命中しなければ false（＝攻撃候補にならない）。 */
   const consider = (traj: Trajectory, ally: Ally, aimPos: Vec2, zVal: number, maneuver: number, turnXs?: number[]): boolean => {
-    const ev = evaluateEnemyShot(traj, enemy.castInitialSpeed, obstacles, standingRings, { turnXs })
+    const ev = evaluateEnemyShot(traj, enemy.castInitialSpeed, obstacles, standingRings, { turnXs, aimPos })
     const hit = firstHit(ev.flight.samples, aimPos, GAME.allyHitbox)
     if (!hit || hit.speed <= 0) {
       if (breaker) trackDrill(traj, ally, aimPos, ev) // 不達でも掘削の布石として記録（#64）
@@ -397,9 +425,8 @@ export function planEnemyShot(
     }
     // 壁よけ（§8/§10）：クリーン命中が無ければ、経路探索→family フィットで回り込む。
     // breaker は壊して進むので使わない（従来どおり）。
-    if (!breaker && env && !cleanHit) {
-      const route = findRoute(env, enemy.pos, aimPos, 'clean')
-      if (route) {
+    if (!breaker && env && wideEnv && !cleanHit) {
+      for (const route of cleanRoutes(env, wideEnv, enemy.pos, aimPos)) {
         for (const fit of fitRouteToFamilies(route.points, enemy.pos, routeFams)) {
           for (const zc of zCands) {
             const traj: Trajectory = { mode: 'rotate', g: fit.g, angle: fit.angle, origin: enemy.pos, z: zc.z, fieldR }

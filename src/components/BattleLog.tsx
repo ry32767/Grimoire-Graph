@@ -18,11 +18,12 @@ const ICONS: Record<LogEntry['kind'], string> = {
 
 interface Props {
   log: LogEntry[]
-  /** 盤面の隅に重ねる半透明オーバーレイ（畳める）として表示する（#UI刷新）。 */
+  /** 盤面右上のタブから開閉するパネル（DESIGN.md §5「戦闘ログ」・全フェーズ常設）。 */
   collapsed?: boolean
   onToggle?: () => void
 }
 
+/** 戦闘ログ：盤面右上の log-tab（畳み時はタブのみ）＋開くと log-panel（DESIGN.md §5）。 */
 export default function BattleLog({ log, collapsed = false, onToggle }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -30,34 +31,30 @@ export default function BattleLog({ log, collapsed = false, onToggle }: Props) {
   }, [log, collapsed])
   // 直近のログを表示（多すぎる場合は末尾30件）
   const recent = log.slice(-30)
-  // 畳んだときは最新1件だけ見出しに添える（何が起きたかの気配を残す）
-  const last = recent[recent.length - 1]
   return (
-    <div className={`log-overlay${collapsed ? ' collapsed' : ''}`}>
+    <>
       <button
-        className="log-head"
+        className="log-tab"
         onClick={onToggle}
         aria-expanded={!collapsed}
         aria-label={collapsed ? '戦闘ログを開く' : '戦闘ログを畳む'}
       >
-        <span>
-          戦闘ログ
-          {collapsed && last ? `：${last.text}` : ''}
-        </span>
-        <span className="log-caret" aria-hidden="true">
-          {collapsed ? '▴' : '▾'}
-        </span>
+        戦闘ログ {collapsed ? '▾' : '▴'}
       </button>
-      <div className="log" ref={ref}>
-        {recent.map((e, i) => (
-          <div key={i} className={`entry ${e.kind}`}>
-            <span className="entry-icon" aria-hidden="true">
-              {ICONS[e.kind]}
-            </span>
-            {e.text}
+      {!collapsed && (
+        <div className="rwin log-panel open">
+          <div className="log" ref={ref}>
+            {recent.map((e, i) => (
+              <div key={i} className={`log-line entry ${e.kind}`}>
+                <span className="entry-icon" aria-hidden="true">
+                  {ICONS[e.kind]}
+                </span>
+                {e.text}
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
-    </div>
+        </div>
+      )}
+    </>
   )
 }

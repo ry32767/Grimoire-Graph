@@ -266,3 +266,216 @@ export function colonnade(
 ): Obstacle[] {
   return spanX(x0, x1, step).map((x, i) => pillar(x, y0, n, elems[i % elems.length], kind))
 }
+
+// ===== RPG の部屋風レイアウト用のヘルパ（#69）=====
+// 「等間隔の柱」「壊れた建造物」「ドアで繋がった部屋」を組み合わせて、
+// 直線では敵に届かない複雑な地形を宣言的に書けるようにする。
+// 崩れ具合のばらつきは決定的な擬似乱数（シード）で作る：Math.random は使わない（テストが揺れるため）。
+
+/** 決定的な擬似乱数（mulberry32）。同じ seed なら常に同じ地形になる。 */
+export function rng(seed: number): () => number {
+  let a = seed >>> 0
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+/** 壁に空ける開口（ドア・崩落口）。center は壁の長手方向の座標、width は開口の幅。 */
+export interface Gap {
+  center: number
+  width: number
+}
+
+/** [lo, hi] の区間から gaps を抜いた残りの区間列（開口つきの壁を作る土台）。 */
+function spansWithGaps(lo: number, hi: number, gaps: Gap[]): { a: number; b: number }[] {
+  const sorted = [...gaps].sort((g1, g2) => g1.center - g2.center)
+  const out: { a: number; b: number }[] = []
+  let cur = lo
+  for (const g of sorted) {
+    const a = g.center - g.width / 2
+    const b = g.center + g.width / 2
+    if (b <= cur || a >= hi) continue
+    if (a > cur) out.push({ a: cur, b: Math.min(a, hi) })
+    cur = Math.max(cur, b)
+  }
+  if (cur < hi) out.push({ a: cur, b: hi })
+  return out.filter((s) => s.b - s.a > 1e-6)
+}
+
+/**
+ * ドア（開口）つきの部屋（#69）。roomWalls と同じく円の外まで壁を伸ばして回り込みを断つが、
+ * 各辺に開口を空けられる＝「部屋どうしが扉で繋がった RPG のダンジョン」を組める。
+ * doors の座標は辺の長手方向（左右＝y、上下＝x）で指定する。
+ */
+export function chamber(
+  xL: number,
+  xR: number,
+  yB: number,
+  yT: number,
+  rField: number,
+  doors: { left?: Gap[]; right?: Gap[]; top?: Gap[]; bottom?: Gap[] } = {},
+  element: Obstacle['element'] = 'neutral',
+  kind: ObstacleKind = 'unbreakable',
+): Obstacle[] {
+  const M = rField + 6 // 場境界の外まで（円の外周まで壁を届かせる）
+  const vert = (x: number, w: number, gaps: Gap[]): Obstacle =>
+    obRect(element, spansWithGaps(-M, M, gaps).map((s) => ({ x, y: s.a, w, h: s.b - s.a })), kind)
+  const horiz = (y: number, h: number, gaps: Gap[]): Obstacle =>
+    obRect(element, spansWithGaps(xL, xR, gaps).map((s) => ({ x: s.a, y, w: s.b - s.a, h })), kind)
+  return [
+    vert(-M, xL - -M, doors.left ?? []),
+    vert(xR, M - xR, doors.right ?? []),
+    horiz(yT, M - yT, doors.top ?? []),
+    horiz(-M, yB - -M, doors.bottom ?? []),
+  ]
+}
+
+/**
+ * 等間隔の柱グリッド（#69）：矩形 [x0,x1]×[y0,y1] に nx×ny 本の円柱を等間隔で立てる。
+ * 素材は要素ごとに1つの Obstacle へまとめる（判定コストを抑える）。
+ * skip(ix, iy) が true の格子は「崩れて無くなった柱」として立てない。
+ */
+export function pillarGrid(opts: {
+  x0: number
+  x1: number
+  nx: number
+  y0: number
+  y1: number
+  ny: number
+  r?: number
+  /** 柱ごとの属性（格子番号で切り替えたいときは関数で渡す） */
+  element: Obstacle['element'] | ((ix: number, iy: number) => Obstacle['element'])
+  kind?: ObstacleKind
+  skip?: (ix: number, iy: number) => boolean
+}): Obstacle[] {
+  const r = opts.r ?? R
+  const byElement = new Map<Obstacle['element'], Disc[]>()
+  for (let ix = 0; ix < opts.nx; ix++) {
+    for (let iy = 0; iy < opts.ny; iy++) {
+      if (opts.skip?.(ix, iy)) continue
+      const tx = opts.nx === 1 ? 0.5 : ix / (opts.nx - 1)
+      const ty = opts.ny === 1 ? 0.5 : iy / (opts.ny - 1)
+      const el = typeof opts.element === 'function' ? opts.element(ix, iy) : opts.element
+      const list = byElement.get(el) ?? []
+      list.push({ x: opts.x0 + (opts.x1 - opts.x0) * tx, y: opts.y0 + (opts.y1 - opts.y0) * ty, r })
+      byElement.set(el, list)
+    }
+  }
+  return [...byElement].map(([el, solids]) => ob(el, solids, opts.kind))
+}
+
+/**
+ * 崩れ落ちた壁（#69）：x0→x1 の横壁に開口をいくつも空けた「崩落した建造物」。
+ * gaps を明示しなければ seed から決定的にばらけた欠けを作る（同じ seed なら常に同じ形）。
+ */
+export function ruinedWall(
+  x0: number,
+  x1: number,
+  y: number,
+  rows: number,
+  element: Obstacle['element'],
+  kind?: ObstacleKind,
+  opts: { gaps?: Gap[]; gapCount?: number; seed?: number } = {},
+): Obstacle {
+  const step = R * 1.4
+  const h = (rows - 1) * step + 2 * R
+  let gaps = opts.gaps
+  if (!gaps) {
+    const n = opts.gapCount ?? 2
+    const rand = rng(opts.seed ?? 1)
+    const span = x1 - x0
+    gaps = Array.from({ length: n }, (_, i) => ({
+      center: x0 + (span * (i + 0.5)) / n + (rand() - 0.5) * (span / n) * 0.5,
+      width: 2.4 + rand() * 2.4,
+    }))
+  }
+  return obRect(
+    element,
+    spansWithGaps(x0 - R, x1 + R, gaps).map((s) => ({ x: s.a, y: y - R, w: s.b - s.a, h })),
+    kind,
+  )
+}
+
+/**
+ * 折れた列柱（#69）：x0→x1 に step 間隔で柱を立てるが、高さが柱ごとにばらつく（＝崩れかけの神殿）。
+ * 高さのばらつきは seed から決定的に決まる。射線は「柱の間」と「短い柱の上」の両方から通る。
+ */
+export function brokenColonnade(
+  x0: number,
+  x1: number,
+  step: number,
+  y0: number,
+  maxRows: number,
+  element: Obstacle['element'],
+  kind?: ObstacleKind,
+  seed = 7,
+): Obstacle {
+  const rand = rng(seed)
+  const solids: Disc[] = []
+  for (const x of spanX(x0, x1, step)) {
+    const n = 1 + Math.floor(rand() * maxRows)
+    for (let i = 0; i < n; i++) solids.push({ x, y: y0 + i * STEP, r: R })
+  }
+  return ob(element, solids, kind)
+}
+
+/**
+ * 瓦礫の山（#69）：中心 (cx,cy) の周りに半径のばらついた小さな塊を散らす。既定は fragile
+ * （もろい＝一撃で大きく崩せる）。遮蔽としては頼りないが射線を曲げる素材になる。
+ */
+export function rubble(
+  cx: number,
+  cy: number,
+  spread: number,
+  n: number,
+  element: Obstacle['element'] = 'neutral',
+  kind: ObstacleKind = 'fragile',
+  seed = 3,
+): Obstacle {
+  const rand = rng(seed)
+  return ob(
+    element,
+    Array.from({ length: n }, () => {
+      const t = rand() * Math.PI * 2
+      const rad = spread * Math.sqrt(rand())
+      return { x: cx + rad * Math.cos(t), y: cy + rad * Math.sin(t), r: 1.2 + rand() * 1.4 }
+    }),
+    kind,
+  )
+}
+
+/**
+ * 壊れた塔（#69）：崩れて片側だけが高く残った建造物。矩形2枚で「欠けた輪郭」を作り、
+ * 足元に瓦礫を伴う。単純な四角い壁より射線の通り方が読みにくくなる。
+ */
+export function brokenTower(
+  cx: number,
+  cy: number,
+  w: number,
+  h: number,
+  element: Obstacle['element'],
+  kind: ObstacleKind = 'tough',
+  opts: { tallSide?: 'left' | 'right'; seed?: number } = {},
+): Obstacle[] {
+  const rand = rng(opts.seed ?? 5)
+  const tall = opts.tallSide ?? (rand() < 0.5 ? 'left' : 'right')
+  const half = w / 2
+  const lowH = h * (0.35 + rand() * 0.2)
+  const tower = obRect(
+    element,
+    tall === 'left'
+      ? [
+          { x: cx - half, y: cy, w: half, h },
+          { x: cx, y: cy, w: half, h: lowH },
+        ]
+      : [
+          { x: cx - half, y: cy, w: half, h: lowH },
+          { x: cx, y: cy, w: half, h },
+        ],
+    kind,
+  )
+  return [tower, rubble(cx + (tall === 'left' ? half : -half), cy - 1, half * 0.9, 4, element, 'fragile', opts.seed ?? 5)]
+}

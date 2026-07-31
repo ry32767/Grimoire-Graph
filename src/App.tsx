@@ -50,10 +50,12 @@ import BattleCanvas, {
   type EnemyDeath,
 } from './components/BattleCanvas'
 import { speciesOf, tierOf } from './render/species'
+import { ARCHETYPES } from './game/enemyAI'
 import Hud from './components/Hud'
 import BattleLog from './components/BattleLog'
 import FunctionPanel from './components/FunctionPanel'
 import ZFieldControls from './components/ZFieldControls'
+import CommandWindow from './components/CommandWindow'
 import Codex from './components/Codex'
 import Guide from './components/Guide'
 import { TitleScreen, StoryScreen, ResultScreen } from './components/screens'
@@ -162,6 +164,7 @@ interface TestPlaySnapshot {
   touchedAllies: Set<string>
   confirmArmed: boolean
   stageIndex: number
+  revealed: boolean
 }
 
 export default function App() {
@@ -195,8 +198,12 @@ export default function App() {
   // #49：未設定の味方がいる時の発射確認オーバーレイ
   const [confirmFire, setConfirmFire] = useState(false)
   const [codexOpen, setCodexOpen] = useState(false)
-  // #UI刷新：戦闘ログは盤面の隅に重ねる半透明オーバーレイ。畳み開きの状態
-  const [logCollapsed, setLogCollapsed] = useState(false)
+  // 戦闘ログは盤面右上の log-tab から開閉するパネル（DESIGN.md §5）。畳み開きの状態
+  const [logCollapsed, setLogCollapsed] = useState(true)
+  // 敵公開フェーズ（UI設計仕様書 §1）：UI専用の表示状態。ゲームロジックの Phase は変更しない
+  // （prepareTurn は従来どおり即座に 'compose' へ進む）。ターン開始のたびに false へリセットし、
+  // 「術式を構える」で true にして作成フェーズの表示へ進める。
+  const [revealed, setRevealed] = useState(false)
   // #23：図鑑用に「遭遇した敵」を記録（セッション内・永続化しない）
   const [seenEnemies, setSeenEnemies] = useState<Set<string>>(new Set())
   const [guideOpen, setGuideOpen] = useState(false)
@@ -367,6 +374,7 @@ export default function App() {
     setPendingState(null)
     setView('stage')
     setTouchedAllies(new Set())
+    setRevealed(false)
     setScreen('battle')
     if (stageIndex === 0 && !guideShown) {
       setGuideOpen(true)
@@ -400,6 +408,7 @@ export default function App() {
       touchedAllies,
       confirmArmed,
       stageIndex,
+      revealed,
     }
     setTestPlayActive(true)
     pendingPrepRef.current = null
@@ -427,6 +436,7 @@ export default function App() {
     setPendingState(null)
     setView('stage')
     setTouchedAllies(new Set())
+    setRevealed(false)
     if (runStartMs === null) setRunStartMs(performance.now())
     setScreen('battle')
   }
@@ -458,6 +468,7 @@ export default function App() {
       setTouchedAllies(snap.touchedAllies)
       setConfirmArmed(snap.confirmArmed)
       setStageIndex(snap.stageIndex)
+      setRevealed(snap.revealed)
     }
     setStoryOverlay(null)
     setScreen('editor')
@@ -727,6 +738,7 @@ export default function App() {
     setImpairedIds(prep.impairedAllyIds)
     setView('stage') // 次ターンは盤面（ステージ）画面から始める（#48）
     setTouchedAllies(new Set()) // #49：準備状況は毎ターンリセット
+    setRevealed(false) // 敵公開（UI設計仕様書 §1）：次ターンも公開から始める
     const stillActive = prep.state.allies.find((a) => a.id === activeAllyId)
     if (!stillActive || stillActive.hp <= 0) {
       const firstAlive = prep.state.allies.find((a) => a.hp > 0)
@@ -999,24 +1011,36 @@ export default function App() {
   const activePreview = previews[activeAllyId]
   const anyCastable = battle.allies.some((a) => a.hp > 0 && !impairedIds.includes(a.id))
 
-  // 下部中央スロットは1枠：文脈バー／術式編集カード／通常コマンドドックは排他表示（#UI刷新3）
+  // 下段は1枠：文脈バー／コマンド窓＋ステータス窓／術式編集ウィンドウは排他表示（UI設計仕様書 §0）
   const bottomSlotTaken = view === 'edit' || (composing && (fitPickActive || zAdjustMode))
+  // 敵公開フェーズ（UI設計仕様書 §1）：作成フェーズへ進む前に敵の予告を見せる。ゲームの Phase は
+  // 'compose' のまま（battle.ts は変更しない）で、表示だけを revealed フラグでゲートする。
+  const revealing = composing && !revealed
+  // 敵公開中は自分の照準・プレビューをまだ見せない（敵の予告のみに集中させる・UI設計仕様書 §1）
+  const showAimPreview = composing && revealed
+  const revealHint = battle.enemies
+    .filter((e) => e.hp > 0)
+    .map((e) => {
+      const elLabel = e.element === 'light' ? '光' : e.element === 'dark' ? '闇' : '中立'
+      return `${e.name}は「${ARCHETYPES[e.family].label}」を放つ気配 ／ 属性は${elLabel}寄りと推測される`
+    })
+    .join('　')
 
   return (
     <div className="app">
       <div className="battle" data-view={view}>
-        {/* 盤面：画面いっぱいの主役。以下のウィジェットは全てこの上に浮かせる（#UI刷新3） */}
-        <div className="canvas-wrap">
+        {/* 盤面：固定高の主役。ログ・敵陣営・ステージ情報はこの内側に重ねる（DESIGN.md §5） */}
+        <div className="canvas-wrap rwin arena">
           <BattleCanvas
             allies={battle.allies}
             enemies={battle.enemies}
             obstacles={battle.obstacles}
             rField={battle.rField}
-            activeAllyId={composing ? activeAllyId : null}
-            playerPaths={composing ? playerPaths : undefined}
-            misfirePoints={composing ? misfirePoints : undefined}
-            zField={composing ? activeZField ?? undefined : undefined}
-            showZField={composing}
+            activeAllyId={showAimPreview ? activeAllyId : null}
+            playerPaths={showAimPreview ? playerPaths : undefined}
+            misfirePoints={showAimPreview ? misfirePoints : undefined}
+            zField={showAimPreview ? activeZField ?? undefined : undefined}
+            showZField={showAimPreview}
             standingOrbits={composing ? standingOrbits : undefined}
             ghostPaths={composing ? ghostPaths : undefined}
             ghostMisfires={composing ? ghostMisfires : undefined}
@@ -1033,24 +1057,23 @@ export default function App() {
             }}
             animation={animation}
             onAnimationDone={onAnimationDone}
-            fitPoints={composing ? fitPoints : undefined}
-            onFieldClick={composing && fitPickActive ? onFieldClick : undefined}
-            pickMode={composing && fitPickActive}
-            onAim={composing && !fitPickActive && activeComposer?.mode === 'rotate' ? aimAt : undefined}
-            aimAngle={composing && activeComposer?.mode === 'rotate' ? activeComposer.angle : undefined}
+            fitPoints={showAimPreview ? fitPoints : undefined}
+            onFieldClick={showAimPreview && fitPickActive ? onFieldClick : undefined}
+            pickMode={showAimPreview && fitPickActive}
+            onAim={showAimPreview && !fitPickActive && activeComposer?.mode === 'rotate' ? aimAt : undefined}
+            aimAngle={showAimPreview && activeComposer?.mode === 'rotate' ? activeComposer.angle : undefined}
           />
-        </div>
 
-        {/* 左上：ステージ情報＋メニュー（旧・下部の≡メニューをここへ集約） */}
+        {/* 左上：ステージ情報＋メニュー */}
         <div className="stage-widget info-corner">
-          <div className="phase-bar">
+          <div className="phase-bar rwin rwin-flat">
             <span>
               {testPlayActive && <span className="boss-tag">テストプレイ</span>}
               {STAGES[battle.stageIndex].name}
               {STAGES[battle.stageIndex].boss && <span className="boss-tag">BOSS</span>}
             </span>
             <span className="turn">
-              ターン {battle.turn}・{composing ? '作成フェーズ' : '解決フェーズ'}
+              ターン {battle.turn}・{revealing ? '敵公開' : composing ? '作成フェーズ' : '解決フェーズ'}
             </span>
           </div>
           <div className="menu-wrap">
@@ -1085,80 +1108,85 @@ export default function App() {
           </div>
         </div>
 
-        {/* 右上：戦闘ログ */}
-        <div className="stage-widget log-corner">
-          <BattleLog log={battle.log} collapsed={logCollapsed} onToggle={() => setLogCollapsed((v) => !v)} />
-        </div>
+        {/* 右上：戦闘ログ（log-tab は全フェーズ常設・DESIGN.md §5） */}
+        <BattleLog log={battle.log} collapsed={logCollapsed} onToggle={() => setLogCollapsed((v) => !v)} />
 
-        {/* 左下：味方ステータス（タップで術式編集カードを開く） */}
-        <div className="stage-widget party-widget">
-          <Hud
-            side="ally"
-            allies={battle.allies}
-            activeAllyId={activeAllyId}
-            instability={{ count: instability, visible: collapseSeen }}
-            onSelectAlly={composing ? switchAlly : undefined}
-            impairedIds={impairedIds}
-            touchedIds={[...touchedAllies]}
-          />
-        </div>
-
-        {/* 右下：敵ステータス */}
-        <div className="stage-widget enemy-widget">
+        {/* 右下：敵陣営（盤面内側の小ウィジェット） */}
+        <div className="stage-widget enemy-corner">
           <Hud side="enemy" enemies={battle.enemies} />
         </div>
+      </div>
 
-        {/* 下中央：通過点フィット／z調整の文脈バー、または通常のコマンドドック */}
-        {composing && fitPickActive && (
-          <div className="stage-widget composer-card panel fit-bar">
-            <div className="hint">
-              通したい点を<strong>盤面にタップ</strong> → フィットで曲線を合わせる。
-            </div>
-            <div className="action-row">
-              <button className="btn primary" disabled={fitPoints.length < 1} onClick={runFit}>
-                フィット（{fitPoints.length}）
-              </button>
-              <button className="btn" disabled={fitPoints.length < 1} onClick={clearFitPoints}>
-                クリア
-              </button>
-              <button className="btn" onClick={() => setFitPickActive(false)}>
-                やめる
-              </button>
-            </div>
-          </div>
-        )}
-        {composing && zAdjustMode && activeComposer && (
-          <div className="stage-widget composer-card panel z-bar">
-            <div className="section-title">属性の高さ z = f(x,y)（場を見ながら調整）</div>
-            <ZFieldControls composer={activeComposer} onChange={onChange} />
-            <button className="btn primary" onClick={endZAdjust}>
-              ✓ 調整を終える
+        {revealing ? (
+          /* 敵公開フェーズ（UI設計仕様書 §1）：盤面固定・確認のみ。gold で作成フェーズへ */
+          <div className="rwin pc-footer">
+            <span className="hint">{revealHint || '敵の気配を探っている…'}</span>
+            <button type="button" className="btn-flat gold" onClick={() => setRevealed(true)}>
+              術式を構える ▸
             </button>
           </div>
-        )}
-        {!bottomSlotTaken && (
-          <div className="stage-widget command-dock">
-            {composing && anyCastable && (
-              <button className="btn おまかせ" onClick={recommendAll}>
-                おまかせ
-              </button>
+        ) : (
+          <>
+            {/* 下段：通過点フィット／z調整の文脈バー、または コマンド窓｜ステータス窓 */}
+            {composing && fitPickActive && (
+              <div className="rwin fitmode-bar">
+                <div className="fitmode-hint">
+                  通したい点を<strong>盤面にタップ</strong>（{fitPoints.length}点選択中） → フィットで曲線を合わせる。
+                </div>
+                <div className="fitmode-actions">
+                  <button className="btn" disabled={fitPoints.length < 1} onClick={clearFitPoints}>
+                    クリア
+                  </button>
+                  <button className="btn" onClick={() => setFitPickActive(false)}>
+                    やめる
+                  </button>
+                  <button className="btn primary gold" disabled={fitPoints.length < 1} onClick={runFit}>
+                    フィット（{fitPoints.length}）
+                  </button>
+                </div>
+              </div>
             )}
-            {composing && (
-              <button className="btn" onClick={() => setView('edit')}>
-                術式
-              </button>
+            {composing && zAdjustMode && activeComposer && (
+              <div className="rwin z-bar">
+                <div className="section-title">属性の高さ z = f(x,y)（場を見ながら調整）</div>
+                <ZFieldControls composer={activeComposer} onChange={onChange} />
+                <button className="btn primary" onClick={endZAdjust}>
+                  ✓ 調整を終える
+                </button>
+              </div>
             )}
-            <button className={`btn primary fire-all${confirmArmed ? ' danger' : ''}`} onClick={() => fireAll()}>
-              {confirmArmed ? '崩壊の危険 ― 発射' : anyCastable ? '発射' : '次のターンへ'}
-            </button>
-          </div>
-        )}
+            {!bottomSlotTaken && (
+              <div className="bottom-bar">
+                <div className="rwin cmd-win-panel">
+                  <CommandWindow
+                    showOmakase={composing && anyCastable}
+                    onOmakase={recommendAll}
+                    showComposer={composing}
+                    onOpenComposer={() => setView('edit')}
+                    fireLabel={confirmArmed ? '崩壊の危険 ― 発射' : anyCastable ? '発射' : '次のターンへ'}
+                    fireDanger={confirmArmed}
+                    onFire={() => fireAll()}
+                  />
+                </div>
+                <div className="rwin status-win-panel">
+                  <Hud
+                    side="ally"
+                    allies={battle.allies}
+                    activeAllyId={activeAllyId}
+                    instability={{ count: instability, visible: collapseSeen }}
+                    onSelectAlly={composing ? switchAlly : undefined}
+                    impairedIds={impairedIds}
+                    touchedIds={[...touchedAllies]}
+                  />
+                </div>
+              </div>
+            )}
 
-        {/* 術式編集カード：味方タップ／「術式」ボタンで開く盤面上のカード（#UI刷新3） */}
-        {view === 'edit' && <div className="sheet-backdrop" onClick={() => setView('stage')} />}
-        {view === 'edit' && (
-          <div className="stage-widget composer-card panel">
-            {composing && activeComposer && activePreview ? (
+            {/* 詠唱ウィンドウ：味方タップ／「術式を組む」で開く。bottom-bar と排他表示（DESIGN.md §5） */}
+            {view === 'edit' && <div className="sheet-backdrop" aria-hidden="true" />}
+            {view === 'edit' && (
+              <div className="rwin msg-win-panel msg-win">
+                {composing && activeComposer && activePreview ? (
               <>
                 <div className="ally-tabs">
                   <button className="btn small back-to-stage" onClick={() => setView('stage')} aria-label="盤面へ戻る">
@@ -1213,7 +1241,9 @@ export default function App() {
                 <p className="hint">魔法が進行・解決しています。</p>
               </div>
             )}
-          </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 

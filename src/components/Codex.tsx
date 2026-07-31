@@ -39,6 +39,7 @@ const FAMILY_LABEL: Record<Enemy['family'], string> = {
   spiral: '渦',
   exp: '昇り',
   poly34: '捻れ',
+  harmonic: '重波',
   abs: '折れ',
 }
 
@@ -194,7 +195,7 @@ export default function Codex({ activePresetId, seenEnemies, onClose }: Props) {
   ]
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal rwin" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h2>関数図鑑（古代式一覧）</h2>
           <button className="btn small" onClick={onClose}>

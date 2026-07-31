@@ -15,6 +15,7 @@ const FAMILY_LABELS: Record<EnemyFamily, string> = {
   spiral: '渦（spiral）',
   exp: '昇り（exp）',
   poly34: '捻れ（poly34）',
+  harmonic: '重波（harmonic）',
   abs: '折れ（abs）',
 }
 

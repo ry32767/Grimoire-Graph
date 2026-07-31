@@ -31,7 +31,7 @@ export type ZField = (x: number, y: number) => number
  * 敵の得意関数の系統（#17：見た目で判別）。
  * 直線/弧/波/渦＋昇り（指数）/捻れ（3〜5次・#43）＋折れ（絶対値・V字・#46）。
  */
-export type EnemyFamily = 'line' | 'arc' | 'wave' | 'spiral' | 'exp' | 'poly34' | 'abs'
+export type EnemyFamily = 'line' | 'arc' | 'wave' | 'spiral' | 'exp' | 'poly34' | 'abs' | 'harmonic'
 
 /**
  * 敵の種族（05c 図鑑・#46）。描画（スプライト・撃破演出）専用でロジックには影響させない。

@@ -191,7 +191,7 @@ export default function Guide({ onClose }: { onClose: () => void }) {
   const last = PAGES.length - 1
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal guide" onClick={(e) => e.stopPropagation()}>
+      <div className="modal guide rwin" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h2>はじめての術式ガイド</h2>
           <button className="btn small" onClick={onClose}>

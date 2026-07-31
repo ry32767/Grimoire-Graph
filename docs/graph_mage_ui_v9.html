@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Graph Mage - Battle UI v7</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DotGothic16&family=Pixelify+Sans:wght@400;500;600;700&family=VT323&display=swap');
+
+  /* 日本語ビットマップ(マイクラ風)。読めない環境では DotGothic16 にフォールバック */
+  @font-face{
+    font-family:'PixelMplus';
+    src:url('https://cdn.jsdelivr.net/gh/kaorahi/pixelmplus-webfont@main/PixelMplus12-Regular.woff2') format('woff2'),
+        url('https://cdn.jsdelivr.net/gh/itouhiro/PixelMplus@master/PixelMplus12-Regular.ttf') format('truetype');
+    font-display:swap;
+  }
+
+  :root{
+    --bg:#08070f; --arena-bg:#0d0b16; --win:#17132a; --win-2:#100c1e;
+    --edge-dark:#05040a; --edge-lite:#7d8fc4;
+    --light:#f4c430; --light-soft:#fff3c4; --dark:#8a6fd6; --dark-soft:#362a66;
+    --cursor:#9fb3ff; --text:#eef0fb; --text-dim:#8b8fae; --hp-ok:#6bd58c; --hp-low:#e2596b; --warn:#e2a04a;
+    --font:'Pixelify Sans','PixelMplus','DotGothic16',sans-serif; --expr:'VT323',monospace;
+    --notch:polygon(3px 0,calc(100% - 3px) 0,100% 3px,100% calc(100% - 3px),calc(100% - 3px) 100%,3px 100%,0 calc(100% - 3px),0 3px);
+  }
+  *{ box-sizing:border-box; }
+  html,body{ image-rendering:pixelated; }
+  body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-weight:600; padding:18px; position:relative; -webkit-font-smoothing:none; }
+  body::after{ content:''; position:fixed; inset:0; pointer-events:none; z-index:50; background:repeating-linear-gradient(0deg,rgba(0,0,0,0.14) 0 1px,transparent 1px 3px); mix-blend-mode:multiply; }
+
+  .rwin{
+    background-color:var(--win);
+    background-image:
+      radial-gradient(circle at 9% 91%, rgba(78,120,84,0.32), transparent 30%),
+      radial-gradient(circle at 93% 8%, rgba(96,132,86,0.22), transparent 26%),
+      radial-gradient(circle at 80% 96%, rgba(70,110,78,0.20), transparent 24%),
+      radial-gradient(circle at 40% 20%, rgba(60,100,70,0.10), transparent 30%),
+      radial-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+      radial-gradient(rgba(0,0,0,0.05) 1px, transparent 1px);
+    background-size:auto,auto,auto,auto,3px 3px,4px 4px;
+    background-position:0 0,0 0,0 0,0 0,0 0,2px 2px;
+    clip-path:var(--notch);
+    box-shadow:inset 0 0 0 2px var(--edge-dark),inset 0 0 0 3px var(--edge-lite);
+    position:relative;
+  }
+  /* 石板のひび割れ（うっすら・全面共通） */
+  .rwin::after{
+    content:''; position:absolute; inset:0; pointer-events:none; z-index:2;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='440' viewBox='0 0 150 440'%3E%3Cg stroke='%2305040a' stroke-width='2' fill='none' opacity='0.55'%3E%3Cpath d='M74 -6 L82 70 L62 132 L88 204 L66 286 L92 356 L76 446'/%3E%3Cpath d='M62 132 L34 164'/%3E%3Cpath d='M88 204 L118 238'/%3E%3Cpath d='M66 286 L42 320'/%3E%3Cpath d='M82 70 L104 92'/%3E%3C/g%3E%3C/svg%3E");
+    background-repeat:no-repeat; background-position:84% center; background-size:auto 92%;
+    opacity:0.22;
+  }
+  .arena::after{ content:none; }
+  .log-panel::after, .cad-testset::after, .glyph::after, .preset-icon::after, .tool::after, .log-tab::after{ content:none; }
+  /* 彫り込み風の見出し */
+  .cad-card h3, .msg-header, .en-name, .rwin-title, .pc-footer .hint{ text-shadow:0 1px 0 rgba(5,4,10,0.85); }
+  .btn-flat,.tbtn,.maction{ font-family:var(--font); cursor:pointer; border-radius:0; background:var(--win); background-image:radial-gradient(rgba(255,255,255,0.03) 1px,transparent 1px),radial-gradient(circle at 85% 80%,rgba(78,120,84,0.22),transparent 55%); background-size:3px 3px,auto; color:var(--text-dim); border:2px solid var(--edge-lite); box-shadow:0 3px 0 var(--edge-dark); text-align:center; }
+  .btn-flat:active,.tbtn:active,.maction:active{ transform:translateY(3px); box-shadow:0 0 0 var(--edge-dark); }
+  .btn-flat{ font-size:13px; padding:8px 16px; }
+  .btn-flat.gold,.maction.gold{ color:var(--light); border-color:var(--light); box-shadow:0 3px 0 #6b4e00; }
+  .tbtn{ font-size:13px; padding:6px 12px; }
+  .tbtn.on{ color:var(--cursor); border-color:var(--cursor); }
+
+  .toolbar{ max-width:1180px; margin:0 auto 14px auto; display:flex; flex-direction:column; gap:8px; }
+  .toolrow{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .toolrow .lbl{ font-size:12px; color:var(--text-dim); width:64px; }
+
+  .arena{ position:relative; background:var(--arena-bg); overflow:hidden; background-image:radial-gradient(circle at 30% 28%,rgba(244,196,48,0.08),transparent 55%),radial-gradient(circle at 72% 74%,rgba(138,111,214,0.12),transparent 55%),radial-gradient(circle at 4% 96%,rgba(74,112,80,0.28),transparent 20%),radial-gradient(circle at 96% 97%,rgba(70,108,78,0.24),transparent 18%),radial-gradient(circle at 97% 5%,rgba(74,112,80,0.18),transparent 16%); }
+  .arena-grid{ position:absolute; inset:0; background-image:linear-gradient(rgba(125,143,196,0.09) 1px,transparent 1px),linear-gradient(90deg,rgba(125,143,196,0.09) 1px,transparent 1px),radial-gradient(rgba(125,143,196,0.10) 1px,transparent 1.4px); background-size:24px 24px,24px 24px,4px 4px; }
+  .arena-axis{ position:absolute; background:rgba(125,143,196,0.20); }
+  .arena-axis.h{ left:0; right:0; top:50%; height:1px; }
+  .arena-axis.v{ top:0; bottom:0; left:50%; width:1px; }
+  .origin{ position:absolute; top:50%; left:50%; width:6px; height:6px; background:var(--cursor); transform:translate(-50%,-50%); box-shadow:0 0 0 2px var(--edge-dark); }
+
+  .enemy-tag{ position:absolute; top:12%; left:50%; transform:translateX(-50%); text-align:center; }
+  .enemy-tag .en-name{ font-size:12px; color:var(--text); background:rgba(5,4,10,0.7); padding:3px 8px; margin-bottom:3px; box-shadow:0 0 0 1px var(--edge-lite); }
+  .en-hp{ height:9px; background:#211d38; box-shadow:inset 0 0 0 1px var(--edge-lite); margin:0 auto; }
+  .en-hp-fill{ height:100%; background:var(--dark); background-image:repeating-linear-gradient(90deg,rgba(0,0,0,0.30) 0 1px,transparent 1px 6px); }
+  .glyph{ position:absolute; top:1%; left:50%; transform:translateX(-50%); width:26px; height:26px; background:var(--win); box-shadow:inset 0 0 0 2px var(--edge-dark),inset 0 0 0 3px var(--edge-lite); clip-path:var(--notch); display:flex; align-items:center; justify-content:center; font-size:14px; color:var(--cursor); }
+
+  .sprite{ position:absolute; transform:translate(-50%,-50%); line-height:0; }
+  .sprite .sp{ display:block; } .sp{ shape-rendering:crispEdges; }
+  .traj{ position:absolute; inset:0; shape-rendering:crispEdges; }
+
+  .cmd-item{ display:flex; align-items:center; gap:8px; padding:9px 12px; font-size:14px; color:var(--text-dim); cursor:pointer; }
+  .cmd-item .cursor{ width:10px; color:var(--cursor); opacity:0; }
+  .cmd-item.on{ color:var(--text); } .cmd-item.on .cursor{ opacity:1; }
+  .cmd-item .icon{ color:var(--cursor); width:14px; }
+
+  .status-row{ display:grid; align-items:center; gap:8px; font-size:13px; }
+  .rdy{ text-align:center; } .rdy.done{ color:var(--hp-ok); } .rdy.pending{ color:var(--text-dim); }
+  .nm{ color:var(--text); }
+  .hp-track{ height:9px; background:#211d38; box-shadow:inset 0 0 0 1px var(--edge-lite); }
+  .hp-fill{ height:100%; background:var(--hp-ok); background-image:repeating-linear-gradient(90deg,rgba(0,0,0,0.30) 0 1px,transparent 1px 6px); }
+  .num2{ font-family:var(--expr); font-size:14px; color:var(--text-dim); text-align:right; }
+
+  .preset-row{ display:flex; gap:6px; margin-bottom:10px; }
+  .preset-icon{ width:34px; height:34px; display:flex; align-items:center; justify-content:center; font-size:14px; color:var(--text-dim); background:var(--win-2); box-shadow:inset 0 0 0 2px var(--edge-dark),inset 0 0 0 3px var(--edge-lite); clip-path:var(--notch); cursor:pointer; }
+  .preset-icon.on{ color:var(--cursor); box-shadow:inset 0 0 0 2px var(--edge-dark),inset 0 0 0 3px var(--cursor); }
+
+  .expr-box{ margin-bottom:10px; background:#0a0816; box-shadow:inset 0 0 0 2px var(--edge-dark),inset 0 0 0 3px var(--edge-lite); padding:8px 10px; }
+  .expr-pretty{ font-family:var(--expr); font-size:24px; line-height:1; color:var(--light-soft); letter-spacing:0.5px; }
+  .expr-pretty sup{ font-size:15px; }
+  .expr-raw{ font-family:var(--expr); font-size:16px; color:var(--text-dim); margin-top:2px; }
+  .expr-editrow{ display:flex; gap:6px; margin-bottom:10px; }
+  .expr-editrow input{ flex:1; font-family:var(--expr); font-size:18px; background:#0a0816; color:var(--light-soft); border:none; box-shadow:inset 0 0 0 2px var(--edge-dark),inset 0 0 0 3px var(--edge-lite); padding:6px 8px; }
+  .expr-apply{ font-size:12px; padding:8px 10px; color:var(--text-dim); cursor:pointer; background:var(--win); border:2px solid var(--edge-lite); box-shadow:0 3px 0 var(--edge-dark); }
+  .expr-apply:active{ transform:translateY(3px); box-shadow:0 0 0; }
+
+  .fitbar{ display:flex; gap:6px; margin-bottom:10px; }
+  .fitbar .btn-flat{ flex:1; font-size:12px; padding:8px; }
+  .subtabs{ display:flex; border-bottom:2px solid var(--edge-dark); }
+  .subtab{ font-size:12px; padding:8px 14px; color:var(--text-dim); cursor:pointer; border-bottom:3px solid transparent; margin-bottom:-2px; }
+  .subtab.on{ color:var(--text); border-bottom-color:var(--cursor); }
+  .adv{ font-size:12px; color:var(--text-dim); cursor:pointer; margin-bottom:8px; }
+  .adv-body{ display:none; } .adv-body.open{ display:block; }
+  .srow{ margin-bottom:8px; }
+  .srow label{ display:flex; justify-content:space-between; font-size:12px; color:var(--text-dim); margin-bottom:3px; }
+  .srow label span:last-child{ font-family:var(--expr); font-size:15px; color:var(--light-soft); }
+  .srow input[type=range]{ width:100%; accent-color:var(--cursor); height:14px; }
+  .zgauge{ margin-bottom:10px; }
+  .zgauge-label{ display:flex; justify-content:space-between; font-size:12px; color:var(--text-dim); margin-bottom:4px; }
+  .zgauge svg{ width:100%; height:52px; display:block; shape-rendering:crispEdges; }
+
+  /* ===== PC ===== */
+  #pc{ display:none; max-width:1180px; margin:0 auto; } #pc.on{ display:block; }
+  #pc .view{ display:none; } #pc .view.on{ display:block; }
+  .log-tab{ position:absolute; top:8px; right:8px; z-index:6; font-size:12px; padding:6px 9px; cursor:pointer; color:var(--text-dim); background:var(--win); box-shadow:inset 0 0 0 2px var(--edge-dark),inset 0 0 0 3px var(--edge-lite); clip-path:var(--notch); }
+  .log-panel{ position:absolute; top:44px; right:8px; width:230px; max-height:200px; padding:10px; z-index:6; display:none; overflow-y:auto; }
+  .log-panel.open{ display:block; }
+  .log-line{ font-size:12px; color:var(--text-dim); line-height:1.7; border-top:1px solid var(--edge-lite); padding-top:5px; margin-top:5px; }
+  .log-line:first-child{ border-top:none; padding-top:0; margin-top:0; }
+  .lg{ color:var(--light); } .dk{ color:var(--dark); }
+  .pc-footer{ display:flex; justify-content:space-between; align-items:center; padding:12px 14px; margin-top:10px; }
+  .pc-footer .hint{ font-size:13px; color:var(--text-dim); }
+  .bottom-bar{ display:grid; grid-template-columns:210px 1fr; gap:10px; margin-top:10px; }
+  .cmd-win{ padding:6px 0 8px 0; }
+  .status-win{ padding:10px; display:flex; flex-direction:column; gap:8px; }
+  .status-win .status-row{ grid-template-columns:16px 88px 1fr 66px; }
+  .msg-win{ margin-top:10px; }
+  .msg-header{ display:flex; justify-content:space-between; align-items:center; padding:8px 10px; font-size:12px; color:var(--text-dim); border-bottom:2px solid var(--edge-dark); }
+  .msg-header .close{ cursor:pointer; }
+  .subpane{ padding:12px; }
+  .msg-actions{ display:flex; gap:8px; padding:0 12px 12px 12px; }
+  .maction{ flex:1; padding:10px; font-size:13px; }
+
+  /* ===== MOBILE ===== */
+  #mb{ display:none; } #mb.on{ display:block; }
+  #mb .view{ display:none; } #mb .view.on{ display:block; }
+  .phone{ width:375px; margin:0 auto; padding:12px; background:#000; box-shadow:inset 0 0 0 3px #1a1a22; }
+  .mb-topbar{ display:flex; justify-content:space-between; align-items:center; padding:6px 4px; }
+  .mb-topbar .t{ font-size:12px; color:var(--text-dim); }
+  .mb-log-drawer{ display:none; padding:10px; margin-bottom:6px; max-height:120px; overflow-y:auto; }
+  .mb-log-drawer.open{ display:block; }
+  .mb-status{ padding:8px; margin-top:8px; display:flex; flex-direction:column; gap:6px; }
+  .mb-status .status-row{ grid-template-columns:14px 44px 1fr 46px; font-size:12px; }
+  .mb-cmd{ display:flex; gap:6px; margin-top:8px; }
+  .mb-cmd .btn-flat{ flex:1; font-size:12px; padding:8px 4px; }
+  .sheet{ display:none; margin-top:8px; } .sheet.open{ display:block; }
+  .sheet-actions{ display:flex; gap:8px; padding:8px; }
+  .sheet-actions .maction{ flex:1; padding:10px; font-size:12px; }
+  .fitmode-bar{ display:flex; align-items:center; justify-content:space-between; padding:10px; margin-top:8px; }
+  .fitmode-bar span{ font-size:12px; color:var(--text-dim); }
+  .fitmode-bar .actions{ display:flex; gap:6px; }
+  .pick-dot{ position:absolute; width:8px; height:8px; background:var(--cursor); transform:translate(-50%,-50%); box-shadow:0 0 0 2px var(--edge-dark); }
+
+  /* ================= CAD / PPT STAGE EDITOR ================= */
+  .cad{ display:grid; grid-template-columns:1fr 264px; grid-template-rows:auto 1fr auto; gap:8px; }
+  .cad-ribbon{ grid-column:1 / -1; display:flex; align-items:center; gap:10px; padding:8px 10px; }
+  .cad-group{ display:flex; gap:4px; align-items:center; padding-right:10px; border-right:1px solid var(--edge-lite); }
+  .cad-group:last-of-type{ border-right:none; }
+  .cad-group .gl{ font-size:10px; color:var(--text-dim); margin-right:4px; }
+  .tool{ width:38px; height:38px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; cursor:pointer; background:var(--win-2); box-shadow:inset 0 0 0 2px var(--edge-dark),inset 0 0 0 3px var(--edge-lite); color:var(--text-dim); font-size:14px; }
+  .tool .tt{ font-size:8px; }
+  .tool.on{ color:var(--cursor); box-shadow:inset 0 0 0 2px var(--edge-dark),inset 0 0 0 3px var(--cursor); }
+  .cad-spacer{ flex:1; }
+  .cad-testset{ display:flex; align-items:center; gap:6px; padding:5px 8px; box-shadow:inset 0 0 0 1px var(--edge-lite); }
+  .cad-testset .gl2{ font-size:10px; color:var(--text-dim); }
+
+  .cad-stage{ position:relative; }
+  .cad-rulers{ display:grid; grid-template-columns:20px 1fr; grid-template-rows:20px 1fr; height:520px; }
+  .cad-corner{ background:var(--win-2); box-shadow:inset 0 0 0 1px var(--edge-lite); display:flex; align-items:center; justify-content:center; font-size:9px; color:var(--text-dim); }
+  .ruler{ background:var(--win-2); box-shadow:inset 0 0 0 1px var(--edge-lite); position:relative; overflow:hidden; }
+  .ruler.top{ background-image:repeating-linear-gradient(90deg,var(--edge-lite) 0 1px,transparent 1px 20px); }
+  .ruler.left{ background-image:repeating-linear-gradient(0deg,var(--edge-lite) 0 1px,transparent 1px 20px); }
+  .ruler .rn{ position:absolute; font-family:var(--expr); font-size:11px; color:var(--text-dim); }
+  .cad-canvas{ position:relative; overflow:hidden; box-shadow:inset 0 0 0 1px var(--edge-lite); }
+  .field-bound{ position:absolute; top:50%; left:50%; width:400px; height:400px; aspect-ratio:1/1; transform:translate(-50%,-50%); border-radius:50%; box-shadow:0 0 0 2px var(--edge-lite); opacity:0.6; }
+
+  .crosshair-v,.crosshair-h{ position:absolute; background:rgba(159,179,255,0.4); pointer-events:none; }
+  .crosshair-v{ width:1px; top:0; bottom:0; } .crosshair-h{ height:1px; left:0; right:0; }
+  .cursor-read{ position:absolute; font-family:var(--expr); font-size:13px; color:var(--cursor); background:rgba(5,4,10,0.8); padding:1px 5px; pointer-events:none; }
+
+  .obj{ position:absolute; transform:translate(-50%,-50%); }
+  .wall{ position:absolute; transform:translate(-50%,-50%); background:rgba(138,120,90,0.30); box-shadow:inset 0 0 0 2px #8a7a5a; cursor:move; }
+  .wall.disc{ border-radius:50%; }
+  .wall.unbreak{ background:rgba(90,96,120,0.42); box-shadow:inset 0 0 0 2px #55607a; }
+  .wall.tough{ background:rgba(70,120,140,0.34); box-shadow:inset 0 0 0 3px #4a8fa0; }
+  .wall.fragile{ background:rgba(150,110,140,0.28); box-shadow:inset 0 0 0 1px #a06a8a; }
+  .wall.carved{ background:rgba(13,11,22,0.9); box-shadow:inset 0 0 0 1px #2a2440; border-radius:50%; }
+  .wall.sel{ box-shadow:inset 0 0 0 2px var(--cursor),0 0 0 1px var(--cursor); }
+  .wall.warn{ box-shadow:inset 0 0 0 2px var(--warn),0 0 0 1px var(--warn); }
+  .handle{ position:absolute; width:7px; height:7px; background:var(--cursor); box-shadow:0 0 0 1px var(--edge-dark); }
+  .handle.tl{ top:-4px; left:-4px; } .handle.tr{ top:-4px; right:-4px; } .handle.bl{ bottom:-4px; left:-4px; } .handle.br{ bottom:-4px; right:-4px; }
+  .obj-label{ position:absolute; left:50%; top:-15px; transform:translateX(-50%); font-size:10px; color:var(--text-dim); white-space:nowrap; }
+
+  .cad-float{ position:absolute; right:8px; bottom:8px; display:flex; flex-direction:column; gap:0; }
+  .cad-float button{ width:28px; height:28px; font-family:var(--font); cursor:pointer; background:var(--win); color:var(--text); border:none; box-shadow:inset 0 0 0 1px var(--edge-lite); }
+
+  .cad-right{ display:flex; flex-direction:column; gap:8px; min-height:0; }
+  .cad-card{ padding:10px 12px; }
+  .cad-card h3{ margin:0 0 8px 0; font-size:13px; color:var(--cursor); font-weight:500; display:flex; justify-content:space-between; align-items:center; }
+  .cad-card h3 .cnt{ font-size:10px; color:var(--text-dim); }
+
+  .objlist{ max-height:150px; overflow-y:auto; display:flex; flex-direction:column; gap:2px; }
+  .objrow{ display:flex; align-items:center; gap:6px; padding:5px 6px; font-size:12px; color:var(--text-dim); cursor:pointer; }
+  .objrow:hover{ background:rgba(159,179,255,0.06); }
+  .objrow.sel{ background:rgba(159,179,255,0.12); color:var(--text); box-shadow:inset 2px 0 0 var(--cursor); }
+  .objrow .ic{ width:14px; text-align:center; }
+  .objrow .nm2{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .objrow .eye,.objrow .del{ font-size:11px; opacity:0.6; }
+  .objrow .eye:hover,.objrow .del:hover{ opacity:1; }
+
+  .pfield{ margin-bottom:8px; }
+  .pfield label{ display:block; font-size:11px; color:var(--text-dim); margin-bottom:3px; }
+  .pinput{ width:100%; font-family:var(--expr); font-size:16px; background:#0a0816; color:var(--light-soft); border:none; box-shadow:inset 0 0 0 2px var(--edge-dark),inset 0 0 0 3px var(--edge-lite); padding:5px 8px; }
+  .pinput.jp{ font-family:var(--font); font-size:12px; }
+  .ptwo{ display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  .pselect{ width:100%; font-family:var(--font); font-size:12px; background:#0a0816; color:var(--text); border:none; box-shadow:inset 0 0 0 2px var(--edge-dark),inset 0 0 0 3px var(--edge-lite); padding:6px 8px; }
+  .prow-btn{ display:flex; gap:6px; margin-top:6px; } .prow-btn .btn-flat{ flex:1; font-size:11px; padding:7px; }
+
+  .cad-status{ grid-column:1 / -1; display:flex; align-items:center; gap:16px; padding:6px 12px; font-family:var(--expr); font-size:14px; color:var(--text-dim); }
+  .cad-status .k{ color:var(--cursor); }
+  .cad-status .spacer{ flex:1; }
+
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <div class="toolrow">
+    <span class="lbl">端末</span>
+    <button class="tbtn on" onclick="setDevice('pc')" id="dev-pc">PC</button>
+    <button class="tbtn" onclick="setDevice('mb')" id="dev-mb">スマホ</button>
+  </div>
+  <div class="toolrow" id="phaserow">
+    <span class="lbl">画面</span>
+    <button class="tbtn on" data-p="reveal">敵公開</button>
+    <button class="tbtn" data-p="compose">作成</button>
+    <button class="tbtn" data-p="composer">術式編集</button>
+    <button class="tbtn" data-p="pick">点フィット</button>
+    <button class="tbtn" data-p="editor">ステージ編集</button>
+  </div>
+</div>
+
+<!-- ==================== PC ==================== -->
+<div id="pc" class="on">
+
+  <div class="view on" data-p="reveal">
+    <div class="rwin arena" style="height:440px;">
+      <div class="arena-grid"></div><div class="arena-axis h"></div><div class="arena-axis v"></div><div class="origin"></div>
+      <div class="log-tab" onclick="tog('pc-reveal-log')">戦闘ログ ▾</div>
+      <div class="rwin log-panel" id="pc-reveal-log"><div class="log-line">ターン1・遺跡の入口に到達した</div><div class="log-line">石像の番人が身構えている</div></div>
+      <div class="enemy-tag"><div class="glyph">◠</div><div class="en-name">石像の番人</div><div class="en-hp" style="width:120px;"><div class="en-hp-fill" style="width:100%"></div></div></div>
+      <svg class="traj" width="100%" height="100%"><path d="M 50% 20% Q 30% 45%, 50% 50%" stroke="var(--dark)" stroke-width="3" stroke-dasharray="4 4" fill="none" opacity="0.85"/></svg>
+      <div class="sprite" style="top:22%; left:50%;"><span data-spr="golem" data-w="50"></span></div>
+      <div class="sprite" style="top:78%; left:38%;"><span data-spr="mageDark" data-w="28"></span></div>
+      <div class="sprite" style="top:82%; left:50%;"><span data-spr="mageDark" data-w="28"></span></div>
+      <div class="sprite" style="top:78%; left:62%;"><span data-spr="mageDark" data-w="28"></span></div>
+    </div>
+    <div class="rwin pc-footer"><span class="hint">石像の番人は「弧」を放つ気配 ／ 属性は闇寄りと推測される</span><button class="btn-flat gold">術式を構える ▸</button></div>
+  </div>
+
+  <div class="view" data-p="compose">
+    <div class="rwin arena" style="height:400px;">
+      <div class="arena-grid"></div><div class="arena-axis h"></div><div class="arena-axis v"></div><div class="origin"></div>
+      <div class="log-tab" onclick="tog('pc-compose-log')">戦闘ログ ▾</div>
+      <div class="rwin log-panel" id="pc-compose-log"><div class="log-line">石像の番人の軌道（<span class="dk">闇寄り</span>）が公開された</div></div>
+      <div class="enemy-tag"><div class="glyph">◠</div><div class="en-name">石像の番人</div><div class="en-hp" style="width:120px;"><div class="en-hp-fill" style="width:100%"></div></div></div>
+      <svg class="traj" width="100%" height="100%"><path d="M 50% 20% Q 30% 45%, 50% 50%" stroke="var(--dark)" stroke-width="3" stroke-dasharray="4 4" fill="none" opacity="0.7"/><path d="M 50% 50% Q 60% 34%, 50% 22%" stroke="var(--light)" stroke-width="3" fill="none"/></svg>
+      <div class="sprite" style="top:22%; left:50%;"><span data-spr="golem" data-w="50"></span></div>
+      <div class="sprite" style="top:78%; left:38%;"><span data-spr="mageDark" data-w="28"></span></div>
+      <div class="sprite" style="top:82%; left:50%;"><span data-spr="mageLight" data-w="28"></span></div>
+      <div class="sprite" style="top:78%; left:62%;"><span data-spr="mageDark" data-w="28"></span></div>
+    </div>
+    <div class="bottom-bar">
+      <div class="rwin cmd-win">
+        <div class="cmd-item on"><span class="cursor">▶</span><span class="icon">◆</span>おまかせ</div>
+        <div class="cmd-item"><span class="cursor">▶</span><span class="icon">✎</span>術式を組む</div>
+        <div class="cmd-item"><span class="cursor">▶</span><span class="icon">◎</span>全員発射</div>
+      </div>
+      <div class="rwin status-win">
+        <div class="status-row"><span class="rdy done">◎</span><span class="nm">灯火のミラ</span><div class="hp-track"><div class="hp-fill" style="width:100%"></div></div><span class="num2">135/135</span></div>
+        <div class="status-row"><span class="rdy pending">・</span><span class="nm">宵闇のレン</span><div class="hp-track"><div class="hp-fill" style="width:100%"></div></div><span class="num2">135/135</span></div>
+        <div class="status-row"><span class="rdy pending">・</span><span class="nm">均衡のソウ</span><div class="hp-track"><div class="hp-fill" style="width:100%"></div></div><span class="num2">150/150</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="view" data-p="composer">
+    <div class="rwin arena" style="height:280px;">
+      <div style="position:absolute; inset:0; background: radial-gradient(circle at 30% 25%, rgba(244,196,48,0.20), transparent 50%), radial-gradient(circle at 68% 78%, rgba(138,111,214,0.24), transparent 55%);"></div>
+      <div class="arena-grid"></div><div class="arena-axis h"></div><div class="arena-axis v"></div><div class="origin"></div>
+      <div class="enemy-tag" style="top:8%;"><div class="glyph" style="top:-22px;">◠</div><div class="en-name">石像の番人</div><div class="en-hp" style="width:110px;"><div class="en-hp-fill" style="width:100%"></div></div></div>
+      <svg class="traj" width="100%" height="100%">
+        <path d="M 50% 16% Q 32% 40%, 50% 46%" stroke="var(--dark)" stroke-width="3" stroke-dasharray="4 4" fill="none" opacity="0.55"/>
+        <path d="M 50% 82% Q 60% 45%, 50% 18%" stroke="var(--light)" stroke-width="3" fill="none"/>
+        <circle cx="50%" cy="18%" r="4" fill="var(--light)"/>
+      </svg>
+      <div class="sprite" style="top:16%; left:50%;"><span data-spr="golem" data-w="40"></span></div>
+      <div class="sprite" style="top:84%; left:50%;"><span data-spr="mageLight" data-w="30"></span></div>
+    </div>
+    <div class="rwin msg-win">
+      <div class="msg-header"><span>宵闇のレン ・ 術式を詠唱</span><span class="close">✕ もどる</span></div>
+      <div class="subtabs"><div class="subtab on" onclick="pcTab(this,'traj')">軌道</div><div class="subtab" onclick="pcTab(this,'z')">z場（属性）</div></div>
+      <div class="subpane" data-pane="traj">
+        <div class="preset-row"><div class="preset-icon" title="直線">╱</div><div class="preset-icon on" title="放物線">◠</div><div class="preset-icon" title="サイン波">〜</div><div class="preset-icon" title="指数">⤴</div><div class="preset-icon" title="絶対値">∨</div></div>
+        <div class="expr-box"><div class="expr-pretty">0.25(x−8)<sup>2</sup> − 6</div><div class="expr-raw">y = 0.25*(x-8)^2-6</div></div>
+        <div class="expr-editrow"><input type="text" value="0.25*(x-8)^2-6" readonly><div class="expr-apply">適用</div></div>
+        <div class="fitbar"><div class="btn-flat">点を選ぶ（フィット）</div><div class="btn-flat">盤面でθを決める</div></div>
+        <div class="adv" onclick="this.nextElementSibling.classList.toggle('open')">係数を調整 ▸</div>
+        <div class="adv-body">
+          <div class="srow"><label><span>a（開き）</span><span>0.25</span></label><input type="range" value="55"></div>
+          <div class="srow"><label><span>h（横位置）</span><span>8</span></label><input type="range" value="50"></div>
+          <div class="srow"><label><span>k（高さ）</span><span>-6</span></label><input type="range" value="40"></div>
+        </div>
+      </div>
+      <div class="subpane" data-pane="z" style="display:none;">
+        <div class="preset-row"><div class="preset-icon on" title="一定">■</div><div class="preset-icon" title="縦勾配">↕</div><div class="preset-icon" title="横勾配">↔</div><div class="preset-icon" title="放射">◎</div></div>
+        <div class="expr-box"><div class="expr-pretty">z = 4.6</div><div class="expr-raw">z = 4.6</div></div>
+        <div class="expr-editrow"><input type="text" value="4.6" readonly><div class="expr-apply">適用</div></div>
+        <div class="zgauge">
+          <div class="zgauge-label"><span>闇</span><span>命中点の属性強度</span><span>光</span></div>
+          <svg viewBox="0 0 300 52"><polyline points="4,46 70,46 150,6 230,46 296,46" fill="none" stroke="var(--edge-lite)" stroke-width="2"/><rect x="174" y="14" width="8" height="8" fill="var(--light)"/><text x="150" y="15" text-anchor="middle" fill="var(--text-dim)" font-size="8" font-family="Pixelify Sans">zPeak</text></svg>
+          <div class="zgauge-label"><span></span><span style="color:var(--light-soft)">現在：光・強度4.6（高いが失速しやすい）</span><span></span></div>
+        </div>
+        <div class="adv" onclick="this.nextElementSibling.classList.toggle('open')">係数を調整 ▸</div>
+        <div class="adv-body"><div class="srow"><label><span>c（一定値）</span><span>4.6</span></label><input type="range" value="73"></div></div>
+      </div>
+      <div class="msg-actions"><div class="maction">キャンセル</div><div class="maction gold">詠唱を確定</div></div>
+    </div>
+  </div>
+
+  <div class="view" data-p="pick">
+    <div class="rwin arena" style="height:440px;">
+      <div class="arena-grid"></div><div class="arena-axis h"></div><div class="arena-axis v"></div><div class="origin"></div>
+      <svg class="traj" width="100%" height="100%"><path d="M 50% 82% Q 40% 55%, 42% 30%" stroke="var(--light)" stroke-width="3" stroke-dasharray="3 3" fill="none" opacity="0.85"/></svg>
+      <div class="pick-dot" style="top:55%; left:44%;"></div><div class="pick-dot" style="top:30%; left:42%;"></div>
+      <div class="sprite" style="top:82%; left:50%;"><span data-spr="mageLight" data-w="30"></span></div>
+      <div class="sprite" style="top:22%; left:50%;"><span data-spr="golem" data-w="50"></span></div>
+    </div>
+    <div class="rwin" style="margin-top:10px; padding:12px 14px; display:flex; align-items:center; justify-content:space-between;">
+      <span style="font-size:13px; color:var(--text-dim);">盤面に点を打ってください（2点選択中）</span>
+      <div style="display:flex; gap:6px;"><div class="btn-flat">クリア</div><div class="btn-flat">やめる</div><div class="btn-flat gold">フィット</div></div>
+    </div>
+  </div>
+
+  <!-- ============ CAD / PPT STAGE EDITOR ============ -->
+  <div class="view" data-p="editor">
+    <div class="cad">
+
+      <!-- ribbon -->
+      <div class="rwin cad-ribbon">
+        <div class="cad-group">
+          <span class="gl">ツール</span>
+          <div class="tool on" title="選択・移動"><span>▣</span><span class="tt">選択</span></div>
+          <div class="tool" title="矩形の壁"><span>▭</span><span class="tt">壁</span></div>
+          <div class="tool" title="円の壁"><span>●</span><span class="tt">円</span></div>
+          <div class="tool" title="削る（carve）"><span>◐</span><span class="tt">削る</span></div>
+          <div class="tool" title="消しゴム"><span>⌫</span><span class="tt">消去</span></div>
+        </div>
+        <div class="cad-group">
+          <span class="gl">配置</span>
+          <div class="tool" title="敵を置く"><span data-spr="golem" data-w="18"></span><span class="tt">敵</span></div>
+          <div class="tool" title="味方を置く"><span data-spr="mageDark" data-w="14"></span><span class="tt">味方</span></div>
+        </div>
+        <div class="cad-group">
+          <span class="gl">素材</span>
+          <div class="tool" title="normal（通常）"><span style="color:#8a7a5a">▤</span><span class="tt">通常</span></div>
+          <div class="tool" title="fragile（もろい）"><span style="color:#a06a8a">▥</span><span class="tt">もろい</span></div>
+          <div class="tool on" title="tough（頑丈）"><span style="color:#4a8fa0">▦</span><span class="tt">頑丈</span></div>
+          <div class="tool" title="unbreakable（不壊）"><span style="color:#55607a">▧</span><span class="tt">不壊</span></div>
+        </div>
+        <div class="cad-spacer"></div>
+        <div class="cad-testset">
+          <span class="gl2">初期instability</span>
+          <input class="pinput" style="width:44px; padding:4px 6px;" value="0">
+          <button class="btn-flat gold">▶ テストプレイ</button>
+        </div>
+        <button class="btn-flat">リセット</button>
+        <button class="btn-flat">書き出し ▾</button>
+      </div>
+
+      <!-- canvas with rulers -->
+      <div class="cad-stage">
+        <div class="rwin cad-rulers">
+          <div class="cad-corner">x,y</div>
+          <div class="ruler top">
+            <span class="rn" style="left:6px;">-20</span><span class="rn" style="left:25%;">-10</span><span class="rn" style="left:49%;">0</span><span class="rn" style="left:73%;">10</span><span class="rn" style="right:6px;">20</span>
+          </div>
+          <div class="ruler left">
+            <span class="rn" style="top:4px; left:2px;">20</span><span class="rn" style="top:25%; left:2px;">10</span><span class="rn" style="top:49%; left:4px;">0</span><span class="rn" style="top:73%; left:2px;">-10</span><span class="rn" style="bottom:4px; left:2px;">-20</span>
+          </div>
+          <div class="cad-canvas arena">
+            <div class="arena-grid"></div><div class="arena-axis h"></div><div class="arena-axis v"></div>
+            <div class="field-bound"></div><div class="origin"></div>
+
+            <!-- crosshair + cursor readout (CAD) -->
+            <div class="crosshair-v" style="left:38%;"></div>
+            <div class="crosshair-h" style="top:44%;"></div>
+            <div class="cursor-read" style="left:39%; top:45%;">(-6, 3)</div>
+
+            <!-- walls -->
+            <div class="wall unbreak" style="top:50%; left:18%; width:8px; height:64%;"><span class="obj-label">部屋・左（unbreakable）</span></div>
+            <div class="wall unbreak" style="top:50%; left:82%; width:8px; height:64%;"></div>
+            <div class="wall tough sel" style="top:44%; left:50%; width:70px; height:18px;">
+              <span class="obj-label" style="color:var(--cursor)">壁A（頑丈・選択中）</span>
+              <span class="handle tl"></span><span class="handle tr"></span><span class="handle bl"></span><span class="handle br"></span>
+            </div>
+            <div class="wall warn" style="top:57%; left:59%; width:44px; height:18px;"><span class="obj-label" style="color:var(--warn)">柱B（重なり）</span></div>
+            <div class="wall carved" style="top:44%; left:44%; width:22px; height:22px;"><span class="obj-label">削り跡</span></div>
+
+            <!-- enemy -->
+            <div class="obj" style="top:24%; left:50%;"><span data-spr="golem" data-w="40"></span><span class="obj-label">石像の番人 (0,14)</span></div>
+
+            <!-- allies -->
+            <div class="obj" style="top:80%; left:32%;"><span data-spr="mageDark" data-w="24"></span></div>
+            <div class="obj" style="top:84%; left:50%;"><span data-spr="mageDark" data-w="24"></span></div>
+            <div class="obj" style="top:80%; left:68%;"><span data-spr="mageDark" data-w="24"></span></div>
+
+            <div class="cad-float">
+              <button>＋</button><button>－</button><button title="全体表示">⤢</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- right: object list + properties + stage -->
+      <div class="cad-right">
+        <div class="rwin cad-card">
+          <h3>ステージ<span class="cnt">LVL 1 ／ rField 25</span></h3>
+          <div class="pfield"><label>LVL</label><input class="pinput" value="1"></div>
+          <div class="pfield">
+            <label style="display:flex; justify-content:space-between;"><span>rField（規模）</span><span style="font-family:var(--expr); color:var(--light-soft);">25</span></label>
+            <input type="range" min="18" max="60" value="25" style="width:100%; accent-color:var(--cursor); height:14px;">
+            <div style="font-size:10px; color:var(--text-dim); margin-top:2px;">推奨（LVL1）：25 前後　範囲 18–60</div>
+          </div>
+          <div class="pfield"><label>mechanics</label><select class="pselect"><option>壁:ON／敵発射:ON</option><option>壁:OFF／敵発射:ON</option></select></div>
+        </div>
+
+        <div class="rwin cad-card">
+          <h3>オブジェクト<span class="cnt">7 個</span></h3>
+          <div class="objlist">
+            <div class="objrow"><span class="ic" style="color:#55607a">▦</span><span class="nm2">部屋・左</span><span class="eye">👁</span><span class="del">✕</span></div>
+            <div class="objrow"><span class="ic" style="color:#55607a">▦</span><span class="nm2">部屋・右</span><span class="eye">👁</span><span class="del">✕</span></div>
+            <div class="objrow sel"><span class="ic" style="color:#4a8fa0">▦</span><span class="nm2">壁A（頑丈）</span><span class="eye">👁</span><span class="del">✕</span></div>
+            <div class="objrow"><span class="ic" style="color:var(--warn)">▭</span><span class="nm2">柱B</span><span class="eye">👁</span><span class="del">✕</span></div>
+            <div class="objrow"><span class="ic">◐</span><span class="nm2">削り跡</span><span class="eye">👁</span><span class="del">✕</span></div>
+            <div class="objrow"><span class="ic" style="color:var(--dark)">☗</span><span class="nm2">石像の番人</span><span class="eye">👁</span><span class="del">✕</span></div>
+            <div class="objrow"><span class="ic" style="color:var(--dark)">♟</span><span class="nm2">味方 ×3</span><span class="eye">👁</span><span class="del">✕</span></div>
+          </div>
+        </div>
+
+        <div class="rwin cad-card" style="flex:1;">
+          <h3>プロパティ：壁A</h3>
+          <div class="ptwo">
+            <div class="pfield"><label>x</label><input class="pinput" value="-4"></div>
+            <div class="pfield"><label>y</label><input class="pinput" value="3"></div>
+            <div class="pfield"><label>幅 w</label><input class="pinput" value="8"></div>
+            <div class="pfield"><label>高 h</label><input class="pinput" value="2"></div>
+          </div>
+          <div class="pfield"><label>属性</label><select class="pselect"><option>neutral（中立）</option><option>light（光）</option><option>dark（闇）</option></select></div>
+          <div class="pfield"><label>種別</label><select class="pselect"><option>normal（通常）</option><option>fragile（もろい）</option><option selected>tough（頑丈）</option><option>unbreakable（不壊）</option></select></div>
+          <div class="prow-btn"><div class="btn-flat">複製</div><div class="btn-flat">削除</div></div>
+          <div class="prow-btn"><div class="btn-flat">部屋の囲い：四方</div><div class="btn-flat">左右</div></div>
+        </div>
+      </div>
+
+      <!-- status bar -->
+      <div class="rwin cad-status">
+        <span><span class="k">カーソル</span> x:-6 y:3</span>
+        <span><span class="k">スナップ</span> 1.0</span>
+        <span><span class="k">選択</span> 壁A</span>
+        <span><span class="k">種別</span> tough（頑丈）</span>
+        <div class="spacer"></div>
+        <span><span class="k">ズーム</span> 100%</span>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<!-- ==================== MOBILE ==================== -->
+<div id="mb">
+  <div class="phone">
+
+    <div class="view on" data-p="reveal">
+      <div class="mb-topbar"><span class="t">第一章・T1／敵公開</span><span class="t" style="cursor:pointer;" onclick="tog('mb-reveal-log')">戦闘ログ ▾</span></div>
+      <div class="rwin mb-log-drawer" id="mb-reveal-log"><div class="log-line">ターン1・遺跡の入口に到達した</div><div class="log-line">石像の番人が身構えている</div></div>
+      <div class="rwin arena" style="height:320px;">
+        <div class="arena-grid"></div><div class="arena-axis h"></div><div class="arena-axis v"></div><div class="origin"></div>
+        <div class="enemy-tag"><div class="glyph">◠</div><div class="en-name" style="font-size:11px;">石像の番人</div><div class="en-hp" style="width:90px;"><div class="en-hp-fill" style="width:100%"></div></div></div>
+        <svg class="traj" width="100%" height="100%"><path d="M 50% 20% Q 30% 45%, 50% 50%" stroke="var(--dark)" stroke-width="3" stroke-dasharray="4 4" fill="none" opacity="0.85"/></svg>
+        <div class="sprite" style="top:22%; left:50%;"><span data-spr="golem" data-w="36"></span></div>
+        <div class="sprite" style="top:78%; left:38%;"><span data-spr="mageDark" data-w="20"></span></div>
+        <div class="sprite" style="top:82%; left:50%;"><span data-spr="mageDark" data-w="20"></span></div>
+        <div class="sprite" style="top:78%; left:62%;"><span data-spr="mageDark" data-w="20"></span></div>
+      </div>
+      <div style="margin-top:8px;"><button class="btn-flat gold" style="width:100%;">術式を構える ▸</button></div>
+    </div>
+
+    <div class="view" data-p="compose">
+      <div class="mb-topbar"><span class="t">第一章・T1／作成</span><span class="t" style="cursor:pointer;" onclick="tog('mb-compose-log')">戦闘ログ ▾</span></div>
+      <div class="rwin mb-log-drawer" id="mb-compose-log"><div class="log-line">石像の番人の軌道（<span class="dk">闇寄り</span>）が公開された</div></div>
+      <div class="rwin arena" style="height:300px;">
+        <div class="arena-grid"></div><div class="arena-axis h"></div><div class="arena-axis v"></div><div class="origin"></div>
+        <div class="enemy-tag"><div class="glyph">◠</div><div class="en-name" style="font-size:11px;">石像の番人</div><div class="en-hp" style="width:90px;"><div class="en-hp-fill" style="width:100%"></div></div></div>
+        <svg class="traj" width="100%" height="100%"><path d="M 50% 20% Q 30% 45%, 50% 50%" stroke="var(--dark)" stroke-width="3" stroke-dasharray="4 4" fill="none" opacity="0.7"/></svg>
+        <div class="sprite" style="top:22%; left:50%;"><span data-spr="golem" data-w="36"></span></div>
+        <div class="sprite" style="top:82%; left:50%;"><span data-spr="mageLight" data-w="20"></span></div>
+        <div class="sprite" style="top:78%; left:38%;"><span data-spr="mageDark" data-w="20"></span></div>
+        <div class="sprite" style="top:78%; left:62%;"><span data-spr="mageDark" data-w="20"></span></div>
+      </div>
+      <div class="rwin mb-status">
+        <div class="status-row" onclick="mbOpenSheet()"><span class="rdy done">◎</span><span class="nm">ミラ</span><div class="hp-track"><div class="hp-fill" style="width:100%"></div></div><span class="num2">135/135</span></div>
+        <div class="status-row" onclick="mbOpenSheet()"><span class="rdy pending">・</span><span class="nm">レン</span><div class="hp-track"><div class="hp-fill" style="width:100%"></div></div><span class="num2">135/135</span></div>
+        <div class="status-row" onclick="mbOpenSheet()"><span class="rdy pending">・</span><span class="nm">ソウ</span><div class="hp-track"><div class="hp-fill" style="width:100%"></div></div><span class="num2">150/150</span></div>
+      </div>
+      <div class="mb-cmd">
+        <div class="btn-flat">◆ おまかせ</div>
+        <div class="btn-flat" onclick="mbOpenSheet()">✎ 術式</div>
+        <div class="btn-flat gold">◎ 発射</div>
+      </div>
+
+      <div class="rwin sheet" id="mb-sheet">
+        <div class="msg-header" style="display:flex; justify-content:space-between; padding:8px 10px; font-size:12px; color:var(--text-dim); border-bottom:2px solid var(--edge-dark);">
+          <span>宵闇のレン ・ 詠唱</span><span style="cursor:pointer;" onclick="mbCloseSheet()">✕</span>
+        </div>
+        <div class="subtabs"><div class="subtab on" onclick="mbTab(this,'traj')">軌道</div><div class="subtab" onclick="mbTab(this,'z')">z場</div></div>
+        <div class="subpane" data-mbpane="traj" style="padding:10px;">
+          <div class="preset-row"><div class="preset-icon" style="font-size:12px;">╱</div><div class="preset-icon on" style="font-size:12px;">◠</div><div class="preset-icon" style="font-size:12px;">〜</div><div class="preset-icon" style="font-size:12px;">⤴</div><div class="preset-icon" style="font-size:12px;">∨</div></div>
+          <div class="expr-box"><div class="expr-pretty" style="font-size:20px;">0.25(x−8)<sup>2</sup> − 6</div></div>
+          <div class="expr-editrow"><input type="text" value="0.25*(x-8)^2-6" readonly><div class="expr-apply">適用</div></div>
+          <div class="fitbar"><div class="btn-flat">点を選ぶ</div><div class="btn-flat">θを決める</div></div>
+          <div class="adv" onclick="this.nextElementSibling.classList.toggle('open')">係数を調整 ▸</div>
+          <div class="adv-body"><div class="srow"><label><span>a</span><span>0.25</span></label><input type="range" value="55"></div><div class="srow"><label><span>h</span><span>8</span></label><input type="range" value="50"></div></div>
+        </div>
+        <div class="subpane" data-mbpane="z" style="display:none; padding:10px;">
+          <div class="preset-row"><div class="preset-icon on" style="font-size:12px;">■</div><div class="preset-icon" style="font-size:12px;">↕</div><div class="preset-icon" style="font-size:12px;">↔</div><div class="preset-icon" style="font-size:12px;">◎</div></div>
+          <div class="expr-box"><div class="expr-pretty" style="font-size:20px;">z = 4.6</div></div>
+          <div class="zgauge">
+            <div class="zgauge-label"><span>闇</span><span>属性強度</span><span>光</span></div>
+            <svg viewBox="0 0 300 52"><polyline points="4,46 70,46 150,6 230,46 296,46" fill="none" stroke="var(--edge-lite)" stroke-width="2"/><rect x="174" y="14" width="8" height="8" fill="var(--light)"/></svg>
+            <div class="zgauge-label" style="justify-content:center;"><span style="color:var(--light-soft)">光・強度4.6（高いが失速しやすい）</span></div>
+          </div>
+          <div class="btn-flat" style="width:100%;">盤面で属性を調整</div>
+        </div>
+        <div class="sheet-actions"><div class="maction" onclick="mbCloseSheet()">キャンセル</div><div class="maction gold">詠唱を確定</div></div>
+      </div>
+    </div>
+
+    <div class="view" data-p="composer">
+      <div class="mb-topbar"><span class="t">宵闇のレン ・ 術式編集</span><span class="t">✕ もどる</span></div>
+      <div class="rwin arena" style="height:240px;">
+        <div style="position:absolute; inset:0; background: radial-gradient(circle at 30% 25%, rgba(244,196,48,0.20), transparent 50%), radial-gradient(circle at 68% 78%, rgba(138,111,214,0.24), transparent 55%);"></div>
+        <div class="arena-grid"></div><div class="arena-axis h"></div><div class="arena-axis v"></div><div class="origin"></div>
+        <div class="enemy-tag" style="top:6%;"><div class="en-name" style="font-size:11px;">石像の番人</div><div class="en-hp" style="width:80px;"><div class="en-hp-fill" style="width:100%"></div></div></div>
+        <svg class="traj" width="100%" height="100%">
+          <path d="M 50% 14% Q 32% 40%, 50% 46%" stroke="var(--dark)" stroke-width="3" stroke-dasharray="4 4" fill="none" opacity="0.55"/>
+          <path d="M 50% 84% Q 60% 45%, 50% 16%" stroke="var(--light)" stroke-width="3" fill="none"/>
+        </svg>
+        <div class="sprite" style="top:16%; left:50%;"><span data-spr="golem" data-w="30"></span></div>
+        <div class="sprite" style="top:86%; left:50%;"><span data-spr="mageLight" data-w="22"></span></div>
+      </div>
+      <div class="rwin sheet open" style="margin-top:8px;">
+        <div class="subtabs"><div class="subtab on" onclick="mbTab(this,'traj')">軌道</div><div class="subtab" onclick="mbTab(this,'z')">z場</div></div>
+        <div class="subpane" data-mbpane="traj" style="padding:10px;">
+          <div class="preset-row"><div class="preset-icon" style="font-size:12px;">╱</div><div class="preset-icon on" style="font-size:12px;">◠</div><div class="preset-icon" style="font-size:12px;">〜</div><div class="preset-icon" style="font-size:12px;">⤴</div><div class="preset-icon" style="font-size:12px;">∨</div></div>
+          <div class="expr-box"><div class="expr-pretty" style="font-size:20px;">0.25(x−8)<sup>2</sup> − 6</div></div>
+          <div class="expr-editrow"><input type="text" value="0.25*(x-8)^2-6" readonly><div class="expr-apply">適用</div></div>
+          <div class="fitbar"><div class="btn-flat">点を選ぶ</div><div class="btn-flat">θを決める</div></div>
+          <div class="adv" onclick="this.nextElementSibling.classList.toggle('open')">係数を調整 ▸</div>
+          <div class="adv-body"><div class="srow"><label><span>a</span><span>0.25</span></label><input type="range" value="55"></div></div>
+        </div>
+        <div class="subpane" data-mbpane="z" style="display:none; padding:10px;"></div>
+        <div class="sheet-actions"><div class="maction">キャンセル</div><div class="maction gold">詠唱を確定</div></div>
+      </div>
+    </div>
+
+    <div class="view" data-p="pick">
+      <div class="mb-topbar"><span class="t">点フィット中</span></div>
+      <div class="rwin arena" style="height:400px;">
+        <div class="arena-grid"></div><div class="arena-axis h"></div><div class="arena-axis v"></div><div class="origin"></div>
+        <svg class="traj" width="100%" height="100%"><path d="M 50% 82% Q 40% 55%, 42% 30%" stroke="var(--light)" stroke-width="3" stroke-dasharray="3 3" fill="none" opacity="0.85"/></svg>
+        <div class="pick-dot" style="top:55%; left:44%;"></div><div class="pick-dot" style="top:30%; left:42%;"></div>
+        <div class="sprite" style="top:82%; left:50%;"><span data-spr="mageLight" data-w="22"></span></div>
+        <div class="sprite" style="top:22%; left:50%;"><span data-spr="golem" data-w="36"></span></div>
+      </div>
+      <div class="rwin fitmode-bar" style="margin-top:8px;">
+        <span>盤面に点を打つ（2点）</span>
+        <div class="actions"><div class="btn-flat" style="padding:6px 9px;">クリア</div><div class="btn-flat" style="padding:6px 9px;">やめる</div><div class="btn-flat gold" style="padding:6px 9px;">フィット</div></div>
+      </div>
+    </div>
+
+    <div class="view" data-p="editor">
+      <div class="rwin" style="max-width:360px; margin:30px auto; padding:20px; text-align:center; color:var(--text-dim); font-size:13px; line-height:1.8;">
+        ステージ編集はPC専用画面です。<br>上の「端末：PC」に切り替えてご確認ください。
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  var MAPS = {
+    mageDark: { w:9, h:13, col:{R:'#8a6fd6',F:'#140f26',E:'#cdd8ff',T:'#5a45a0'}, rows:[
+      "....R....","...RTR...","..RRRRR..",".RRRRRRR.",".RRFFFRR.",".RFEFEFR.",".RRFFFRR.",".TRRRRRT.","RRRRRRRRR","RRRRRRRRR","RRRRRRRRR",".RR...RR.",".RR...RR." ]},
+    mageLight:{ w:9, h:13, col:{R:'#f4c430',F:'#4a3405',E:'#2a1e00',T:'#c99a1e'}, rows:[
+      "....R....","...RTR...","..RRRRR..",".RRRRRRR.",".RRFFFRR.",".RFEFEFR.",".RRFFFRR.",".TRRRRRT.","RRRRRRRRR","RRRRRRRRR","RRRRRRRRR",".RR...RR.",".RR...RR." ]},
+    golem:{ w:12, h:11, col:{G:'#332c4d',g:'#463c68',E:'#a98cf0',C:'#1d1636'}, rows:[
+      ".gG......Gg.","gGGGGGGGGGGg","GGGGGGGGGGGG","GGEEGGGGEEGG","GGEEGGGGEEGG","GGGGGGGGGGGG","GGCGGGGGGCGG","gGGGGGGGGGGg",".GGGGGGGGGG.",".GG.GGGG.GG.",".GG.GGGG.GG." ]}
+  };
+  function buildSprite(type, w){
+    var m = MAPS[type]; if(!m) return '';
+    var h = Math.round(w / m.w * m.h);
+    var s = '<svg class="sp" width="'+w+'" height="'+h+'" viewBox="0 0 '+m.w+' '+m.h+'" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg">';
+    for(var y=0;y<m.rows.length;y++){ var row=m.rows[y];
+      for(var x=0;x<row.length;x++){ var c=row[x]; if(c==='.'||!m.col[c]) continue;
+        s += '<rect x="'+x+'" y="'+y+'" width="1.02" height="1.02" fill="'+m.col[c]+'"/>'; } }
+    return s + '</svg>';
+  }
+  document.querySelectorAll('[data-spr]').forEach(function(el){ el.innerHTML = buildSprite(el.dataset.spr, +el.dataset.w); });
+
+  var device='pc', phase='reveal';
+  function render(){
+    document.getElementById('pc').classList.toggle('on', device==='pc');
+    document.getElementById('mb').classList.toggle('on', device==='mb');
+    var root = document.getElementById(device);
+    root.querySelectorAll('.view').forEach(function(v){ v.classList.toggle('on', v.dataset.p===phase); });
+  }
+  function setDevice(d){
+    device=d;
+    document.getElementById('dev-pc').classList.toggle('on', d==='pc');
+    document.getElementById('dev-mb').classList.toggle('on', d==='mb');
+    render();
+  }
+  document.querySelectorAll('#phaserow .tbtn').forEach(function(b){
+    b.addEventListener('click', function(){
+      document.querySelectorAll('#phaserow .tbtn').forEach(x=>x.classList.remove('on'));
+      b.classList.add('on'); phase=b.dataset.p; render();
+    });
+  });
+  function tog(id){ document.getElementById(id).classList.toggle('open'); }
+  function pcTab(el,pane){
+    var win=el.closest('.msg-win');
+    win.querySelectorAll('.subtab').forEach(x=>x.classList.remove('on')); el.classList.add('on');
+    win.querySelectorAll('.subpane').forEach(function(p){ p.style.display = p.dataset.pane===pane ? 'block':'none'; });
+  }
+  function mbTab(el,pane){
+    var win=el.closest('.sheet');
+    win.querySelectorAll('.subtab').forEach(x=>x.classList.remove('on')); el.classList.add('on');
+    win.querySelectorAll('.subpane').forEach(function(p){ p.style.display = p.dataset.mbpane===pane ? 'block':'none'; });
+  }
+  function mbOpenSheet(){ document.getElementById('mb-sheet').classList.add('open'); }
+  function mbCloseSheet(){ document.getElementById('mb-sheet').classList.remove('open'); }
+
+  // rField スライダー → 数値表示＋境界円サイズを連動
+  (function(){
+    var slider = document.querySelector('.cad-card input[type=range]');
+    if(!slider) return;
+    var valOut = slider.previousElementSibling.querySelector('span:last-child');
+    var bound = document.querySelector('.field-bound');
+    function upd(){
+      var v = +slider.value;
+      valOut.textContent = v;
+      // 18→60 を 290→470px の直径に写像（幅=高さ=真円）
+      var dia = Math.round(290 + (v - 18) / (60 - 18) * 180);
+      bound.style.width = dia + 'px';
+      bound.style.height = dia + 'px';
+    }
+    slider.addEventListener('input', upd); upd();
+  })();
+
+  render();
+</script>
+
+</body>
+</html>

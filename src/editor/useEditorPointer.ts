@@ -39,6 +39,13 @@ export function useEditorPointer(
   checkpoint: () => void,
   /** ON のときドラッグの基準点をグリッドへスナップする（#67 CAD風操作性）。 */
   snapEnabled: boolean,
+  /**
+   * ペイントツール（CADリボンの 壁/円/削る/消去/敵 など・v9）が選択中か。ON のときは
+   * 選択・ドラッグではなく、ジェスチャー開始点で onPaint を1回だけ呼ぶ（クリックで配置/消去）。
+   */
+  paintMode = false,
+  /** ペイントツールのジェスチャー開始時に、スナップ済みの盤面座標で呼ばれる。 */
+  onPaint?: (pos: Vec2) => void,
 ) {
   const [selection, setSelection] = useState<EditorSelection>(null)
   const draggingRef = useRef(false)
@@ -64,9 +71,16 @@ export function useEditorPointer(
   const handleFieldPointer = (mRaw: Vec2) => {
     const m = snapEnabled ? snapToGrid(mRaw) : mRaw
     if (!draggingRef.current) {
-      // ジェスチャー開始（ポインタダウン相当）。
-      // 既に障害物が選択中なら、まず選択ハンドル（リサイズ）を最優先でヒットテストする（#67）。
       draggingRef.current = true
+      // ペイントツール（壁/円/削る/消去/敵）：開始点で1回だけ配置/消去し、ドラッグはしない（v9）。
+      if (paintMode) {
+        targetRef.current = null
+        anchorRef.current = null
+        onPaint?.(m)
+        return
+      }
+      // ジェスチャー開始（ポインタダウン相当・選択ツール）。
+      // 既に障害物が選択中なら、まず選択ハンドル（リサイズ）を最優先でヒットテストする（#67）。
       if (selection?.kind === 'obstacle') {
         const selectedOp = obstacleOps.find((o) => o.id === selection.id)
         const handleId = selectedOp ? hitTestHandle(selectedOp, m) : null

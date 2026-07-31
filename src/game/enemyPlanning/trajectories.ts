@@ -12,6 +12,14 @@ import { zfieldAt } from '../attribute'
  */
 export const AVOIDER_FAMILIES: readonly EnemyFamily[] = ['abs', 'arc', 'poly34']
 
+/**
+ * 経路フィットに使える family（#69）。AVOIDER_FAMILIES に **harmonic（多重サイン）** を足した集合。
+ * harmonic は「複数のサイン波の重ね合わせ」で、通過点を厳密に通しながら何度もうねる軌道を作れる
+ * ＝人間が手で係数を合わせるのは現実的でない高難度の系統。ステージ側で明示的に付与した敵だけが使う
+ * （enemy.families に 'harmonic' を含める）。
+ */
+export const ELITE_FIT_FAMILIES: readonly EnemyFamily[] = ['abs', 'arc', 'poly34', 'harmonic']
+
 /** exp 系統の指数の伸び係数（#43：終盤で鋭く跳ね上がる）。 */
 const EXP_K = 0.13
 /** poly34 系統の 3 次曲線の零点調整（g(x)=shape·(x³−POLY_C·x)＝±√POLY_C で軸を跨ぐ S 字）。 */
@@ -20,6 +28,23 @@ const POLY_C = 140
 const POLY_C5 = 700
 /** abs 系統の折れ点 h（#46）：目標までの距離に対する割合（0.5＝中間で V 字に折れる）。 */
 export const ABS_H_RATIO = 0.5
+
+/**
+ * harmonic 系統（#69）：3本のサイン波の重ね合わせ。
+ * 角周波数は互いに整数比でない（＝合成波が周期的に繰り返さない）値を選び、
+ * 「どこで、どちらへ、どれだけ曲がるか」が一目では読めないうねり方にする。
+ * g(x) = shape · Σ aᵢ·sin(ωᵢ·x + φᵢ)
+ */
+const HARMONIC_TERMS: { w: number; a: number; phase: number }[] = [
+  { w: 0.17, a: 1.0, phase: 0 },
+  { w: 0.29, a: 0.55, phase: 1.1 },
+  { w: 0.47, a: 0.3, phase: 2.3 },
+]
+
+/** harmonic の合成波（位相全体を phaseShift だけずらせる＝同じ形の別バリエーション）。 */
+function harmonicG(shape: number, phaseShift = 0): (x: number) => number {
+  return (x) => shape * HARMONIC_TERMS.reduce((s, t) => s + t.a * Math.sin(t.w * x + t.phase + phaseShift), 0)
+}
 
 /**
  * poly34 の 1 つの形状候補（次数と係数のペア・#46）。3〜5次を同じ枠組みで扱う。
@@ -92,6 +117,9 @@ export function buildEnemyTrajectory(
     case 'abs':
       // 折れ（#46）：g(x)=shape·|x−h|。折れ点 h で V 字に鋭く曲がる
       return { mode: 'rotate', g: (x) => shape * Math.abs(x - hFold), angle, origin, z, fieldR }
+    case 'harmonic':
+      // 多重サイン（#69）：3本のサイン波の重ね合わせ。繰り返さないうねりで隙間を縫う
+      return { mode: 'rotate', g: harmonicG(shape), angle, origin, z, fieldR }
   }
 }
 
@@ -114,6 +142,9 @@ export function shapeCandidates(family: EnemyFamily): number[] {
     case 'abs':
       // 折れの傾き（V字の開き）。左右どちらへも折れられるよう正負を用意
       return [-0.9, -0.45, 0.45, 0.9]
+    case 'harmonic':
+      // 合成波の振幅（#69）。大きいほど深くうねって遠くの隙間まで回り込める
+      return [-5, -2.5, 2.5, 5]
   }
 }
 
@@ -138,6 +169,15 @@ export function familyTrajectories(
       // 3〜5 次を次数ごとに展開（05b §2）
       for (const ps of POLY34_SHAPES) {
         out.push({ mode: 'rotate', g: polyG(ps.deg, ps.shape), angle, origin, z, fieldR })
+      }
+      continue
+    }
+    if (family === 'harmonic') {
+      // 振幅 × 位相ずらしを展開（#69）：同じ合成波を前後にずらして山谷の位置を変える
+      for (const shape of shapeCandidates('harmonic')) {
+        for (const ph of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+          out.push({ mode: 'rotate', g: harmonicG(shape, ph), angle, origin, z, fieldR })
+        }
       }
       continue
     }
