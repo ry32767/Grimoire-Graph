@@ -1,6 +1,20 @@
 # グリモワール・グラフ ― 古代式の魔導書 — ストーリー
 
-> 全7面・3人パーティのライトストーリー（1プレイ約15分）。実装は `src/data/story.ts`（TITLE_TEXT / PROLOGUE / INSCRIPTIONS[n] / SCENERIES[n] / RUPTOR_DEMO / COLLAPSE_FIRST / COLLAPSE_PHASE / COLLAPSE_FINAL / EPILOGUE / GAMEOVER_TEXT / GAMEOVER_COLLAPSE / CODEX_MISFIRE_HINT）と `src/data/stages.ts` の introText / clearText。
+> 全5面・3人パーティのライトストーリー（1プレイ 15〜30 分・#69 で 7 面から集約）。
+
+> **#69 の面の集約（本ファイルの読み替え）**：実装のステージは 5 面。以下の対応で読む。
+> 本文の各節（第一〜第七の間）は**執筆時の 7 層構成**のまま残してあり、実装に載っている文言は
+> `src/data/story.ts`（`INSCRIPTIONS` / `SCENERIES` は 5 要素）と `src/data/stages.ts` の
+> `introText` / `clearText` が正典。
+>
+> | 実装の面 | 名前 | 旧・層の対応 |
+> |---|---|---|
+> | 第1面 | 門 | 第一の間 |
+> | 第2面 | 崩れた回廊 | 第二の間（通路）＋第三の間（踊り場） |
+> | 第3面 | 列柱の広間 | 第四の間（螺旋）＋第五の間（深層の広間）。RUPTOR_DEMO はここへ |
+> | 第4面 | 封印帯 | 第六の間。初回崩壊（COLLAPSE_FIRST）の保証面 |
+> | 第5面 | 大広間 | 第七の間（ボス戦・HPフェーズ制） |
+実装は `src/data/story.ts`（TITLE_TEXT / PROLOGUE / INSCRIPTIONS[n] / SCENERIES[n] / RUPTOR_DEMO / COLLAPSE_FIRST / COLLAPSE_PHASE / COLLAPSE_FINAL / EPILOGUE / GAMEOVER_TEXT / GAMEOVER_COLLAPSE / CODEX_MISFIRE_HINT）と `src/data/stages.ts` の introText / clearText。
 > **キャラクターのセリフは使わず、地の文（情景・状況描写）のみ**で綴る。刻印（碑文）と背景描写は環境テキストとして残す。
 > 設定・ステージ構成は 01/04/04b/05/06 のドキュメント準拠。背景の“真相”は [lore.md](lore.md) に別置し、ここでは断片的にしか語らない（考察の余地を残す）。
 > 構成の骨は「地上の門から、層を降りて最深の大広間へ」という下降。門 → 通路 → 踊り場 → 螺旋 → 深層の広間 → 封印帯 → 大広間。
@@ -218,6 +232,6 @@
 - **下降構成**：門(1) → 通路(2) → 踊り場(3) → 螺旋(4) → 深層の広間(5) → 封印帯(6) → 大広間(7)。CLEAR で毎回「さらに下へ」を仄めかす。
 - **刻印／背景描写**：ステージ導入画面の冒頭に「【刻印】…」＋背景描写として提示（`App.tsx` stageIntro）。断片的・少し食い違うように置き、[lore.md](lore.md) の“真相”を匂わせるだけで断定しない。
 - **「何か」の逆算ヒント（[lore.md](lore.md) §5）**：滅びが**一瞬**だったことを痕跡で示す――止まった水時計（第四）／一点を見上げ固まる群衆（第五）／一点から放射状の焦げ跡（第七）。作中では誰も語れない（見届けた者がいない）。答えは出さない。
-- **暴発の学習導線（提示→誘発→崩壊）**：第四層で崩し手1体が暴発を見せ（RUPTOR_DEMO・図鑑補足 `CODEX_MISFIRE_HINT` つき）、第六層で崩し手3体が合算カウンターを押し上げ、**戦闘中に初回崩壊（COLLAPSE_FIRST）＝グリモワール救済**を誘発。第五層までは危険度を数値で見せず、異変と暴発円のブレだけで匂わせる。第七層は**HPフェーズ制の床崩落（COLLAPSE_PHASE）と断末魔の暴発3連（COLLAPSE_FINAL）**で「濫用の果ての暴発」を締めくくりに再現する（詳細は [06b-difficulty-framework.md](06b-difficulty-framework.md) §6）。断末魔の3本も通常どおり `instability` に計上され、**3本すべて防ぎ切れば崩壊は起きない**（特例なし）。ボスの最期が都市の最期と重なる演出であり、ラン全体の膜メーター管理の最終試験にもなる。
+- **暴発の学習導線（提示→誘発→崩壊）**：**第3面（列柱の広間）**で崩し手1体が暴発を見せ（RUPTOR_DEMO・図鑑補足 `CODEX_MISFIRE_HINT` つき）、**第4面（封印帯）**で崩し手3体が合算カウンターを押し上げ、**戦闘中に初回崩壊（COLLAPSE_FIRST）＝グリモワール救済**を誘発。そこまでは危険度を数値で見せず、異変と暴発円のブレだけで匂わせる。**第5面（大広間）**は**HPフェーズ制の床崩落（COLLAPSE_PHASE）と断末魔の暴発3連（COLLAPSE_FINAL）**で「濫用の果ての暴発」を締めくくりに再現する（詳細は [06b-difficulty-framework.md](06b-difficulty-framework.md) §6）。断末魔の3本も通常どおり `instability` に計上され、**3本すべて防ぎ切れば崩壊は起きない**（特例なし）。ボスの最期が都市の最期と重なる演出であり、ラン全体の膜メーター管理の最終試験にもなる。
 - **段階導入と一致**（06-stages）：1命中→2障害物+反撃→3相性→4結界+暴発デモ→5多対多→6暴発誘発+初回崩壊→7総力戦。
 - **エンディングの余韻**：守護者の「開くとは、傾きうる」＋魔導書の気配で、“解いたのは救いか、再びの傾きの始まりか”をあえて残す（[lore.md](lore.md) §9）。

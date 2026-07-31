@@ -221,7 +221,7 @@ parry = resolveParry(ringAttr, vCross, vCross×strengthOf(ringZ),
 
 > 敵 guardian の結界は `owner='enemy'` の持続結界（`ActiveOrbit`）として残り（#61）、作成フェーズで `standingOrbits` として表示される。闇の敵結界は数値効果を持たず、視認阻害は**描画側**（`BattleCanvas` が `drawEnemyConceal`：内側をぼかし薄幕で z 場・予測経路を隠す＝**1枚はギリギリ見える**、**2枚の重なりは交差クリップで不透明な黒＝全く見えない**（#62）。境界は破線で示す）で表現する。光の敵結界は敵を回復する。
 >
-> **持続する敵結界の処理（バグ修正）**：`turn.ts` は今ターン新規に張った敵結界（`enemyRings`）と前ターンから持続する `owner='enemy'` の `activeOrbits` を**同一の敵結界リスト（`enemyGuardRings`）に束ねて**扱う。これにより、guardian がひるみ／`fireEvery` で沈黙して再詠唱しないターンでも、持続結界が (1) 味方弾を迎撃・減速し（§5 の発射型命中前処理）、(2) 光なら内側の敵を回復させ（§5.5 の敵オーラ）、(3) 相殺されなければ次ターンへ持ち越される（存続判定は**所有者が生存する敵か**で行う）。修正前は持続する敵結界が毎ターン脱落し、沈黙ターンに guardian が無防備になっていた（第3面・渦の番兵／第5面・directed guardian／第6面・alternating guardian で顕在化）。
+> **持続する敵結界の処理（バグ修正）**：`turn.ts` は今ターン新規に張った敵結界（`enemyRings`）と前ターンから持続する `owner='enemy'` の `activeOrbits` を**同一の敵結界リスト（`enemyGuardRings`）に束ねて**扱う。これにより、guardian がひるみ／`fireEvery` で沈黙して再詠唱しないターンでも、持続結界が (1) 味方弾を迎撃・減速し（§5 の発射型命中前処理）、(2) 光なら内側の敵を回復させ（§5.5 の敵オーラ）、(3) 相殺されなければ次ターンへ持ち越される（存続判定は**所有者が生存する敵か**で行う）。修正前は持続する敵結界が毎ターン脱落し、沈黙ターンに guardian が無防備になっていた（第3面の広間の番兵〔directed〕／第4面の封印の番人〔alternating〕で顕在化）。
 
 ### 永続化（#39・`ActiveOrbit`）
 

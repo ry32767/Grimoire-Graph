@@ -18,14 +18,14 @@
 | 04b | [misfire-instability.md](04b-misfire-instability.md) | **暴発の不安定化・累積・崩壊**：instability（膜メーター）・三段階の開示・半径のばらつき・崩し手との接続 |
 | 05 | [enemies.md](05-enemies.md) | **敵**：系統（直進/弧/波/渦/昇り/捻れ）・ロール（attacker/breaker/guardian/ruptor）・敵 AI の探索・崩し手の極 |
 | 05b | [enemy-archetypes.md](05b-enemy-archetypes.md) | **攻撃パターン4種**（火力型/迂回型/暴発型/守護型）× 軌道 family × z場・多重詠唱 |
-| 06 | [stages.md](06-stages.md) | **ステージ**：全 7 面の敵・障害物・LVL・ボスフェーズの完全一覧（実装値） |
-| 06b | [difficulty-framework.md](06b-difficulty-framework.md) | **難易度フレームワーク（LVL）**：数値スケール・関数/パターン解放表・壁の指針・第7面フェーズ設計 |
+| 06 | [stages.md](06-stages.md) | **ステージ**：全 5 面の敵・障害物・LVL・ボスフェーズの完全一覧（実装値・#69 でレイアウトの一般則を追加） |
+| 06b | [difficulty-framework.md](06b-difficulty-framework.md) | **難易度フレームワーク（LVL）**：数値スケール・関数/パターン解放表・壁の指針・最終面フェーズ設計 |
 | 07 | [animation.md](07-animation.md) | **アニメーション**：解決演出のタイムライン・描画レイヤー・パーティクル・音 |
 | 08 | [constants.md](08-constants.md) | **定数リファレンス**：全バランス数値の一覧表 |
 | 09 | [data-model.md](09-data-model.md) | データモデル（型）・ターン進行・解決順序・モジュール構成 |
 | 10 | [recording.md](10-recording.md) | （開発ツール）アニメーションの録画・GIF 作成手順（Playwright + 同梱 ffmpeg / gifenc） |
 | 11 | [stage-editor.md](11-stage-editor.md) | （開発ツール）ステージエディタ：壁・敵・味方位置の視覚的編集・テストプレイ機能（開発ビルド限定） |
-| — | [story.md](story.md) | **ストーリー**：全7面の刻印・背景描写・導入/クリア文・崩壊イベントのテキスト（`src/data/story.ts` の原典） |
+| — | [story.md](story.md) | **ストーリー**：全5面の刻印・背景描写・導入/クリア文・崩壊イベントのテキスト（`src/data/story.ts` の原典） |
 | — | [lore.md](lore.md) | **背景設定（作者用）**：見えない軸 z・古代式・グリモワールの正体・滅びの真相（作中では匂わせるのみ） |
 
 ## 30 秒でわかるコアループ
