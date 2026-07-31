@@ -153,10 +153,10 @@ describe('ボス HP フェーズと断末魔（#45）', () => {
     expect(r2.state.outcome).toBe('cleared')
   })
 
-  it('実ステージ第7面：崩落でアリーナが差し替わり、上限到達なら撃破後でも崩壊しうる', () => {
-    // 実データの第7面を使い、フェーズ移行でアリーナ（障害物）が入れ替わることを確認
-    const s7 = STAGES[6]
-    let st = createBattleState(s7, 6, party)
+  it('実ステージ最終面：崩落でアリーナが差し替わり、上限到達なら撃破後でも崩壊しうる', () => {
+    // 実データの最終面（第5面）を使い、フェーズ移行でアリーナ（障害物）が入れ替わることを確認
+    const s5 = STAGES[4]
+    let st = createBattleState(s5, 4, party)
     const upperObstacleCount = st.obstacles.length
     expect(upperObstacleCount).toBeGreaterThan(0)
     // ボスを 60%（<66%）へ削って中層へ

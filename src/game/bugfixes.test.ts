@@ -132,11 +132,11 @@ describe('正面パリィ（バグ修正：collinear/anti-parallel 経路が相�
   })
 })
 
-describe('第6面：崩し手の暴発が確実に成立する（バグ修正・#63）', () => {
+describe('第4面（封印帯）：崩し手の暴発が確実に成立する（バグ修正・#63）', () => {
   it('前衛の崩し手は不発にならず、無防備な味方の近傍で確実に暴発する', () => {
     // #63 の再設計：崩し手は封印帯の「前」に立ち、暴発弾は初手から味方の目前へ届く。
     // 無防備（発射なし）で受けると、崩し手の弾は極まで到達して必ず暴発する（不発・通常命中化しない）。
-    let state = createBattleState(STAGES[5], 5, makeParty())
+    let state = createBattleState(STAGES[3], 3, makeParty())
     let total = 0
     let ruptorShots = 0
     for (let t = 0; t < 4 && state.outcome === 'ongoing'; t++) {
@@ -161,7 +161,7 @@ describe('第6面：崩し手の暴発が確実に成立する（バグ修正・
 
 describe('断末魔はボス単独（バグ修正：33%を跨がず即死させると眷属が生き残っていた）', () => {
   it('ボスをフェーズ閾値を跨がずに0へ落とすと、最終フェーズが適用され眷属が間引かれる', () => {
-    const state = createBattleState(STAGES[6], 6, makeParty())
+    const state = createBattleState(STAGES[4], 4, makeParty())
     const prep = prepareTurn(state)
     // バーストでボスだけ即死（フェーズ0のまま＝33%を跨いでいない）
     const bursted = { ...prep.state, enemies: prep.state.enemies.map((e) => (e.boss ? { ...e, hp: 0 } : e)) }
@@ -325,8 +325,8 @@ describe('部屋の囲いが場境界まで届き、回り込み抜けを塞ぐ�
   it.each([
     ['第2面', 1],
     ['第3面', 2],
-    ['第6面', 5],
-    ['第7面①', 6],
+    ['第4面', 3],
+    ['第5面①', 4],
   ])('%s：境界ぎわの左右は囲い壁で塞がれている（縦に抜けられない）', (_name, idx) => {
     const st = STAGES[idx]
     const R = st.rField ?? FIELD.rField
@@ -383,9 +383,9 @@ describe('おまかせ照準が障害物のある面でも進捗を出す（reco
     expect(rec.freeExpr).toBeDefined()
   })
 
-  it('第3面はおまかせ自動プレイで全滅させず撃破できる（多ターンで壁を突破）', () => {
+  it('第2面はおまかせ自動プレイで全滅させず撃破できる（多ターンで壁を突破）', () => {
     // 修正前は 10 ターンで 0 ダメージのまま gameover していた。壁を削り進めて撃破まで到達することを確認する。
-    for (const s of [2]) {
+    for (const s of [1]) {
       let state = createBattleState(STAGES[s], s, makeParty())
       for (let t = 0; t < 20 && state.outcome === 'ongoing'; t++) {
         const prep = prepareTurn(state)

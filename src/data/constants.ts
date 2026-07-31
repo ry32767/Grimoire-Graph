@@ -153,8 +153,8 @@ export const RUPTOR = {
 export const INSTABILITY = {
   /** 初回崩壊しきい：この暴発回数で初回崩壊（グリモワールの介入・一度きり） */
   firstCollapseThreshold: 5,
-  /** 初回崩壊の保証面（1始まり）：遅くともこの面で必ず初回崩壊が起きる */
-  firstCollapseStage: 6,
+  /** 初回崩壊の保証面（1始まり）：遅くともこの面で必ず初回崩壊が起きる（#69：5面構成の封印帯） */
+  firstCollapseStage: 4,
   /** 致死しきい：この暴発回数で破局（ステージ全体暴発＝ゲームオーバー・救済なし） */
   misfireLimit: 12,
   /** 半径ばらつきの開始 count：これ未満はブレなし（崩壊まで残り2/3＝misfireLimit×1/3 から） */

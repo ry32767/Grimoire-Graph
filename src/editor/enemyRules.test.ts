@@ -26,17 +26,21 @@ describe('allowedFamilies', () => {
   it('roleが未指定でも単純attacker扱い＝lineのみ', () => {
     expect(allowedFamilies(undefined, 4)).toEqual(['line'])
   })
-  it('迂回型（LVL2以降のattacker）はabs/arc/poly34のみ（line/wave/exp/spiralを含まない）', () => {
+  it('迂回型（LVL2以降のattacker）はabs/arc/poly34/harmonicのみ（line/wave/exp/spiralを含まない）', () => {
     const fam = allowedFamilies('attacker', 7)
-    expect(fam.sort()).toEqual(['abs', 'arc', 'poly34'].sort())
+    expect(fam.sort()).toEqual(['abs', 'arc', 'poly34', 'harmonic'].sort())
     expect(fam).not.toContain('line')
     expect(fam).not.toContain('wave')
     expect(fam).not.toContain('exp')
     expect(fam).not.toContain('spiral')
   })
-  it('暴発型もabs/arc/poly34のみに制限される', () => {
+  it('暴発型もabs/arc/poly34/harmonicのみに制限される', () => {
     const fam = allowedFamilies('ruptor', 7)
-    expect(fam.sort()).toEqual(['abs', 'arc', 'poly34'].sort())
+    expect(fam.sort()).toEqual(['abs', 'arc', 'poly34', 'harmonic'].sort())
+  })
+  it('harmonic（多重サイン）はLVL6以降でだけ解放される（#69）', () => {
+    expect(allowedFamilies('attacker', 5)).not.toContain('harmonic')
+    expect(allowedFamilies('attacker', 6)).toContain('harmonic')
   })
   it('迂回型・暴発型はLVLが低いうちはpoly34を含まない（LVL5未満）', () => {
     expect(allowedFamilies('attacker', 4)).toEqual(['arc', 'abs'])
@@ -47,7 +51,7 @@ describe('allowedFamilies', () => {
   })
   it('火力型（breaker）はLVL解放以外の制約を受けない', () => {
     expect(allowedFamilies('breaker', 7).sort()).toEqual(
-      ['line', 'arc', 'abs', 'wave', 'spiral', 'exp', 'poly34'].sort(),
+      ['line', 'arc', 'abs', 'wave', 'spiral', 'exp', 'poly34', 'harmonic'].sort(),
     )
   })
 })

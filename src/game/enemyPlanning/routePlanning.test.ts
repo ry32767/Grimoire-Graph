@@ -223,8 +223,8 @@ describe('暴発型の finalize（§12/§17.3）', () => {
 })
 
 describe('ステージ回帰（§17.4）', () => {
-  it('第4面の壁狙い ruptor は最初の1発で壁付近の暴発を計画する', () => {
-    const st = STAGES[3]
+  it('第3面の壁狙い ruptor は最初の1発で壁付近の暴発を計画する', () => {
+    const st = STAGES[2]
     const demo = st.enemies.find((e) => e.role === 'ruptor' && e.ruptorTarget === 'obstacles')
     expect(demo).toBeDefined()
     const party: Ally[] = [
@@ -240,7 +240,7 @@ describe('ステージ回帰（§17.4）', () => {
     expect(nearWall).toBe(true)
   })
 
-  it('第2〜7面の全敵が初期盤面で計画を返し、unbreakable を横切らない', () => {
+  it('第2〜5面の全敵が初期盤面で計画を返し、unbreakable を横切らない', () => {
     for (let s = 1; s < STAGES.length; s++) {
       const st = STAGES[s]
       const unb = st.obstacles.filter((ob) => (ob.kind ?? 'normal') === 'unbreakable')

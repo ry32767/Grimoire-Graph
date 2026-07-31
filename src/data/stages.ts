@@ -69,9 +69,9 @@ const stage2: Stage = {
   rField: S2_R,
   // 散開：左は柱列の裏、中央は最も奥、右は瓦礫寄り。三者三様の射線になる
   allyPositions: [
-    { x: -19, y: -25 }, // ミラ
-    { x: 1, y: -30 }, // レン
-    { x: 18, y: -22 }, // ソウ
+    { x: -20, y: -24 }, // ミラ
+    { x: 1, y: -27 }, // レン
+    { x: 18, y: -24 }, // ソウ
   ],
   enemies: [
     // 亡霊魔術師 I（迂回型・05c §2）。family は abs/arc のみ（#46）。崩れた塔の陰に立つ
@@ -86,7 +86,7 @@ const stage2: Stage = {
     }),
   ],
   obstacles: [
-    ...chamber(-25, 25, -33, 33, S2_R),
+    ...chamber(-28, 28, -36, 34, S2_R),
     // 崩落した大壁（教材：反対の理で速く削れる normal）。開口は左右2か所だが、
     // どの味方からもその開口を通して敵へ直線は通らない位置に置く
     ruinedWall(-25, 25, 1, 2, 'light', undefined, {
@@ -110,8 +110,8 @@ const stage2: Stage = {
     // 崩れた塔（衛士・射手のカバー）：曲射は回り込むが直射は通らない
     ...brokenTower(-17, 4, 9, 9, 'dark', 'tough', { tallSide: 'right', seed: 11 }),
     ...brokenTower(17, 4, 9, 9, 'light', 'tough', { tallSide: 'left', seed: 12 }),
-    rubble(-3, -20, 6, 6, 'neutral', 'fragile', 21), // 崩れ落ちた天井の瓦礫（もろい）
-    rubble(12, -8, 5, 5, 'neutral', 'fragile', 22),
+    rubble(-6, -6, 5, 5, 'neutral', 'fragile', 21), // 崩れ落ちた天井の瓦礫（もろい）
+    rubble(9, -6, 5, 5, 'neutral', 'fragile', 22),
   ],
   introText: [
     '崩れかけた回廊。等間隔に並ぶ柱の奥で、回廊の衛士と影の射手が塔の残骸に身を隠している。中央の大壁を割りながら、石喰いの鬼が近づいてくる。',
@@ -134,9 +134,9 @@ const stage3: Stage = {
   rField: S3_R,
   // 大きく散開（横 50・前後 8 のばらつき）。誰か一人が狙われる形になりやすい
   allyPositions: [
-    { x: -26, y: -31 }, // ミラ
-    { x: 2, y: -37 }, // レン
-    { x: 25, y: -29 }, // ソウ
+    { x: -23, y: -30 }, // ミラ
+    { x: 1, y: -34 }, // レン
+    { x: 22, y: -28 }, // ソウ
   ],
   enemies: [
     // ゴーレム II（守護型・方向づけられた場）＝前衛。結界で自分と両脇の鋼鬼を覆う
@@ -166,6 +166,16 @@ const stage3: Stage = {
       castZField: sinCosZ(-1),
       hp: 120,
       species: 'wraith',
+    }),
+    // 紅亡霊 I（暴発デモ・06b/04b）＝右翼。低頻度・岩壁を狙って暴発を「見せる」個体。
+    // 崩れた列柱の手前に立ち、自爆圏（AoE 半径の上振れ込み）の外の壁を狙う。
+    // 次の面（封印帯）で暴発を「防ぐ」課題になる前に、暴発とは何かをここで一度見せる。
+    enemy('崩し手', { x: 27, y: -4 }, 'dark', 5, 'arc', {
+      role: 'ruptor',
+      ruptorTarget: 'obstacles',
+      fireEvery: 2,
+      fireOffset: 1, // 1ターン目から撃つ＝最低1回は必ず暴発を見せる
+      species: 'redWraith',
     }),
   ],
   obstacles: [
@@ -214,8 +224,8 @@ const stage3: Stage = {
         { center: 7, width: 3.0 },
       ],
     }),
-    rubble(20, -24, 7, 7, 'neutral', 'fragile', 34),
-    rubble(-10, -26, 6, 6, 'neutral', 'fragile', 35),
+    rubble(13, -18, 5, 6, 'neutral', 'fragile', 34),
+    rubble(-13, -18, 5, 6, 'neutral', 'fragile', 35),
   ],
   introText: [
     '等間隔の列柱が二列、千鳥に並ぶ広間。奥で広間の番兵が防御の輪を張り、その内側から鋼鬼が二体、柱を割りながら撃ってくる。左手の塔の残骸には射手の影。',
@@ -237,9 +247,9 @@ const stage4: Stage = {
   rField: S4_R,
   // 散開。左のミラは崩し手・弧の正面、右のソウは折れの正面と、担当が分かれる
   allyPositions: [
-    { x: -24, y: -29 }, // ミラ
-    { x: 0, y: -35 }, // レン
-    { x: 23, y: -27 }, // ソウ
+    { x: -23, y: -30 }, // ミラ
+    { x: 0, y: -34 }, // レン
+    { x: 23, y: -30 }, // ソウ
   ],
   enemies: [
     // ゴーレム III（守護型・最上位：交互張り＋方向づけ併用）＝崩し手たちの盾
@@ -280,7 +290,7 @@ const stage4: Stage = {
     }),
   ],
   obstacles: [
-    ...chamber(-28, 28, -38, 38, S4_R),
+    ...chamber(-32, 32, -42, 42, S4_R),
     block(-4, 2, 4, 2, 'neutral', 'unbreakable'), // 砕けぬ封印核（正面突破不可・番人の盾）
     // 封印帯の等間隔の柱（ピッチ12・列ごとに1/3ずらす・硬い）。味方→崩し手/番人の直線を断つ
     ...pillarGrid({
@@ -303,16 +313,6 @@ const stage4: Stage = {
       element: 'dark',
       kind: 'tough',
     }),
-    ...pillarGrid({
-      x0: -28,
-      x1: 20,
-      nx: 5,
-      y0: -27,
-      y1: -27,
-      ny: 1,
-      element: 'light',
-      kind: 'tough',
-    }),
     // 崩し手の部分カバー（半身・硬い岩塊）
     disc(-16.5, -7, 2.4, 'dark', 'tough'),
     disc(16.5, -7, 2.4, 'light', 'tough'),
@@ -324,8 +324,8 @@ const stage4: Stage = {
         { center: 9, width: 3.2 },
       ],
     }),
-    rubble(-22, -20, 6, 6, 'neutral', 'fragile', 41),
-    rubble(21, -19, 6, 6, 'neutral', 'fragile', 42),
+    rubble(-25, -8, 5, 6, 'neutral', 'fragile', 41),
+    rubble(25, -8, 5, 6, 'neutral', 'fragile', 42),
   ],
   introText: [
     '左右の封印壁と、中央の砕けぬ封印核。奥に封印の番人、手前には柱と岩塊に半身を隠した崩し手が三体。',
@@ -363,9 +363,9 @@ const stage5: Stage = {
   boss: true,
   rField: S5_R, // 43：①列柱の間。フェーズで拡大（②③＝60）
   allyPositions: [
-    { x: -21, y: -27 }, // ミラ
-    { x: 1, y: -32 }, // レン
-    { x: 20, y: -25 }, // ソウ
+    { x: -21, y: -26 }, // ミラ
+    { x: 1, y: -30 }, // レン
+    { x: 20, y: -24 }, // ソウ
   ],
   enemies: [
     // 多重詠唱（#44）：火力型枠 line/arc/exp・迂回型枠 abs/arc/poly34/harmonic を弾ごとに独立選択（#46/#69）
@@ -394,8 +394,8 @@ const stage5: Stage = {
     }),
   ],
   obstacles: [
-    ...chamber(-27, 27, -36, 36, S5_R),
-    block(-5, -2, 4, 3, 'light', 'tough'), // 守護者の盾（硬い）
+    ...chamber(-30, 30, -40, 40, S5_R),
+    block(-6, 0, 6, 3, 'light', 'tough'), // 守護者の盾（硬い・巨大）：斜めの射線も断つ
     // 等間隔の列柱（大広間の意匠・ピッチ12を1/3ずつずらした三列）：直線を断つ
     ...pillarGrid({
       x0: -24,
@@ -421,14 +421,14 @@ const stage5: Stage = {
       x0: -28,
       x1: 20,
       nx: 5,
-      y0: -14,
-      y1: -14,
+      y0: -12,
+      y1: -12,
       ny: 1,
       element: 'dark',
       kind: 'tough',
     }),
     ...brokenTower(-14, 3, 9, 10, 'light', 'tough', { tallSide: 'left', seed: 51 }),
-    rubble(18, -16, 6, 6, 'neutral', 'fragile', 52),
+    rubble(12, -6, 5, 6, 'neutral', 'fragile', 52),
   ],
   // HPフェーズ（#45）：66%/33% で床が崩れ、②崩れた大広間へ。rField は 43→60 と拡大する（#49）。
   // 最下層（33%以下・断末魔前）はボス単独＝眷属を間引き・3同時発射・遮蔽なしの正対。
