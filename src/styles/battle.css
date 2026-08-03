@@ -221,8 +221,7 @@
   width: min(100cqw, 100cqh);
   height: min(100cqw, 100cqh);
   background: var(--bg);
-  border: 3px solid var(--panel-border);
-  box-shadow: inset 0 0 0 2px var(--panel-bevel);
+  border: 2px solid var(--edge-lite);
 }
 .gm-board-inner canvas {
   width: 100%;
@@ -638,4 +637,90 @@
   .fire-col {
     flex-wrap: wrap;
   }
+}
+
+
+/* =========================================================
+   膜の摩耗の異常演出（画面全体）／モーダルの見た目を新 UI へ揃える
+   ========================================================= */
+
+/* ---- 異常演出：赤みのビネットと、降る塵・亀裂・グリッチのキャンバス ---- */
+.anomaly-tint {
+  position: fixed;
+  inset: 0;
+  z-index: 15;
+  pointer-events: none;
+}
+.anomaly-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 16;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+
+/* ---- 盤面のズーム：盤面の右下に重ねる（新 UI の細枠＋金） ---- */
+.gm-board-inner .zoom-controls {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.gm-board-inner .zoom-controls button {
+  width: 31px;
+  height: 31px;
+  font-size: 15px;
+  color: var(--light-soft);
+  background: rgba(10, 10, 18, 0.85);
+  border: 2px solid var(--edge-lite);
+  box-shadow: 2px 2px 0 var(--edge-dark);
+}
+.gm-board-inner .zoom-controls button:hover {
+  border-color: var(--light);
+}
+
+/* ---- 図鑑・手引きのモーダル：石板ではなく細枠のパネルへ ---- */
+.modal-backdrop {
+  background: rgba(4, 4, 10, 0.95);
+}
+.modal.rwin {
+  background: var(--win);
+  border: 2px solid var(--edge-lite);
+  box-shadow: 7px 7px 0 var(--edge-dark);
+}
+.modal.rwin::before,
+.modal.rwin::after {
+  content: none;
+}
+.modal-head {
+  border-bottom: 2px solid var(--edge-lite);
+  background: var(--win-2);
+}
+
+/* ---- 物語オーバーレイ：中央に短い一枚だけ ---- */
+.story-overlay .modal {
+  max-width: 560px;
+  text-align: center;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.story-overlay .modal-head {
+  border: 0;
+  background: transparent;
+  justify-content: center;
+}
+.story-overlay h2 {
+  font-size: 28px;
+  color: var(--light-soft);
+  text-shadow: 3px 3px 0 var(--edge-dark);
+}
+.story-overlay .story-text {
+  color: var(--text);
+  line-height: 1.9;
 }

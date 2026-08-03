@@ -50,6 +50,7 @@ import { buildTestStage } from './components/testStage'
 import ReadoutStrip, { ReadoutStats } from './components/ReadoutStrip'
 import PlaybackBar from './components/PlaybackBar'
 import DraftPad from './components/DraftPad'
+import AnomalyOverlay from './components/AnomalyOverlay'
 import TopRail from './components/TopRail'
 import ZPlot from './components/ZPlot'
 import CasterCards from './components/CasterCards'
@@ -63,7 +64,6 @@ import BattleCanvas, {
   type EnemyDeath,
 } from './components/BattleCanvas'
 import { speciesOf, tierOf } from './render/species'
-import BattleLog from './components/BattleLog'
 import FunctionPanel from './components/FunctionPanel'
 import Codex from './components/Codex'
 import Guide from './components/Guide'
@@ -239,11 +239,7 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   // #49：このターンで術式を設定/変更した味方ID（準備状況の✓・発射前確認）
   const [touchedAllies, setTouchedAllies] = useState<Set<string>>(new Set())
-  // #49：未設定の味方がいる時の発射確認オーバーレイ
-  const [confirmFire, setConfirmFire] = useState(false)
   const [codexOpen, setCodexOpen] = useState(false)
-  // 戦闘ログは盤面右上の log-tab から開閉するパネル（DESIGN.md §5）。畳み開きの状態
-  const [logCollapsed, setLogCollapsed] = useState(true)
   // #23：図鑑用に「遭遇した敵」を記録（セッション内・永続化しない）
   const [seenEnemies, setSeenEnemies] = useState<Set<string>>(new Set())
   const [guideOpen, setGuideOpen] = useState(false)
@@ -516,6 +512,7 @@ export default function App() {
 
   /** 「試しの間」（練習部屋）。本編の進行状況は退避したまま、壁の削れとパリィだけを試す。 */
   const startPractice = () => {
+    // 練習部屋は開発用。本番ビルドには到達経路が無い
     setTestPlayReturn('stageSelect')
     startTestPlay(buildTestStage(), 0, 0)
   }
@@ -642,16 +639,8 @@ export default function App() {
     setActiveAllyId(id)
   }
 
-  const fireAll = (force = false) => {
+  const fireAll = () => {
     if (!battle) return
-    // #49：撃てる味方がいるのに未設定の味方がいたら、一度だけ確認する
-    const castable = battle.allies.filter((a) => a.hp > 0 && !impairedIds.includes(a.id))
-    const unset = castable.filter((a) => !touchedAllies.has(a.id))
-    if (!force && castable.length > 0 && unset.length > 0) {
-      setConfirmFire(true)
-      return
-    }
-    setConfirmFire(false)
     clearFit()
     setMenuOpen(false)
     vibrate([18, 40, 18])
@@ -991,7 +980,7 @@ export default function App() {
             setScreen('prologue')
           }}
           onGuide={() => setGuideOpen(true)}
-          onStageSelect={() => setScreen('stageSelect')}
+          onStageSelect={DEV ? () => setScreen('stageSelect') : undefined}
         />
         {guideOpen && <Guide onClose={() => setGuideOpen(false)} />}
         {DEV && (
@@ -1010,7 +999,13 @@ export default function App() {
       </div>
     )
   }
+  // 「間を選ぶ／試しの間」は開発用ツール（#67 のエディタと同じ扱い）。
+  // 本番ビルドでは到達経路を出さず、直接この画面になってもタイトルへ戻す。
   if (screen === 'stageSelect') {
+    if (!DEV) {
+      setScreen('title')
+      return null
+    }
     return (
       <div className="app">
         <div className="screen-center stage-select">
@@ -1129,7 +1124,6 @@ export default function App() {
           }
           actions={[
             { label: 'このステージをやり直す', primary: true, onClick: startBattle },
-            { label: 'ステージ選択へ', onClick: () => setScreen('stageSelect') },
             { label: 'タイトルへ', onClick: () => setScreen('title') },
           ]}
         />
@@ -1247,15 +1241,17 @@ export default function App() {
             >
               {muted ? '音オフ' : '音オン'}
             </button>
-            <button
-              className="btn small"
-              onClick={() => {
-                setMenuOpen(false)
-                setScreen('stageSelect')
-              }}
-            >
-              間を選ぶ（中断）
-            </button>
+            {DEV && (
+              <button
+                className="btn small"
+                onClick={() => {
+                  setMenuOpen(false)
+                  setScreen('stageSelect')
+                }}
+              >
+                間を選ぶ（中断・DEV）
+              </button>
+            )}
             {testPlayActive && (
               <button
                 className="btn small"
@@ -1306,7 +1302,7 @@ export default function App() {
         {/* ===== 本体：盤面 ｜ 右レール ===== */}
         <div className="gm-body">
           <div className="gm-board">
-            <div className="gm-board-inner rwin arena">
+            <div className="gm-board-inner">
               {replayEntry && replay ? (
                 <BattleCanvas
                   key={`replay-${replay.turn}`}
@@ -1382,9 +1378,6 @@ export default function App() {
                 <span className="el-light">金＝光</span> / <span className="el-dark">紫＝闇</span> /
                 無色＝中立・濃さ＝強度
               </div>
-
-              {/* 戦闘ログ（盤面右上の常設タブ） */}
-              <BattleLog log={battle.log} collapsed={logCollapsed} onToggle={() => setLogCollapsed((v) => !v)} />
 
               {/* 見返し（プレイバック）：解決済みターンをスクラブして経路・命中・削れを追う */}
               {canReplay &&
@@ -1528,6 +1521,9 @@ export default function App() {
         </div>
       </div>
 
+      {/* 膜の摩耗：赤み・降る塵・亀裂・一瞬のバグりを画面全体へ（残り回数は数字で見せない） */}
+      <AnomalyOverlay instability={instability} live={!storyOverlay && !turnResult} />
+
       {/* 作図台：関数空間の方眼紙。盤面の上に重ねる */}
       {draftOpen && composing && activeComposer && activeReadout && (
         <div className="draft-overlay" onClick={() => setDraftOpen(false)} role="presentation">
@@ -1543,28 +1539,6 @@ export default function App() {
         </div>
       )}
 
-      {confirmFire && (
-        <div className="overlay" onClick={() => setConfirmFire(false)}>
-          <div className="confirm-card panel" onClick={(e) => e.stopPropagation()}>
-            <div className="section-title">未設定の味方がいます</div>
-            <p className="hint">
-              {battle.allies
-                .filter((a) => a.hp > 0 && !impairedIds.includes(a.id) && !touchedAllies.has(a.id))
-                .map((a) => a.name)
-                .join('・')}{' '}
-              はまだ術式を設定していません（既定のまま）。このまま発射しますか？
-            </p>
-            <div className="action-row">
-              <button className="btn primary" onClick={() => fireAll(true)}>
-                このまま発射
-              </button>
-              <button className="btn" onClick={() => setConfirmFire(false)}>
-                戻って設定
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
       {codexOpen && (
         <Codex
           activePresetId={activeComposer?.presetId}

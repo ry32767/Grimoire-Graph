@@ -200,6 +200,7 @@ src/
 | `components/CasterCards.tsx` | 右レールの術者カード（HP・式・読み出しの一行） |
 | `render/tutorialFigures.ts` | 手引き（8 枚）の canvas 図版 |
 | `render/titleScreen.ts` | タイトル背景（式が動くループアニメーション） |
+| `components/AnomalyOverlay.tsx` | 膜の摩耗の全画面演出（描画は `render/anomaly.ts`） |
 | `render/endroll.ts` | エンドロールの AI 同士の自動対戦（`planEnemyShots`/`enemyFlight`/`resolveParry` をそのまま使う） |
 
 ### `ComposerState`（`composer.ts`）
@@ -229,6 +230,8 @@ src/
 `seekToken` が変わったフレームだけ時計が飛び、そのとき既に過ぎている演出は「はるか過去」に畳んで無音で通過させる
 （巻き戻しで全エフェクトが一斉に再生されるのを防ぐ）。
 
-> **廃止したコンポーネント**：`Hud.tsx`（味方ステータス窓／敵陣営ウィンドウ）と
-> `CommandWindow.tsx`（コマンド窓）は DC プロトタイプ v3 の UI 移植で削除した。
-> 役割は 上段レール（合計 HP・膜）／術者カード（個別 HP・式）／盤面の敵 HP バー／発射列 が引き継いでいる。
+> **廃止したコンポーネント**：`Hud.tsx`（味方ステータス窓／敵陣営ウィンドウ）・
+> `CommandWindow.tsx`（コマンド窓）・`BattleLog.tsx`（戦闘ログパネル）は
+> DC プロトタイプ v3 の UI 移植で削除した。役割は 上段レール（合計 HP・膜）／
+> 術者カード（個別 HP・式）／盤面の敵 HP バー／発射列／ターン結果パネル が引き継いでいる。
+> 「未設定の味方がいます」の発射確認も廃止（プロトタイプに無いゲートのため）。
