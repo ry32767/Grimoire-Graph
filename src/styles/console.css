@@ -1,0 +1,728 @@
+/* =========================================================
+   詠唱コンソール／読み出しストリップ／作図台／見返しバー／ステージ選択
+   （DC プロトタイプ v3 の UI をこのリポジトリのトークンへ移植した分）
+   属性色（--light/--dark）は「意味」だけに使い、構造は鋼青（--edge-lite/--cursor）で組む。
+   ========================================================= */
+
+/* ---- 読み出しの色調（tone-*）：意味に対応した1色だけを縁と文字に載せる ---- */
+.tone-good {
+  color: var(--light-soft);
+}
+.tone-dark {
+  color: var(--dark);
+}
+.tone-error,
+.tone-danger {
+  color: var(--hp-low);
+}
+.tone-dim {
+  color: var(--text-dim);
+}
+
+/* ---- 上部読み出しストリップ：盤面のすぐ上で「いま読めていること」を1行に畳む ---- */
+.readout-strip {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  width: min(100%, 860px);
+  margin-inline: auto;
+  padding: 8px 12px;
+  min-width: 0;
+  background: var(--win-2);
+  border-left: 4px solid var(--edge-lite);
+  border-bottom: 2px solid var(--edge-lite);
+}
+.readout-strip.tone-good {
+  border-color: var(--light);
+}
+.readout-strip.tone-dark {
+  border-color: var(--dark);
+}
+.readout-strip.tone-error,
+.readout-strip.tone-danger {
+  border-color: var(--hp-low);
+}
+.readout-title {
+  flex: none;
+  font-family: var(--expr);
+  font-size: 16px;
+  line-height: 1.2;
+  white-space: nowrap;
+  color: inherit;
+}
+.readout-sub {
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- 4マスの読み取り値 ---- */
+.readout-stats {
+  border: 2px solid var(--edge-lite);
+  background: var(--win);
+  margin-bottom: 8px;
+}
+.readout-stats-head {
+  padding: 6px 9px;
+  border-bottom: 2px solid var(--edge-lite);
+  background: var(--win-2);
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.readout-stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.readout-stat {
+  padding: 7px 9px;
+  border-right: 1px solid var(--edge-dark);
+  border-bottom: 1px solid var(--edge-dark);
+}
+.readout-stat .k {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.readout-stat .v {
+  font-family: var(--expr);
+  font-size: 15px;
+  margin-top: 2px;
+  white-space: nowrap;
+}
+
+/* ---- 詠唱コンソール ---- */
+.spell-console {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.console-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  justify-content: space-between;
+}
+.expr-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 0;
+}
+.expr-tag {
+  flex: none;
+  width: 34px;
+  display: grid;
+  place-items: center;
+  font-family: var(--expr);
+  font-size: 16px;
+  border: 2px solid var(--edge-lite);
+  background: var(--win-2);
+}
+.expr-tag.y {
+  color: var(--light);
+  border-color: var(--light);
+}
+.expr-tag.z {
+  color: var(--dark);
+  border-color: var(--dark);
+}
+.expr-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 2px solid var(--edge-lite);
+  color: var(--text);
+  font-family: var(--expr);
+  font-size: 16px;
+  padding: 8px 10px;
+  outline: none;
+}
+.expr-input.y {
+  color: var(--light-soft);
+}
+.expr-input.z {
+  color: var(--dark);
+}
+.expr-input.focused {
+  border-color: var(--cursor);
+}
+.expr-input.invalid {
+  border-color: var(--hp-low);
+}
+.solve-angle {
+  flex: none;
+  width: 104px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1px;
+  text-align: left;
+}
+.solve-label {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.solve-label em {
+  font-style: normal;
+  color: var(--light);
+}
+.solve-value {
+  font-family: var(--expr);
+  font-size: 14px;
+  color: var(--light-soft);
+}
+.el-auto {
+  flex: none;
+  width: 88px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0 8px;
+  background: var(--bg);
+  border: 2px solid var(--edge-lite);
+}
+.el-auto .k {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.el-auto .v {
+  font-size: 13px;
+}
+.console-hint {
+  min-height: 15px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+.console-hint.error {
+  color: var(--hp-low);
+}
+
+/* ---- 係数スライダー（式中の数値を自動検出） ---- */
+.coef-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.coef-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--bg);
+  border: 1px solid var(--edge-lite);
+  padding: 4px 8px;
+}
+.coef-label {
+  font-family: var(--expr);
+  font-size: 13px;
+  color: var(--light);
+}
+.coef-val {
+  font-family: var(--expr);
+  font-size: 13px;
+  color: var(--light-soft);
+  width: 44px;
+  text-align: right;
+}
+.coef-ctrl input[type='range'] {
+  width: 104px;
+}
+
+/* ---- 術式（スペルブック） ---- */
+.spellbook {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.spellbook-label {
+  flex: none;
+  font-size: 10px;
+  letter-spacing: 1px;
+  white-space: nowrap;
+  color: var(--light-soft);
+}
+.spellbook-label.ward {
+  color: var(--dark);
+}
+.spellbook-row {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.spell-chip {
+  flex: none;
+  background: var(--bg-2);
+  border: 2px solid var(--edge-lite);
+  color: var(--text);
+  padding: 4px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  cursor: pointer;
+}
+.spell-chip:hover {
+  border-color: var(--cursor);
+}
+.spell-chip.ward {
+  border-color: var(--dark-soft);
+}
+.spell-chip .nm {
+  font-size: 11px;
+  line-height: 1.15;
+  color: var(--light-soft);
+  white-space: nowrap;
+}
+.spell-chip.ward .nm {
+  color: var(--dark);
+}
+.spell-chip .fx {
+  font-family: var(--expr);
+  font-size: 11px;
+  line-height: 1.15;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* ---- 盤面フィット行・ツール行 ---- */
+.fit-row,
+.console-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.fit-label {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.console-tools .hint {
+  font-size: 10px;
+}
+
+/* ---- 記号盤 ---- */
+.keypad {
+  display: grid;
+  grid-template-columns: repeat(11, 1fr);
+  gap: 3px;
+}
+.pad-key {
+  background: var(--bg-2);
+  border: 2px solid var(--edge-lite);
+  color: var(--text);
+  font-family: var(--expr);
+  font-size: 13px;
+  padding: 6px 0;
+  box-shadow: 0 2px 0 var(--edge-dark);
+  cursor: pointer;
+}
+.pad-key:active {
+  transform: translateY(2px);
+  box-shadow: none;
+}
+.pad-key.var {
+  border-color: var(--light);
+  color: var(--light-soft);
+}
+.pad-key.del {
+  border-color: var(--hp-low);
+  color: var(--hp-low);
+}
+.pad-key.fn {
+  color: var(--dark);
+}
+
+/* ---- z 整形 ---- */
+.zshape {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 7px 8px;
+  background: var(--bg);
+  border: 1px solid var(--edge-lite);
+}
+.zshape.free {
+  border-color: var(--dark-soft);
+}
+.zshape-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.zshape-title {
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+}
+.zshape-badge {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.zshape-badge.free {
+  color: var(--dark);
+}
+.zshape-kinds {
+  display: flex;
+  gap: 4px;
+}
+.zshape-sliders {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.zshape-sliders .slider-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.zshape-sliders .slider-row input[type='range'] {
+  width: 84px;
+}
+.zshape-sliders .val {
+  font-family: var(--expr);
+  font-size: 13px;
+  color: var(--light-soft);
+  width: 38px;
+  text-align: right;
+}
+
+/* ---- 作図台 ---- */
+.draft-pad {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  background: var(--win);
+}
+.draft-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.draft-title {
+  font-size: 12px;
+  color: var(--light-soft);
+}
+.draft-close {
+  margin-left: auto;
+}
+.draft-canvas-wrap {
+  position: relative;
+  background: var(--bg);
+  border: 1px solid var(--edge-lite);
+}
+.draft-canvas-wrap canvas {
+  width: 100%;
+  height: auto;
+  display: block;
+  touch-action: none;
+}
+.draft-note {
+  position: absolute;
+  top: 4px;
+  left: 24px;
+  font-size: 9px;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+.draft-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.draft-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.draft-target,
+.draft-expr {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--expr);
+  font-size: 13px;
+  color: var(--light-soft);
+  background: var(--bg);
+  border: 1px solid var(--edge-lite);
+  padding: 4px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.draft-pts-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* ---- 見返し（プレイバック）バー ---- */
+.replay-open {
+  width: min(100%, 860px);
+  margin-inline: auto;
+  display: flex;
+  justify-content: flex-end;
+}
+.playbar {
+  width: min(100%, 860px);
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+}
+.playbar-turns,
+.playbar-transport {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.playbar-label {
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+}
+.playbar-seek {
+  flex: 1;
+  min-width: 100px;
+}
+.playbar-clock {
+  flex: none;
+  font-family: var(--expr);
+  font-size: 12px;
+  color: var(--light-soft);
+  width: 92px;
+  text-align: right;
+}
+
+/* ---- ターン結果パネル ---- */
+.turn-result-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  background: rgba(4, 4, 10, 0.84);
+}
+.turn-result {
+  text-align: center;
+  padding: 0 24px;
+  max-width: 520px;
+}
+.turn-result-kicker {
+  font-size: 11px;
+  letter-spacing: 3px;
+  color: var(--text-dim);
+}
+.turn-result-title {
+  font-size: 30px;
+  color: var(--light-soft);
+  margin: 12px 0 8px;
+  text-shadow: 3px 3px 0 var(--edge-dark);
+}
+.turn-result-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--expr);
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.6;
+  margin-bottom: 18px;
+}
+
+/* ---- ステージ選択 ---- */
+.stage-select .room-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: var(--space-4) 0;
+}
+.room-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-2);
+  border: 2px solid var(--edge-lite);
+  box-shadow: 0 3px 0 var(--edge-dark);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.room-chip:hover {
+  border-color: var(--cursor);
+}
+.room-chip.selected {
+  border-color: var(--light);
+}
+.room-mark {
+  width: 10px;
+  height: 10px;
+  background: var(--edge-lite);
+  transform: rotate(45deg);
+  flex: none;
+}
+.room-chip.selected .room-mark {
+  background: var(--light);
+}
+.room-no {
+  font-family: var(--expr);
+  font-size: 16px;
+  color: var(--light-soft);
+  width: 20px;
+}
+.room-name {
+  font-size: 13px;
+}
+
+/* ---- 手引き（図解チュートリアル） ---- */
+.guide-figure {
+  position: relative;
+  background: var(--bg);
+  border: 2px solid var(--edge-lite);
+}
+.guide-figure canvas {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.guide-dots {
+  display: flex;
+  gap: 6px;
+  margin: 0 auto;
+}
+.guide-dot {
+  width: 9px;
+  height: 9px;
+  padding: 0;
+  border: 0;
+  background: var(--edge-lite);
+  cursor: pointer;
+}
+.guide-dot.on {
+  background: var(--light);
+}
+.guide-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: var(--space-4);
+}
+
+/* ---- 狭幅：コンソールを縦に積む ---- */
+@media (max-width: 820px) {
+  .keypad {
+    grid-template-columns: repeat(6, 1fr);
+  }
+  .solve-angle {
+    width: 88px;
+  }
+  .el-auto {
+    width: 76px;
+  }
+  .readout-strip {
+    flex-direction: column;
+    gap: 2px;
+  }
+  .readout-title {
+    font-size: 14px;
+  }
+  .readout-sub {
+    white-space: normal;
+  }
+}
+
+/* ---- エンドロール（AI 同士の撃ち合いを背景に流す） ---- */
+.endroll {
+  position: fixed;
+  inset: 0;
+  background: var(--edge-dark);
+  overflow: hidden;
+}
+.endroll canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.endroll-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 26px 32px 30px;
+  text-align: center;
+  background: linear-gradient(to top, rgba(4, 4, 10, 0.95) 0%, rgba(4, 4, 10, 0.88) 58%, rgba(4, 4, 10, 0) 100%);
+  pointer-events: none;
+}
+.endroll-kicker {
+  font-size: 11px;
+  letter-spacing: 6px;
+  color: var(--light);
+}
+.endroll-title {
+  font-size: clamp(28px, 4.8vw, 50px);
+  letter-spacing: 6px;
+  color: var(--light-soft);
+  text-shadow: 4px 4px 0 var(--edge-dark);
+  margin-top: 10px;
+}
+.endroll-stats {
+  display: flex;
+  gap: 34px;
+  align-items: flex-end;
+}
+.endroll-stats .k {
+  font-family: var(--expr);
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: var(--text-dim);
+}
+.endroll-stats .v {
+  font-family: var(--expr);
+  font-size: 34px;
+  line-height: 1.1;
+  margin-top: 4px;
+}
+.endroll-stats .v.light {
+  color: var(--light-soft);
+}
+.endroll-stats .v.dark {
+  color: var(--dark);
+}
+.endroll-sep {
+  width: 1px;
+  height: 44px;
+  background: var(--edge-lite);
+}
+.endroll-note {
+  font-size: 12.5px;
+  color: var(--text);
+  line-height: 1.9;
+  max-width: 420px;
+}
+.endroll-back {
+  pointer-events: auto;
+}

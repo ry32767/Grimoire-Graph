@@ -40,12 +40,25 @@ export interface ComposerState {
   freeExpr: string
   freeError: string | null
   /**
+   * y 欄にユーザーが打った生のテキスト（`r=` 接頭辞を含む）。freeExpr は係数検出で整形された
+   * 「エンジンへ渡す式」なので、入力欄の見た目はこちらを正とする（打鍵ごとに整形されない）。
+   */
+  yText: string
+  /** z 欄にユーザーが打った生のテキスト（変数は t＝術者からの距離）。 */
+  zText: string
+  /**
    * 自由入力式から自動検出した係数（#46）。射出魔法（回転 y=g(x)）で式中の数値を
    * スライダー化し、通過点フィットの対象にする。fitTemplate は数値を p0,p1,… に置換した式。
    */
   fitTemplate: string
   fitParams: DetectedParam[]
   fitValues: Record<string, number>
+  /**
+   * z を「術者からの距離 t の関数 z=g(t)」として書くか（DC プロトタイプ v3 の読み方・既定 true）。
+   * true のとき zFreeExpr の変数は t で、場としては z(x,y)=g(√(x²+y²))（術者原点）に持ち上げる。
+   * false は従来の 2 変数 z=f(x,y)。エンジンへは同じ ZField を渡すだけなのでロジックは不変。
+   */
+  zRadial: boolean
   /** z 場（属性 z=f(x,y)）の状態（#30/#21） */
   zPresetId: string
   zCoeffs: Record<string, number>
@@ -58,8 +71,23 @@ export interface ComposerState {
   zFitValues: Record<string, number>
 }
 
+/**
+ * z(t)（t＝術者からの距離）としての 1 次元の読み。zRadial のときだけ得られる。
+ * 読み出しストリップ・z プロット・整形スライダーはこれを使う（撃つ前に読める完全情報）。
+ */
+export function buildZAt(c: ComposerState): ((t: number) => number) | null {
+  if (!c.zRadial) return null
+  return parseExpression(c.zFreeExpr, 't')
+}
+
 /** 状態から z 場（属性 z=f(x,y)）を組み立てる（#30）。組み立てられなければ中立(0)。 */
 export function buildZField(c: ComposerState): ZField {
+  if (c.zRadial) {
+    const g = parseExpression(c.zFreeExpr, 't')
+    // 距離場として持ち上げる。origin ぶんのずらしは Trajectory 側（z は術者原点で評価される）
+    if (g) return (x, y) => g(Math.hypot(x, y))
+    return () => 0
+  }
   if (c.zUseFree) {
     const f = parseZExpression(c.zFreeExpr)
     if (f) return f
@@ -67,6 +95,26 @@ export function buildZField(c: ComposerState): ZField {
   const preset = findZPreset(c.zPresetId)
   if (preset) return preset.build(c.zCoeffs)
   return () => 0
+}
+
+/** y 欄が `r=` で始まっていれば結界（極座標 r=f(θ)）。 */
+export function isBarrierText(text: string): boolean {
+  return /^\s*r\s*=/.test(text ?? '')
+}
+
+/** `r=…` から式本体だけを取り出す。 */
+export function barrierBody(text: string): string {
+  return (text ?? '').replace(/^\s*r\s*=/, '')
+}
+
+/** θ・π・√ など、入力しやすい記号を mathjs が読める形へ寄せる（極座標の変数は t）。 */
+export function normalizeExprInput(text: string): string {
+  return (text ?? '').replace(/θ/g, 't').replace(/π/g, 'pi').replace(/√/g, 'sqrt')
+}
+
+/** 式（接頭辞なし）から y 欄のテキストを作る。 */
+export function yTextOf(expr: string, mode: 'rotate' | 'polar'): string {
+  return mode === 'polar' ? `r=${expr}` : expr
 }
 
 export function findPreset(id: string): Preset | undefined {
@@ -106,19 +154,27 @@ export function parametricPatch(expr: string, varName: 'x' | 't'): Partial<Compo
 /** 係数1つの値を更新し、自由入力式（freeExpr）を再生成するパッチを作る（#46）。 */
 export function setCoeffPatch(c: ComposerState, key: string, value: number): Partial<ComposerState> {
   const values = { ...c.fitValues, [key]: value }
-  return { fitValues: values, freeExpr: renderExpr(fitSpecOf(c), values), useFree: true, freeError: null }
+  const expr = renderExpr(fitSpecOf(c), values)
+  return {
+    fitValues: values,
+    freeExpr: expr,
+    yText: yTextOf(expr, c.mode),
+    useFree: true,
+    freeError: null,
+  }
 }
 
 /**
  * z 場の式を係数化（数値リテラル→スライダー）して自由入力 z 場へ入るパッチを作る（#52）。
  * 軌道と同じ仕組みを z 式（x,y の 2 変数）にも適用する。検出/評価不能なら zFreeError のみ返す。
  */
-export function zParametricPatch(expr: string): Partial<ComposerState> {
+export function zParametricPatch(expr: string, radial = true): Partial<ComposerState> {
   const d = detectCoeffs(expr)
   if (!d) return { zFreeError: '式が正しくありません' }
   const values = paramDefaults(d.params)
   const rendered = renderWithParams(d.template, d.params, values)
-  if (!parseZExpression(rendered)) return { zFreeError: '式が正しくありません' }
+  const ok = radial ? !!parseExpression(rendered, 't') : !!parseZExpression(rendered)
+  if (!ok) return { zFreeError: '式が正しくありません' }
   return {
     zUseFree: true,
     zFreeError: null,
@@ -132,12 +188,52 @@ export function zParametricPatch(expr: string): Partial<ComposerState> {
 /** z 場の係数1つを更新し、z 自由入力式（zFreeExpr）を再生成するパッチを作る（#52）。 */
 export function setZCoeffPatch(c: ComposerState, key: string, value: number): Partial<ComposerState> {
   const values = { ...c.zFitValues, [key]: value }
-  return {
-    zFitValues: values,
-    zFreeExpr: renderWithParams(c.zFitTemplate, c.zFitParams, values),
-    zUseFree: true,
-    zFreeError: null,
+  const expr = renderWithParams(c.zFitTemplate, c.zFitParams, values)
+  return { zFitValues: values, zFreeExpr: expr, zText: expr, zUseFree: true, zFreeError: null }
+}
+
+/**
+ * y 欄の 1 行テキスト（`r=` で結界）をコンポーザのパッチへ。
+ * 式は自由入力のまま保持し、数値リテラルは係数スライダーへ自動検出する（#46 と同じ仕組み）。
+ */
+export function yTextPatch(text: string): Partial<ComposerState> {
+  const barrier = isBarrierText(text)
+  const body = normalizeExprInput(barrier ? barrierBody(text) : text)
+  const mode: 'rotate' | 'polar' = barrier ? 'polar' : 'rotate'
+  const varName = barrier ? 't' : 'x'
+  const src = body.trim() === '' ? '0' : body
+  const fn = parseExpression(src, varName)
+  if (!fn) {
+    return { yText: text, mode, useFree: true, freeError: '式が読めません（記号・括弧を確認）' }
   }
+  const patch = parametricPatch(src, varName)
+  // 係数検出に失敗しても式そのものは通っているので、自由式として受け入れる
+  if (patch.freeError) {
+    return { yText: text, mode, useFree: true, freeExpr: src, freeError: null, ...NO_FIT }
+  }
+  return { yText: text, mode, ...patch }
+}
+
+/** z 欄の 1 行テキストをコンポーザのパッチへ（変数は t＝術者からの距離）。 */
+export function zTextPatch(text: string): Partial<ComposerState> {
+  const body = normalizeExprInput(text)
+  const src = body.trim() === '' ? '0' : body
+  if (!parseExpression(src, 't')) {
+    return { zText: text, zUseFree: true, zFreeError: 'z の式が読めません（記号・括弧を確認）' }
+  }
+  const patch = zParametricPatch(src, true)
+  if (patch.zFreeError) {
+    return {
+      zText: text,
+      zUseFree: true,
+      zFreeExpr: src,
+      zFreeError: null,
+      zFitTemplate: '',
+      zFitParams: [],
+      zFitValues: {},
+    }
+  }
+  return { zText: text, ...patch }
 }
 
 export function presetsFor(mode: 'rotate' | 'polar'): Preset[] {

@@ -147,13 +147,18 @@ src/
 │  ├ misfireInstability.ts  暴発の不安定化・累積・崩壊（膜メーター・04b）
 │  ├ parry.ts               相殺（発射型どうしは実衝突 `bulletCollision`・#64／結界の迎撃は線分交差。反対極のみ）
 │  ├ status.ts              状態異常（ひるみ/継続ダメージ）
-│  ├ enemyAI.ts             敵 AI（facade・ロール振り分け・迂回型/守護型の計画）
+│  ├ enemyAI.ts             敵 AI（facade・ロール振り分け・迂回型の計画）
 │  ├ enemyPlanning/         敵AIの軌道計画（[05](05-enemies.md) §5.4/§5.4b）
 │  │  ├ planningEnv.ts        本番と同一ジオメトリの空間クエリ・clearance
 │  │  ├ routeSearch.ts        グリッド A*＋見通し線平滑化（clean/wallTunnel）
-│  │  ├ routeFit.ts           経路→family（abs/arc/poly34）フィット
+│  │  ├ routeFit.ts           経路→family（abs/arc/poly34/harmonic）フィット（自由度は fitComplexity 依存）
+│  │  ├ fitComplexity.ts      敵 LVL→最適化できる式の複雑さ（次数・折れ枚数・積の因子・#70）
 │  │  ├ evaluate.ts           候補軌道の本番物理検証（carveAlong 共有・辞書式 rank 比較）
 │  │  ├ ruptorPlanner.ts      暴発型（ruptor）の計画・z 場の極（`buildRuptorZField`）
+│  │  ├ guardianPlanner.ts    守護型（guardian）の結界計画（候補の組み立て・順位づけ・最終検証・#71）
+│  │  ├ guardianShape.ts      結界の外形（自由半径プロファイル→フーリエ級数フィット・素材接触の検証）
+│  │  ├ guardianZ.ts          結界の z 場候補（一様/余弦/多重余弦/exp×余弦・過励起）と本番物理での採点
+│  │  ├ guardianTier.ts       敵 LVL→結界の複雑さ（外形項数・z 場の式・重ね張り枚数・#71）
 │  │  ├ trajectories.ts       family→軌道の組み立て（attacker/ruptor 共有）
 │  │  └ perception.ts         隠蔽時の見かけ位置・脅威優先度（attacker/ruptor 共有）
 │  ├ recommend.ts           おすすめ術式の探索
@@ -173,3 +178,49 @@ src/
 
 > ゲームロジック（`src/game/`）は React state や Canvas に依存しない純粋関数として切り出し、ユニットテストで固める方針（各 `*.test.ts`）。
 </content>
+
+---
+
+## 9.6 UI 側のモジュール（`src/components/` / `src/render/`）
+
+エンジン（`src/game/`）は**読むだけ**。エンジンが返さない情報を UI が必要とするときは、
+必ず `src/components/` か `src/render/` に「派生計算」として置く（`src/game/` には置かない）。
+
+| モジュール | 役割 |
+|---|---|
+| `components/composer.ts` | `ComposerState`（術式の編集状態）→ `Trajectory` / `ZField` / プレビュー |
+| `components/rayInfo.ts` | 射線上に何があるか・距離 r での読み取り値・極・立ちはだかる結界（[03 §3.6](03-functions.md)） |
+| `components/readout.ts` | 上をまとめて「読み出しストリップ」「4 マスの数値」「術者カードの一行」を組む |
+| `components/zshape.ts` | z の正準形（山/段/波/平）の解析と生成（[03 §3.2b](03-functions.md)） |
+| `components/polyFit.ts` | 作図台の最小二乗多項式フィットと式整形 |
+| `components/solveAngle.ts` | 「⟳ 解く」：形はそのままに的を通る θ を数値探索（`simulateFlight` を実際に回す） |
+| `components/testStage.ts` | 「試しの間」（壁 4 種＋直射敵 2 体の練習部屋）の Stage を組み立てる |
+| `render/tutorialFigures.ts` | 手引き（8 枚）の canvas 図版 |
+| `render/endroll.ts` | エンドロールの AI 同士の自動対戦（`planEnemyShots`/`enemyFlight`/`resolveParry` をそのまま使う） |
+
+### `ComposerState`（`composer.ts`）
+
+```ts
+{
+  mode: 'rotate' | 'polar',       // y 欄が `r=` で始まると polar（結界）
+  presetId, coeffs, angle, speed,
+  useFree, freeExpr, freeError,   // エンジンへ渡す式（係数検出で整形された形）
+  yText, zText,                   // 入力欄に表示する「ユーザーが打った生のテキスト」
+  fitTemplate, fitParams, fitValues,      // 式中の数値リテラル→係数スライダー（#46）
+  zRadial: boolean,               // true: z を g(t)（術者からの距離）として読む（既定）
+  zPresetId, zCoeffs,             // zRadial=false の互換経路のみ使う
+  zUseFree, zFreeExpr, zFreeError,
+  zFitTemplate, zFitParams, zFitValues,
+}
+```
+
+> `freeExpr` と `yText` を分けているのは、**打鍵のたびに入力欄が整形されない**ようにするため。
+> エンジンへ渡すのは `freeExpr` / `zFreeExpr`、画面に出すのは `yText` / `zText`。
+
+### 見返し（プレイバック）の状態
+
+`App.tsx` が直近 8 ターンぶんの `ReplayEntry`（`{turn, animation, allies, enemies, obstacles, rField}`＝
+**解決前の盤面ごと**）を持つ。見返し中は `BattleCanvas` にそのスナップショットと
+`playback: {paused, seekMs, seekToken, rate}` を渡し、`replay` を立てて終端でも `onAnimationDone` を呼ばせない。
+`seekToken` が変わったフレームだけ時計が飛び、そのとき既に過ぎている演出は「はるか過去」に畳んで無音で通過させる
+（巻き戻しで全エフェクトが一斉に再生されるのを防ぐ）。

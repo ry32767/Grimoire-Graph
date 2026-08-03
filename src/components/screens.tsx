@@ -1,7 +1,15 @@
 // タイトル・物語・結果の全画面コンポーネント。
 import { TITLE_TEXT } from '../data/story'
 
-export function TitleScreen({ onStart, onGuide }: { onStart: () => void; onGuide: () => void }) {
+export function TitleScreen({
+  onStart,
+  onGuide,
+  onStageSelect,
+}: {
+  onStart: () => void
+  onGuide: () => void
+  onStageSelect?: () => void
+}) {
   return (
     <main className="screen-center title-screen">
       <div className="title-emblem rwin rwin-flat" aria-hidden="true">
@@ -33,6 +41,11 @@ export function TitleScreen({ onStart, onGuide }: { onStart: () => void; onGuide
           <button className="btn" onClick={onGuide}>
             先に遊び方を見る
           </button>
+          {onStageSelect && (
+            <button className="btn" onClick={onStageSelect}>
+              間を選ぶ／試しの間
+            </button>
+          )}
         </div>
         <div className="hint title-device-note">PC・スマホ対応 ／ ブラウザだけで遊べます</div>
       </div>
@@ -62,6 +75,37 @@ export function StoryScreen({
       <div className="center-actions">
         <button className="btn primary" onClick={onNext}>
           {nextLabel}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * ターン結果パネル（DC プロトタイプ v3 の showResult）。解決アニメの直後に一度だけ挟み、
+ * 「このターンで何が起きたか」を 1 行に畳んで見せる。どこを押しても閉じる。
+ */
+export function TurnResultOverlay({
+  turn,
+  title,
+  lines,
+  onDismiss,
+}: {
+  turn: number
+  title: string
+  lines: string[]
+  onDismiss: () => void
+}) {
+  return (
+    <div className="turn-result-backdrop" onClick={onDismiss} role="presentation">
+      <div className="turn-result" onClick={(e) => e.stopPropagation()}>
+        <div className="turn-result-kicker">TURN {turn} 解決</div>
+        <div className="turn-result-title">{title}</div>
+        <div className="turn-result-sub">
+          {lines.length > 0 ? lines.map((l, i) => <span key={i}>{l}</span>) : <span>見返しスライダーで追える</span>}
+        </div>
+        <button className="btn primary" onClick={onDismiss}>
+          つづける ▸
         </button>
       </div>
     </div>

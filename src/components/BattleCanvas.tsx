@@ -201,6 +201,26 @@ interface Props {
   aimAngle?: number
   /** 通過点ピック中か（#49）。true の間はドラッグでルーペを出し、離した位置を点にする */
   pickMode?: boolean
+  /**
+   * プレイバック制御（見返し用）。指定するとアニメの時計を外から止める／飛ばす／速さを変えられる。
+   * seekMs を変えるたびにその位置へ飛ぶ（同じ値のままなら再生を続ける）。
+   */
+  playback?: PlaybackControl
+  /** 毎フレームの再生位置と全体長（ms）を返す。スライダーの目盛りに使う */
+  onPlaybackTick?: (posMs: number, totalMs: number) => void
+  /** 見返しモード：終端に達しても onAnimationDone を呼ばず、その位置に留まる */
+  replay?: boolean
+}
+
+/** プレイバック（見返し）の制御値。 */
+export interface PlaybackControl {
+  paused: boolean
+  /** シーク位置（ms） */
+  seekMs: number
+  /** シーク要求の通し番号。値が変わった瞬間だけ seekMs へ飛ぶ（同じ位置への再シークも効く） */
+  seekToken: number
+  /** 再生速度（1 / 0.5 / 0.25） */
+  rate: number
 }
 
 const MS_PER_GAMESEC = 360
@@ -299,6 +319,13 @@ export default function BattleCanvas(props: Props) {
   const lastTrailRef = useRef(0)
   const doneRef = useRef(props.onAnimationDone)
   doneRef.current = props.onAnimationDone
+  // プレイバック制御は「毎フレーム読む値」なので ref で渡す（依存に入れるとアニメが作り直されるため）
+  const playbackRef = useRef(props.playback)
+  playbackRef.current = props.playback
+  const tickRef = useRef(props.onPlaybackTick)
+  tickRef.current = props.onPlaybackTick
+  const replayRef = useRef(props.replay)
+  replayRef.current = props.replay
 
   // 盤面の手動ズーム/パン（拡大縮小して見やすくする）。大アリーナ（rField 最大60）で有効。
   const [view, setView] = useState<{ zoom: number; pan: Vec2 }>({ zoom: 1, pan: { x: 0, y: 0 } })
@@ -453,6 +480,12 @@ export default function BattleCanvas(props: Props) {
     let raf = 0
     let finished = false
     const start = performance.now()
+    // 外部プレイバック用の時計。制御が無いときは実時間そのまま（従来と同じ挙動）。
+    let clock = 0
+    let prevNow = start
+    let lastSeekToken = playbackRef.current?.seekToken ?? -1
+    // シーク直後の 1 フレームだけ「すでに過ぎた演出」を発火済みとして畳む（巻き戻しでの一斉再生を防ぐ）
+    let preExpire = false
     const finish = () => {
       if (finished) return
       finished = true
@@ -460,8 +493,30 @@ export default function BattleCanvas(props: Props) {
       clearTimeout(timer)
       doneRef.current?.()
     }
+    /** 演出のラッチ時刻。preExpire 中は「はるか過去」に落として無音で通過させる。 */
+    const latchAt = (t: number) => (preExpire ? t - 1e6 : t)
     const frame = (now: number) => {
-      const elapsed = now - start
+      const dt = Math.max(0, now - prevNow)
+      prevNow = now
+      const pb = playbackRef.current
+      if (pb) {
+        if (pb.seekToken !== lastSeekToken) {
+          lastSeekToken = pb.seekToken
+          clock = pb.seekMs
+          preExpire = true
+          for (const k of Object.keys(flashStartByTarget)) delete flashStartByTarget[k]
+          for (const k of Object.keys(clashStartByIdx)) delete clashStartByIdx[Number(k)]
+          for (const k of Object.keys(dissipateStartByIdx)) delete dissipateStartByIdx[Number(k)]
+          for (const k of Object.keys(carveStartByKey)) delete carveStartByKey[k]
+          for (const k of Object.keys(deathStartById)) delete deathStartById[k]
+        } else if (!pb.paused) {
+          clock += dt * (pb.rate || 1)
+        }
+      } else {
+        clock = now - start
+      }
+      const elapsed = Math.max(0, Math.min(clock, realMs))
+      tickRef.current?.(elapsed, realMs)
       // 飛行は flightMs で進み切る。余韻（暴発）中は弾は終端で静止する。
       const e = Math.min(1, elapsed / flightMs)
       const tau = e * maxTotal
@@ -495,7 +550,7 @@ export default function BattleCanvas(props: Props) {
         if (!st) return
         for (const im of b.impacts) {
           if (st.arcLen >= im.arcLen && flashStartByTarget[im.id] === undefined) {
-            flashStartByTarget[im.id] = elapsed
+            flashStartByTarget[im.id] = latchAt(elapsed)
           }
         }
       })
@@ -503,7 +558,7 @@ export default function BattleCanvas(props: Props) {
       if (e >= 0.55) {
         for (const o of anim.orbits) {
           for (const id of o.hitEnemyIds) {
-            if (flashStartByTarget[id] === undefined) flashStartByTarget[id] = elapsed
+            if (flashStartByTarget[id] === undefined) flashStartByTarget[id] = latchAt(elapsed)
           }
         }
       }
@@ -520,7 +575,7 @@ export default function BattleCanvas(props: Props) {
         if (deathStartById[d.id] !== undefined) continue
         const flashStart = flashStartByTarget[d.id]
         if (flashStart !== undefined) deathStartById[d.id] = flashStart
-        else if (e >= 0.9) deathStartById[d.id] = elapsed
+        else if (e >= 0.9) deathStartById[d.id] = latchAt(elapsed)
       }
       // 消滅が始まった敵は生存スプライトを隠す（消滅アニメへ譲る・#46）
       const hideEnemyIds = new Set<string>(Object.keys(deathStartById))
@@ -600,7 +655,7 @@ export default function BattleCanvas(props: Props) {
               }
             }
             if (!trig && e >= 0.4) trig = true // 接触弾が無い（壁等）ときの保険
-            if (trig) dissipateStartByIdx[oi] = elapsed
+            if (trig) dissipateStartByIdx[oi] = latchAt(elapsed)
           }
           const dStart = dissipateStartByIdx[oi]
           if (dStart !== undefined) {
@@ -697,7 +752,7 @@ export default function BattleCanvas(props: Props) {
           const cv = b.carves[j]
           if (st.arcLen < cv.arcLen) continue // まだ弾が届いていない
           const key = `${i}-${j}`
-          if (carveStartByKey[key] === undefined) carveStartByKey[key] = elapsed
+          if (carveStartByKey[key] === undefined) carveStartByKey[key] = latchAt(elapsed)
           const cp = (elapsed - carveStartByKey[key]) / CARVE_BURST_MS
           if (cp >= 0 && cp < 1) drawCarveBurst(ctx, cv.pos, cv.r, cv.attr, cp, vp)
         }
@@ -711,7 +766,7 @@ export default function BattleCanvas(props: Props) {
           if (clashStartByIdx[ci] === undefined) {
             for (const st of states) {
               if (st && Math.hypot(st.pos.x - pos.x, st.pos.y - pos.y) <= CLASH_DIST) {
-                clashStartByIdx[ci] = elapsed
+                clashStartByIdx[ci] = latchAt(elapsed)
                 break
               }
             }
@@ -749,11 +804,14 @@ export default function BattleCanvas(props: Props) {
         drawDamageNumber(ctx, sp.x, sp.y - 16 - rise, text, popupColor(p.kind), size, Math.max(0, alpha))
       }
 
-      if (elapsed < realMs) raf = requestAnimationFrame(frame)
+      preExpire = false
+      // 見返しモードは終端でも回し続ける（スライダーで前後に動かせるように）
+      if (replayRef.current || elapsed < realMs) raf = requestAnimationFrame(frame)
       else finish()
     }
     raf = requestAnimationFrame(frame)
-    const timer = setTimeout(finish, realMs + 250)
+    // 保険のタイマーは通常再生のときだけ（プレイバック中は時計が止まりうるので働かせない）
+    const timer = props.playback || props.replay ? 0 : setTimeout(finish, realMs + 250)
     return () => {
       finished = true
       cancelAnimationFrame(raf)
