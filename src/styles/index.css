@@ -203,64 +203,99 @@ h3 {
   gap: 18px;
   align-items: center;
 }
+/* ---- タイトル：背景キャンバス（式が動く）＋左寄せの見出し ---- */
 .title-screen {
-  width: min(100%, 1040px);
-  min-height: 100svh;
-  max-width: 1040px;
-  display: grid;
-  grid-template-columns: minmax(260px, 0.78fr) minmax(0, 1.22fr);
-  align-content: center;
-  gap: clamp(var(--space-8), 6vw, 72px);
-  text-align: left;
-}
-.title-emblem {
-  width: min(100%, 340px);
-  aspect-ratio: 1;
-  display: grid;
-  place-items: center;
-  justify-self: end;
-  padding: var(--space-6);
-  color: var(--edge-lite);
-}
-.title-emblem svg {
+  position: relative;
   width: 100%;
-  height: auto;
-  overflow: visible;
-  filter: drop-shadow(4px 4px 0 var(--edge-dark));
+  min-height: 100svh;
+  overflow: hidden;
+  background: var(--bg);
 }
-.title-emblem path,
-.title-emblem circle {
-  fill: none;
-  vector-effect: non-scaling-stroke;
+.title-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  image-rendering: pixelated;
 }
-.emblem-orbit {
-  stroke: var(--edge-lite);
-  stroke-width: 2;
-  stroke-dasharray: 3 6;
+.title-screen .title-content {
+  position: relative;
+  z-index: 1;
+  min-height: 100svh;
+  justify-content: center;
+  gap: 0;
+  padding: 0 clamp(28px, 7vw, 92px);
+  max-width: 760px;
 }
-.emblem-axis {
-  stroke: var(--edge-lite);
-  stroke-width: 1;
-  opacity: 0.45;
+.title-rule {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: var(--space-4);
 }
-.emblem-light,
-.emblem-dark {
-  stroke-width: 4;
-  stroke-linecap: square;
+.title-rule-line {
+  width: 44px;
+  height: 2px;
+  background: var(--light);
 }
-.emblem-light { stroke: var(--light); }
-.emblem-dark { stroke: var(--dark); }
-.emblem-origin {
-  fill: var(--cursor);
-  stroke: var(--edge-dark);
-  stroke-width: 3;
+.title-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  align-items: flex-start;
+  margin-top: var(--space-6);
 }
-.emblem-formula {
-  margin-top: calc(var(--space-4) * -1);
+.title-cta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 26px;
+  cursor: pointer;
   color: var(--light-soft);
+  background: linear-gradient(180deg, #3a2f10, var(--bg-2));
+  border: 2px solid var(--light);
+  box-shadow: 4px 4px 0 var(--edge-dark);
+}
+.title-cta:active {
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0 var(--edge-dark);
+}
+.cta-label {
+  font-size: 18px;
+  letter-spacing: 4px;
+}
+.cta-arrow {
   font-family: var(--expr);
-  font-size: clamp(20px, 3vw, 28px);
-  letter-spacing: 0.08em;
+  font-size: 12px;
+  color: var(--light);
+}
+.title-sub-cta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  cursor: pointer;
+  color: var(--light-soft);
+  background: var(--bg-2);
+  border: 2px solid var(--edge-lite);
+  font-size: 13px;
+  letter-spacing: 2px;
+  white-space: nowrap;
+}
+.title-sub-cta:hover {
+  border-color: var(--cursor);
+  color: var(--cursor);
+}
+.title-sub-cta .hint {
+  font-family: var(--expr);
+  font-size: 10px;
+}
+.title-lead .el-light {
+  color: var(--light-soft);
+}
+.title-lead .el-dark {
+  color: var(--dark);
 }
 .title-content {
   display: flex;
@@ -306,28 +341,6 @@ h3 {
   font-size: 18px;
   line-height: 1.85;
   max-width: 34em;
-}
-.title-pitch {
-  margin: var(--space-3) 0 0;
-  color: var(--text-dim);
-  line-height: 1.8;
-  max-width: 38em;
-}
-.title-loop {
-  width: 100%;
-  margin-top: var(--space-6);
-  padding: var(--space-3) var(--space-4);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  border-block: 1px solid var(--edge-lite);
-  color: var(--text);
-  font-size: 13px;
-}
-.title-loop i {
-  color: var(--cursor);
-  font-style: normal;
 }
 .title-content .center-actions {
   justify-content: flex-start;
@@ -379,283 +392,38 @@ div.story-text {
 }
 
 /* =========================================================
-   バトル画面レイアウト（UI設計仕様書 §0/§2：PC＝盤面＋下部2窓の並列表示）
-   盤面（canvas）は固定高の主役として上段に、下段は
-   コマンド窓｜ステータス窓（bottom-bar）と 詠唱ウィンドウ（msg-win）を
-   同じスロットで排他表示する。戦闘ログ／ステージ情報は盤面右上・左上の
-   log-tab／info-corner として盤面の内側に重ねる（DESIGN.md §5）。
+   バトル画面のレイアウトは styles/battle.css（DC プロトタイプ v3 準拠の
+   上段レール／読み出し／盤面＋右レール／詠唱コンソール）へ移した。
+   ここには旧 2 ビュー切替（盤面⇄編集シート）・コマンド窓・ステータス窓の
+   スタイルは残さない。
    ========================================================= */
-.battle {
-  position: relative;
-  width: 100%;
-  max-width: 1180px;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 8px;
-}
-
-/* 盤面は常に正方形（縦横比 1:1 を崩さない）。幅を「横幅・画面高さ」の小さい方で
-   決め、高さは aspect-ratio で追従させる（max-height で幅を固定して潰さない）。 */
-.canvas-wrap {
-  position: relative;
-  width: min(100%, 62vh, 620px);
-  aspect-ratio: 1 / 1;
-  background: var(--bg);
-  border: 3px solid var(--panel-border);
-  box-shadow:
-    inset 0 0 0 2px var(--panel-bevel),
-    0 4px 0 rgba(0, 0, 0, 0.5);
-  margin: 0 auto;
-}
-.canvas-wrap canvas {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-
-/* ---- 盤面に重ねる隅ウィジェット（情報・ログ・敵陣営） ---- */
-.stage-widget {
-  position: absolute;
-  z-index: 5;
-}
-.info-corner {
-  top: 8px;
-  left: 8px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  max-width: min(60%, 280px);
-}
-/* 敵陣営ステータスは盤面左下（右下は盤面ズームボタン専用にして被りを防ぐ）。 */
-.enemy-corner {
-  bottom: 8px;
-  left: 8px;
-  width: min(52%, 220px);
-}
-
-/* ---- 下段：コマンド窓｜ステータス窓（PC 並列・DESIGN.md §5）。 ---- */
-.bottom-bar {
-  display: grid;
-  grid-template-columns: 210px 1fr;
-  gap: 10px;
-  width: min(100%, 860px);
-  margin-inline: auto;
-}
-.cmd-win-panel,
-.status-win-panel {
-  padding: 10px;
-}
-
-/* ---- 詠唱ウィンドウ（術式編集）。
-   狭〜中幅は盤面を上半分に残す低いボトムシート。広幅は下の media query で
-   盤面右のドックへ切り替える。どちらも盤面を暗転させない。 */
-.msg-win-panel {
-  position: fixed;
-  left: 50%;
-  bottom: env(safe-area-inset-bottom);
-  transform: translateX(-50%);
-  width: min(100%, 1180px);
-  z-index: 7;
-  padding: 12px;
-  max-height: var(--composer-sheet-height);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-/* 盤面は暗転させず、編集したまま照準を動かせる。閉じる操作は×／盤面へ戻るで明示する。 */
-.sheet-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 6;
-  background: transparent;
-  pointer-events: none;
-}
-
-/* 中幅以下ではシートの上端より上に盤面を収め、敵・予告線・z場を隠さない。 */
-@media (max-width: 1080px) {
-  .battle[data-view='edit'] .canvas-wrap {
-    width: min(100%, 50svh, 620px);
-  }
-}
-
-/* 広幅：盤面と術式を並べる。盤面を主役のまま左に、編集石板を右に固定する。 */
-@media (min-width: 1081px) {
-  .battle[data-view='edit'] {
-    min-height: 100svh;
-    justify-content: center;
-    padding-right: calc(var(--composer-dock-width) + var(--composer-gutter));
-  }
-  .battle[data-view='edit'] .canvas-wrap {
-    margin-inline: auto;
-  }
-  .msg-win-panel {
-    top: var(--space-2);
-    right: max(var(--space-2), calc((100vw - 1180px) / 2 + var(--space-2)));
-    bottom: var(--space-2);
-    left: auto;
-    width: var(--composer-dock-width);
-    max-height: none;
-    transform: none;
-  }
-}
-
-/* 盤面のメニュー（左上の情報ウィジェットに同居） */
-.menu-wrap {
-  position: relative;
-}
-.menu-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
-}
-.menu-pop {
-  position: absolute;
-  left: 0;
-  top: calc(100% + 6px);
-  z-index: 21;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px;
-  background: var(--panel-bg);
-  border: 3px solid var(--panel-border);
-  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.5);
-  min-width: 140px;
-}
-
-/* 敵公開フェーズ（UI設計仕様書 §1）：盤面下のフッター。ヒント文＋gold進行ボタン */
-.pc-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  width: min(100%, 860px);
-  margin-inline: auto;
-}
-.pc-footer .hint {
-  font-size: 13px;
-  color: var(--text-dim);
-}
-
-/* スマホ専用要素は PC では隠す（#48）。ユーティリティなので !important で確実に効かせる */
-.show-mobile {
-  display: none !important;
-}
 
 /* ===== スマホ：盤面を残して下は縦積み・コマンドは横3ボタン（UI設計仕様書 §6） ===== */
 @media (max-width: 820px) {
   .screen-center {
     padding: var(--space-8) var(--space-4) calc(var(--space-8) + env(safe-area-inset-bottom));
   }
-  .title-screen {
-    min-height: 100svh;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: var(--space-6);
-    text-align: center;
+  .title-screen .title-content {
+    padding: 0 var(--space-4);
   }
-  .title-emblem {
-    width: min(54vw, 210px);
-    justify-self: auto;
-    align-self: center;
-    padding: var(--space-4);
+  .title-actions {
+    width: 100%;
   }
-  .title-content {
-    align-items: center;
-  }
-  .title-main::after {
-    margin-inline: auto;
-  }
-  .title-lead,
-  .title-pitch {
-    text-align: left;
-  }
-  .title-lead {
-    font-size: 16px;
-    margin-top: var(--space-4);
-  }
-  .title-loop {
-    padding-inline: var(--space-2);
-    font-size: 11px;
-  }
-  .title-content .center-actions {
+  .title-cta,
+  .title-sub-cta {
     width: 100%;
     justify-content: center;
   }
-  .title-content .center-actions .btn {
-    flex: 1 1 160px;
+  .title-lead {
+    font-size: 15px;
   }
-  .show-mobile {
-    display: flex !important;
-  }
-  .battle {
-    padding: 6px;
-    gap: 6px;
-  }
-  /* スマホでも正方形を維持（max-height で幅を固定して潰さない）。幅を画面高さ側でも
-     制限したいので width の上限を下げる（高さは aspect-ratio で追従＝常に 1:1）。 */
-  .canvas-wrap {
-    width: min(100%, 52vh);
-  }
-  .info-corner,
-  .enemy-corner {
-    font-size: 11px;
-  }
-  .enemy-corner {
-    width: min(56%, 180px);
-  }
-  .log-panel {
-    width: min(78%, 220px);
-  }
-  .log {
-    max-height: 90px;
-  }
-  /* bottom-bar：ステータス窓を上、コマンドを下に縦積み（v9 のスマホ順序） */
-  .bottom-bar {
-    display: flex;
-    flex-direction: column;
-  }
-  .status-win-panel {
-    order: 1;
-  }
-  .cmd-win-panel {
-    order: 2;
-  }
-  /* コマンド窓は横3ボタンに変形（カーソル▶は隠す） */
-  .cmd-win {
-    flex-direction: row;
-  }
-  .cmd-item {
-    flex: 1;
-    flex-direction: column;
-    gap: 2px;
-    padding: 8px 4px;
-    font-size: 11px;
-    text-align: center;
-    min-height: var(--touch-target);
-  }
-  .cmd-item .cmd-cursor {
-    display: none;
-  }
-  .status-row {
-    grid-template-columns: 14px 44px 1fr 46px;
-    font-size: 11px;
-  }
-  .status-row.tappable,
+  /* タップ領域を大きく（44px 目安） */
   .preset-icon,
   .log-tab,
   .menu-toggle {
     min-height: var(--touch-target);
     min-width: var(--touch-target);
   }
-  .status-row .status-badges {
-    display: none;
-  }
-  /* タップ領域を大きく（44px 目安） */
   .btn {
     min-height: var(--touch-target);
     padding: 10px 14px;
@@ -667,9 +435,10 @@ div.story-text {
     min-height: var(--touch-target);
   }
 }
+
 /* 魔導書のページ枠：四隅にだけ金の鉤枠を残す（内側2px枠を角マスクで切り出す・#UI刷新）。
    pointer-events:none なので照準/点ピックのクリックは盤面へ素通しする。 */
-.canvas-wrap::after {
+.gm-board-inner::after {
   content: '';
   position: absolute;
   inset: 5px;
@@ -965,19 +734,6 @@ button.hp-row.tappable:hover {
   color: #8ab0ff;
   border-color: #8ab0ff;
 }
-.ally-tabs {
-  display: flex;
-  gap: 6px;
-}
-.ally-tabs .btn {
-  flex: 1;
-  font-size: 11px;
-  padding: 6px 4px;
-}
-.ally-tab.dead {
-  opacity: 0.4;
-  text-decoration: line-through;
-}
 .btn.fire-all {
   flex: 2;
   font-size: 14px;
@@ -1083,10 +839,6 @@ button.hp-row.tappable:hover {
   display: flex;
   flex-direction: column;
   gap: 4px;
-}
-.ally-tabs .back-to-stage {
-  border-color: var(--light-1);
-  color: var(--light-1);
 }
 .slider-row {
   display: flex;
@@ -1653,7 +1405,7 @@ code {
 .glyph.rwin::after,
 .preset-icon.rwin::after,
 .tool.rwin::after,
-.canvas-wrap.rwin::after {
+.gm-board-inner.rwin::after {
   content: none;
 }
 .rwin h2,
@@ -1712,138 +1464,6 @@ code {
   box-shadow: inset 0 0 0 1px var(--cursor);
 }
 
-/* ---- コマンド窓：縦リスト＋▶カーソル ---- */
-.cmd-win {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.cmd-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  min-height: 36px;
-  background: transparent;
-  border: none;
-  color: var(--text);
-  text-align: left;
-  font-family: var(--font);
-  font-size: 13px;
-  cursor: pointer;
-}
-.cmd-item .cmd-cursor {
-  flex: 0 0 auto;
-  width: 1em;
-  color: var(--cursor);
-  visibility: hidden;
-}
-.cmd-item .cmd-icon {
-  flex: 0 0 auto;
-  color: var(--edge-lite);
-}
-.cmd-item:hover {
-  color: var(--cursor);
-}
-.cmd-item.active .cmd-cursor {
-  visibility: visible;
-}
-.cmd-item.active {
-  color: var(--cursor);
-}
-.cmd-item:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-/* ---- ステータス窓：5列グリッド（✓/名前/HPバー/ラベル/数値） ---- */
-.status-win {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.status-row {
-  display: grid;
-  grid-template-columns: 16px 76px 1fr 34px 60px;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  background: transparent;
-  border: none;
-  color: var(--text);
-  text-align: left;
-  font-family: var(--font);
-  padding: 3px 4px;
-}
-.status-row.tappable {
-  cursor: pointer;
-}
-.status-row.dead {
-  opacity: 0.45;
-}
-.status-row.active .nm {
-  color: var(--light);
-}
-.status-row .nm {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.status-row .status-check {
-  text-align: center;
-}
-.status-row .status-check.ready {
-  color: var(--hp-ok);
-}
-.status-row .status-check.unset {
-  color: var(--text-dim);
-}
-.status-row .status-num {
-  font-family: var(--expr);
-  font-size: 14px;
-  text-align: right;
-}
-
-/* ---- 詠唱ウィンドウ（術式編集）：ヘッダ＋サブタブ＋アクション行 ---- */
-.msg-win {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.msg-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding-bottom: 6px;
-  border-bottom: 2px solid var(--edge-lite);
-}
-.msg-subtabs {
-  display: flex;
-  gap: 6px;
-}
-.msg-actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-}
-/* 数式の二段表示（DESIGN.md §3）：上段=整形、下段=生の式 */
-.expr-box {
-  font-family: var(--expr);
-}
-.expr-box .expr-pretty {
-  font-size: 24px;
-  color: var(--light-soft);
-}
-.expr-box .expr-raw {
-  font-size: 16px;
-  color: var(--text-dim);
-}
-.expr-editrow input {
-  font-family: var(--expr);
-  font-size: 18px;
-}
-
 /* ---- z強度ゲージの現在値・注釈行 ---- */
 .zgauge-readout {
   font-size: 12px;
@@ -1862,23 +1482,6 @@ code {
 }
 
 /* ---- 点フィット文脈バー ---- */
-.fitmode-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 10px 12px;
-}
-.fitmode-bar .fitmode-hint {
-  font-size: 12px;
-  color: var(--text-dim);
-  flex: 1 1 auto;
-}
-.fitmode-bar .fitmode-actions {
-  display: flex;
-  gap: 8px;
-}
 .pick-dot {
   position: absolute;
   width: 8px;

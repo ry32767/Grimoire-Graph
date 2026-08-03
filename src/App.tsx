@@ -41,6 +41,7 @@ import {
   zParametricPatch,
   fitSpecOf,
   yTextOf,
+  buildZAt,
   NO_FIT,
 } from './components/composer'
 import { computeReadout, type Readout } from './components/readout'
@@ -49,6 +50,9 @@ import { buildTestStage } from './components/testStage'
 import ReadoutStrip, { ReadoutStats } from './components/ReadoutStrip'
 import PlaybackBar from './components/PlaybackBar'
 import DraftPad from './components/DraftPad'
+import TopRail from './components/TopRail'
+import ZPlot from './components/ZPlot'
+import CasterCards from './components/CasterCards'
 import Endroll from './components/Endroll'
 import type { ConsoleFocus } from './components/FunctionPanel'
 import { fitToPoints, renderExpr } from './game/exprFit'
@@ -59,12 +63,8 @@ import BattleCanvas, {
   type EnemyDeath,
 } from './components/BattleCanvas'
 import { speciesOf, tierOf } from './render/species'
-import { ARCHETYPES } from './game/enemyAI'
-import Hud from './components/Hud'
 import BattleLog from './components/BattleLog'
 import FunctionPanel from './components/FunctionPanel'
-import ZFieldControls from './components/ZFieldControls'
-import CommandWindow from './components/CommandWindow'
 import Codex from './components/Codex'
 import Guide from './components/Guide'
 import { TitleScreen, StoryScreen, ResultScreen, TurnResultOverlay } from './components/screens'
@@ -210,11 +210,9 @@ interface TestPlaySnapshot {
   activeAllyId: string
   animation: ResolveAnimation | null
   pendingState: BattleState | null
-  view: 'stage' | 'edit'
   touchedAllies: Set<string>
   confirmArmed: boolean
   stageIndex: number
-  revealed: boolean
 }
 
 export default function App() {
@@ -237,10 +235,6 @@ export default function App() {
   // #46：通過点フィット。点ピック中フラグと、選んだ通過点（数学座標）
   const [fitPickActive, setFitPickActive] = useState(false)
   const [fitPoints, setFitPoints] = useState<Vec2[]>([])
-  // #54：スマホで属性 z 場を盤面（全画面）を見ながら調整するモード
-  const [zAdjustMode, setZAdjustMode] = useState(false)
-  // #48：スマホ向けの画面切替（盤面 ⇄ キャラ関数編集）。PC は CSS で常に両方表示
-  const [view, setView] = useState<'stage' | 'edit'>('stage')
   // #48：ボタンを減らすためのメニュー（遊び方/図鑑/音）開閉
   const [menuOpen, setMenuOpen] = useState(false)
   // #49：このターンで術式を設定/変更した味方ID（準備状況の✓・発射前確認）
@@ -250,10 +244,6 @@ export default function App() {
   const [codexOpen, setCodexOpen] = useState(false)
   // 戦闘ログは盤面右上の log-tab から開閉するパネル（DESIGN.md §5）。畳み開きの状態
   const [logCollapsed, setLogCollapsed] = useState(true)
-  // 敵公開フェーズ（UI設計仕様書 §1）：UI専用の表示状態。ゲームロジックの Phase は変更しない
-  // （prepareTurn は従来どおり即座に 'compose' へ進む）。ターン開始のたびに false へリセットし、
-  // 「術式を構える」で true にして作成フェーズの表示へ進める。
-  const [revealed, setRevealed] = useState(false)
   // #23：図鑑用に「遭遇した敵」を記録（セッション内・永続化しない）
   const [seenEnemies, setSeenEnemies] = useState<Set<string>>(new Set())
   const [guideOpen, setGuideOpen] = useState(false)
@@ -298,7 +288,7 @@ export default function App() {
   const [stageLabel, setStageLabel] = useState('')
   // ===== 詠唱コンソール（y/z 別入力・DC プロトタイプ v3）=====
   const [consoleFocus, setConsoleFocus] = useState<ConsoleFocus>('y')
-  const [padOpen, setPadOpen] = useState(true)
+  const [padOpen, setPadOpen] = useState(false)
   const [draftOpen, setDraftOpen] = useState(false)
   const [solving, setSolving] = useState(false)
   // ===== ターン結果パネル =====
@@ -450,9 +440,7 @@ export default function App() {
     setActiveAllyId(party[0].id)
     setAnimation(null)
     setPendingState(null)
-    setView('stage')
     setTouchedAllies(new Set())
-    setRevealed(false)
     setReplays([])
     setReplay(null)
     setTurnResult(null)
@@ -487,11 +475,9 @@ export default function App() {
       activeAllyId,
       animation,
       pendingState,
-      view,
       touchedAllies,
       confirmArmed,
       stageIndex,
-      revealed,
     }
     setTestPlayActive(true)
     setStageLabel(stage.name)
@@ -518,9 +504,7 @@ export default function App() {
     setActiveAllyId(party[0].id)
     setAnimation(null)
     setPendingState(null)
-    setView('stage')
     setTouchedAllies(new Set())
-    setRevealed(false)
     setReplays([])
     setReplay(null)
     setTurnResult(null)
@@ -559,11 +543,9 @@ export default function App() {
       setActiveAllyId(snap.activeAllyId)
       setAnimation(snap.animation)
       setPendingState(snap.pendingState)
-      setView(snap.view)
       setTouchedAllies(snap.touchedAllies)
       setConfirmArmed(snap.confirmArmed)
       setStageIndex(snap.stageIndex)
-      setRevealed(snap.revealed)
     }
     setStoryOverlay(null)
     setReplays([])
@@ -586,16 +568,6 @@ export default function App() {
     // z 場は敵の反対極を最強で当てる一定値（#21）。z(t) の自由式（定数）としてそのまま渡す
     const expr = r.line ? `${r.line.a}*x` : (r.freeExpr ?? '0')
     return makeComposer(r.angle, expr || '0', `${r.zConst}`)
-  }
-  const recommend = () => {
-    if (!battle || !activeAllyId) return
-    const ally = battle.allies.find((a) => a.id === activeAllyId)
-    if (!ally) return
-    const c = recommendFor(ally)
-    if (!c) return
-    setComposers((m) => ({ ...m, [activeAllyId]: c }))
-    markTouched(activeAllyId)
-    vibrate(12)
   }
   // #49：一括おまかせ。生存・非ひるみの全味方へ当たる術式を自動設定
   const recommendAll = () => {
@@ -624,31 +596,14 @@ export default function App() {
   const toggleFitPick = () => {
     setFitPickActive((v) => {
       const next = !v
-      if (next) {
-        setZAdjustMode(false)
-        setView('stage') // 盤面へ移動して、そのまま点を選択→フィットできる（#54）
-        vibrate(8)
-      }
+      if (next) vibrate(8)
       return next
     })
   }
-  // #54：点だけクリア（ピックは続ける）。盤面のフィットバー用
-  const clearFitPoints = () => setFitPoints([])
   const onFieldClick = (p: Vec2) => {
     if (!fitPickActive) return
     setFitPoints((prev) => [...prev, p])
     vibrate(8)
-  }
-  // #54：スマホで盤面（全画面）を見ながら z 場を調整するモードへ入る
-  const adjustZOnStage = () => {
-    setFitPickActive(false)
-    setZAdjustMode(true)
-    setView('stage')
-    vibrate(8)
-  }
-  const endZAdjust = () => {
-    setZAdjustMode(false)
-    setView('edit') // 調整を終えたら関数編集へ戻る
   }
   // #47：フィールドのクリック／ドラッグで発射方向（θ）を決める（射出＝回転のみ）
   const aimAt = (p: Vec2) => {
@@ -679,14 +634,12 @@ export default function App() {
     setFitPickActive(false)
     vibrate(14)
   }
-  // 別の味方に切り替えたらピック状態は破棄する。スマホではそのキャラの編集画面へ（#48）
+  // 別の味方に切り替えたらピック状態は破棄する
   const switchAlly = (id: string) => {
     clearFit()
-    setZAdjustMode(false)
     playSfx('select')
     vibrate(8)
     setActiveAllyId(id)
-    setView('edit')
   }
 
   const fireAll = (force = false) => {
@@ -700,8 +653,6 @@ export default function App() {
     }
     setConfirmFire(false)
     clearFit()
-    setZAdjustMode(false)
-    setView('stage') // 発射＝盤面（ステージ）画面へ（#48）
     setMenuOpen(false)
     vibrate([18, 40, 18])
     const casts: AllyCast[] = []
@@ -860,9 +811,7 @@ export default function App() {
     setBattle(prep.state)
     setCastingIds(prep.castingEnemyIds)
     setImpairedIds(prep.impairedAllyIds)
-    setView('stage') // 次ターンは盤面（ステージ）画面から始める（#48）
     setTouchedAllies(new Set()) // #49：準備状況は毎ターンリセット
-    setRevealed(false) // 敵公開（UI設計仕様書 §1）：次ターンも公開から始める
     const stillActive = prep.state.allies.find((a) => a.id === activeAllyId)
     if (!stillActive || stillActive.hp <= 0) {
       const firstAlive = prep.state.allies.find((a) => a.hp > 0)
@@ -1213,23 +1162,11 @@ export default function App() {
   if (!battle) return null
   const composing = battle.phase === 'compose' && !animation
   const activeComposer = composers[activeAllyId]
-  const activePreview = previews[activeAllyId]
   const anyCastable = battle.allies.some((a) => a.hp > 0 && !impairedIds.includes(a.id))
 
-  // 下段は1枠：文脈バー／コマンド窓＋ステータス窓／術式編集ウィンドウは排他表示（UI設計仕様書 §0）
-  const bottomSlotTaken = view === 'edit' || (composing && (fitPickActive || zAdjustMode))
-  // 敵公開フェーズ（UI設計仕様書 §1）：作成フェーズへ進む前に敵の予告を見せる。ゲームの Phase は
-  // 'compose' のまま（battle.ts は変更しない）で、表示だけを revealed フラグでゲートする。
-  const revealing = composing && !revealed
-  // 敵公開中は自分の照準・プレビューをまだ見せない（敵の予告のみに集中させる・UI設計仕様書 §1）
-  const showAimPreview = composing && revealed
-  const revealHint = battle.enemies
-    .filter((e) => e.hp > 0)
-    .map((e) => {
-      const elLabel = e.element === 'light' ? '光' : e.element === 'dark' ? '闇' : '中立'
-      return `${e.name}は「${ARCHETYPES[e.family].label}」を放つ気配 ／ 属性は${elLabel}寄りと推測される`
-    })
-    .join('　')
+  // 敵の予告（ゴースト）・自分の照準・z 場は、作成フェーズなら最初から全部見せる。
+  // 「敵公開 → 術式を構える」の 2 段ゲートは廃止（読み出しストリップが役目を引き継ぐ）。
+  const showAimPreview = composing
 
   // ===== 撃つ前に読める値（DC プロトタイプ v3 の読み出し）=====
   // 射線上に何があるか → t=r での z・強度・速度・相性 → 当たれば何点、までを 1 行に畳む。
@@ -1285,343 +1222,326 @@ export default function App() {
   const replayEntry = replay ? (replays.find((r) => r.turn === replay.turn) ?? null) : null
   const canReplay = composing && replays.length > 0
 
-  return (
-    <div className="app">
-      <div className="battle" data-view={view}>
-        {/* 上部読み出しストリップ：式エラー／暴発予告／命中予測／結界の立ちはだかり */}
-        {activeReadout && showAimPreview && <ReadoutStrip readout={activeReadout} />}
-        {/* 盤面：固定高の主役。ログ・敵陣営・ステージ情報はこの内側に重ねる（DESIGN.md §5） */}
-        <div className="canvas-wrap rwin arena">
-          {replayEntry && replay ? (
-            <BattleCanvas
-              key={`replay-${replay.turn}`}
-              allies={replayEntry.allies}
-              enemies={replayEntry.enemies}
-              obstacles={replayEntry.obstacles}
-              rField={replayEntry.rField}
-              activeAllyId={null}
-              animation={replayEntry.animation}
-              replay
-              playback={{
-                paused: replay.paused,
-                seekMs: replay.seekMs,
-                seekToken: replay.seekToken,
-                rate: replay.rate,
-              }}
-              onPlaybackTick={(posMs, totalMs) =>
-                setReplay((r) =>
-                  !r || (Math.abs(r.posMs - posMs) < 24 && r.totalMs === totalMs)
-                    ? r
-                    : { ...r, posMs, totalMs },
-                )
-              }
-            />
-          ) : (
-          <BattleCanvas
-            key="live"
-            allies={battle.allies}
-            enemies={battle.enemies}
-            obstacles={battle.obstacles}
-            rField={battle.rField}
-            activeAllyId={showAimPreview ? activeAllyId : null}
-            playerPaths={showAimPreview ? playerPaths : undefined}
-            misfirePoints={showAimPreview ? misfirePoints : undefined}
-            zField={showAimPreview ? activeZField ?? undefined : undefined}
-            showZField={showAimPreview}
-            standingOrbits={composing ? standingOrbits : undefined}
-            ghostPaths={composing ? ghostPaths : undefined}
-            ghostMisfires={composing ? ghostMisfires : undefined}
-            anomaly={anomalyLevel(instability)}
-            misfireBand={varianceOf(instability) > 0 ? misfireRadiusBand(instability) : undefined}
-            doom={collapseProximity(instability)}
-            collapse={collapsePlaying}
-            onCollapseDone={() => {
-              setCollapsePlaying(false)
-              playSfx('gameover')
-              // テストプレイ中（#67 §7）は結果画面を出さず、そのままエディタへ戻る
-              if (testPlayActive) endTestPlay()
-              else setScreen('gameover')
-            }}
-            animation={animation}
-            onAnimationDone={onAnimationDone}
-            fitPoints={showAimPreview ? fitPoints : undefined}
-            onFieldClick={showAimPreview && fitPickActive ? onFieldClick : undefined}
-            pickMode={showAimPreview && fitPickActive}
-            onAim={showAimPreview && !fitPickActive && activeComposer?.mode === 'rotate' ? aimAt : undefined}
-            aimAngle={showAimPreview && activeComposer?.mode === 'rotate' ? activeComposer.angle : undefined}
-          />
-          )}
-
-        {/* 左上：ステージ情報＋メニュー */}
-        <div className="stage-widget info-corner">
-          <div className="phase-bar rwin rwin-flat">
-            <span>
-              {testPlayActive && (
-                <span className="boss-tag">{testPlayReturn === 'stageSelect' ? '試しの間' : 'テストプレイ'}</span>
-              )}
-              {stageLabel || STAGES[battle.stageIndex].name}
-              {!testPlayActive && STAGES[battle.stageIndex].boss && <span className="boss-tag">BOSS</span>}
-            </span>
-            <span className="turn">
-              ターン {battle.turn}・{revealing ? '敵公開' : composing ? '作成フェーズ' : '解決フェーズ'}
-            </span>
-          </div>
-          <div className="menu-wrap">
+  const activeZAt = activeComposer ? buildZAt(activeComposer) : null
+  const railMenu = (
+    <div className="menu-wrap">
+      <button
+        className="btn small menu-toggle"
+        aria-haspopup="true"
+        aria-expanded={menuOpen}
+        aria-label="メニュー"
+        onClick={() => setMenuOpen((o) => !o)}
+      >
+        <span aria-hidden="true">≡</span>
+      </button>
+      {menuOpen && (
+        <>
+          <div className="menu-backdrop" onClick={() => setMenuOpen(false)} />
+          <div className="menu-pop">
             <button
-              className="btn small menu-toggle"
-              aria-haspopup="true"
-              aria-expanded={menuOpen}
-              onClick={() => setMenuOpen((o) => !o)}
+              className={`btn small sound-toggle${muted ? ' muted' : ''}`}
+              onClick={() => {
+                ensureAudio()
+                setMutedState(toggleMuted())
+              }}
             >
-              <span aria-hidden="true">≡</span> メニュー
+              {muted ? '音オフ' : '音オン'}
             </button>
-            {menuOpen && (
-              <>
-                <div className="menu-backdrop" onClick={() => setMenuOpen(false)} />
-                <div className="menu-pop">
-                  <button className="btn small" onClick={() => { setGuideOpen(true); setMenuOpen(false) }}>遊び方</button>
-                  <button className="btn small" onClick={() => { setCodexOpen(true); setMenuOpen(false) }}>図鑑</button>
-                  <button
-                    className={`btn small sound-toggle${muted ? ' muted' : ''}`}
-                    onClick={() => { ensureAudio(); setMutedState(toggleMuted()) }}
-                  >
-                    {muted ? '音オフ' : '音オン'}
-                  </button>
-                  {testPlayActive && (
-                    <button className="btn small" onClick={() => { setMenuOpen(false); endTestPlay() }}>
-                      <span aria-hidden="true">■</span>{' '}
-                      {testPlayReturn === 'stageSelect' ? '試しの間をやめる' : 'テストプレイ中断 → エディタへ'}
-                    </button>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* 右上：戦闘ログ（log-tab は全フェーズ常設・DESIGN.md §5） */}
-        <BattleLog log={battle.log} collapsed={logCollapsed} onToggle={() => setLogCollapsed((v) => !v)} />
-
-        {/* 右下：敵陣営（盤面内側の小ウィジェット） */}
-        <div className="stage-widget enemy-corner">
-          <Hud side="enemy" enemies={battle.enemies} />
-        </div>
-      </div>
-
-        {/* 見返し（プレイバック）：解決済みのターンをスクラブして経路・命中・削れを追う */}
-        {canReplay &&
-          (replay ? (
-            <PlaybackBar
-              turns={replays.map((r) => r.turn)}
-              currentTurn={replay.turn}
-              onSelectTurn={(t) =>
-                setReplay({ turn: t, paused: false, seekMs: 0, seekToken: 0, rate: 1, posMs: 0, totalMs: 1 })
-              }
-              posMs={replay.posMs}
-              totalMs={replay.totalMs}
-              paused={replay.paused}
-              rate={replay.rate}
-              onTogglePlay={() =>
-                setReplay((r) => {
-                  if (!r) return r
-                  // 終端で再生を押したら頭から流し直す
-                  const restart = r.paused && r.posMs >= r.totalMs - 16
-                  return restart
-                    ? { ...r, paused: false, seekMs: 0, seekToken: r.seekToken + 1, posMs: 0 }
-                    : { ...r, paused: !r.paused }
-                })
-              }
-              onSeek={(ms) =>
-                setReplay((r) =>
-                  r ? { ...r, paused: true, seekMs: ms, seekToken: r.seekToken + 1, posMs: ms } : r,
-                )
-              }
-              onStep={(d) =>
-                setReplay((r) => {
-                  if (!r) return r
-                  const ms = Math.max(0, Math.min(r.totalMs, r.posMs + d))
-                  return { ...r, paused: true, seekMs: ms, seekToken: r.seekToken + 1, posMs: ms }
-                })
-              }
-              onCycleRate={() =>
-                setReplay((r) => (r ? { ...r, rate: r.rate === 1 ? 0.5 : r.rate === 0.5 ? 0.25 : 1 } : r))
-              }
-              onClose={() => setReplay(null)}
-            />
-          ) : (
-            <div className="replay-open">
+            <button
+              className="btn small"
+              onClick={() => {
+                setMenuOpen(false)
+                setScreen('stageSelect')
+              }}
+            >
+              間を選ぶ（中断）
+            </button>
+            {testPlayActive && (
               <button
-                type="button"
                 className="btn small"
                 onClick={() => {
-                  const last = replays[replays.length - 1]
-                  setReplay({
-                    turn: last.turn,
-                    paused: false,
-                    seekMs: 0,
-                    seekToken: 0,
-                    rate: 1,
-                    posMs: 0,
-                    totalMs: 1,
-                  })
+                  setMenuOpen(false)
+                  endTestPlay()
                 }}
               >
-                ⏮ 前のターンを見返す
+                <span aria-hidden="true">■</span>{' '}
+                {testPlayReturn === 'stageSelect' ? '試しの間をやめる' : 'テストプレイ中断 → エディタへ'}
               </button>
-            </div>
-          ))}
-
-        {revealing ? (
-          /* 敵公開フェーズ（UI設計仕様書 §1）：盤面固定・確認のみ。gold で作成フェーズへ */
-          <div className="rwin pc-footer">
-            <span className="hint">{revealHint || '敵の気配を探っている…'}</span>
-            <button type="button" className="btn-flat gold" onClick={() => setRevealed(true)}>
-              術式を構える ▸
-            </button>
-          </div>
-        ) : (
-          <>
-            {/* 下段：通過点フィット／z調整の文脈バー、または コマンド窓｜ステータス窓 */}
-            {composing && fitPickActive && (
-              <div className="rwin fitmode-bar">
-                <div className="fitmode-hint">
-                  通したい点を<strong>盤面にタップ</strong>（{fitPoints.length}点選択中） → フィットで曲線を合わせる。
-                </div>
-                <div className="fitmode-actions">
-                  <button className="btn" disabled={fitPoints.length < 1} onClick={clearFitPoints}>
-                    クリア
-                  </button>
-                  <button className="btn" onClick={() => setFitPickActive(false)}>
-                    やめる
-                  </button>
-                  <button className="btn primary gold" disabled={fitPoints.length < 1} onClick={runFit}>
-                    フィット（{fitPoints.length}）
-                  </button>
-                </div>
-              </div>
             )}
-            {composing && zAdjustMode && activeComposer && (
-              <div className="rwin z-bar">
-                <div className="section-title">属性場 z = g(t)（場を見ながら調整）</div>
-                <ZFieldControls
-                  composer={activeComposer}
-                  onChange={onChange}
-                  rDistance={activeReadout?.ray.d ?? 0}
+          </div>
+        </>
+      )}
+    </div>
+  )
+
+  return (
+    <div className="app">
+      <div className="gm-shell">
+        {/* ===== 上段レール：間・進行・ターン・味方/敵の合計HP・膜 ===== */}
+        <TopRail
+          stageLabel={stageLabel || STAGES[battle.stageIndex].name}
+          boss={!testPlayActive && STAGES[battle.stageIndex].boss}
+          rooms={STAGES.map((st) => st.name)}
+          roomIndex={testPlayActive ? -1 : battle.stageIndex}
+          sideRoomLabel={
+            testPlayActive ? (testPlayReturn === 'stageSelect' ? '試しの間' : 'テストプレイ') : undefined
+          }
+          turn={battle.turn}
+          allies={battle.allies}
+          enemies={battle.enemies}
+          instability={{ count: instability, visible: collapseSeen }}
+          menu={railMenu}
+        />
+
+        {/* ===== 読み出しストリップ：いま何が読めているか ===== */}
+        {composing && activeReadout ? (
+          <ReadoutStrip readout={activeReadout} />
+        ) : (
+          <div className="readout-strip tone-dim">
+            <span className="readout-title">解決中…</span>
+            <span className="readout-sub">魔法が進行・解決しています。</span>
+          </div>
+        )}
+
+        {/* ===== 本体：盤面 ｜ 右レール ===== */}
+        <div className="gm-body">
+          <div className="gm-board">
+            <div className="gm-board-inner rwin arena">
+              {replayEntry && replay ? (
+                <BattleCanvas
+                  key={`replay-${replay.turn}`}
+                  allies={replayEntry.allies}
+                  enemies={replayEntry.enemies}
+                  obstacles={replayEntry.obstacles}
+                  rField={replayEntry.rField}
+                  activeAllyId={null}
+                  animation={replayEntry.animation}
+                  replay
+                  playback={{
+                    paused: replay.paused,
+                    seekMs: replay.seekMs,
+                    seekToken: replay.seekToken,
+                    rate: replay.rate,
+                  }}
+                  onPlaybackTick={(posMs, totalMs) =>
+                    setReplay((r) =>
+                      !r || (Math.abs(r.posMs - posMs) < 24 && r.totalMs === totalMs)
+                        ? r
+                        : { ...r, posMs, totalMs },
+                    )
+                  }
                 />
-                <button className="btn primary" onClick={endZAdjust}>
-                  ✓ 調整を終える
+              ) : (
+                <BattleCanvas
+                  key="live"
+                  allies={battle.allies}
+                  enemies={battle.enemies}
+                  obstacles={battle.obstacles}
+                  rField={battle.rField}
+                  activeAllyId={showAimPreview ? activeAllyId : null}
+                  playerPaths={showAimPreview ? playerPaths : undefined}
+                  misfirePoints={showAimPreview ? misfirePoints : undefined}
+                  zField={showAimPreview ? activeZField ?? undefined : undefined}
+                  showZField={showAimPreview}
+                  standingOrbits={composing ? standingOrbits : undefined}
+                  ghostPaths={composing ? ghostPaths : undefined}
+                  ghostMisfires={composing ? ghostMisfires : undefined}
+                  anomaly={anomalyLevel(instability)}
+                  misfireBand={varianceOf(instability) > 0 ? misfireRadiusBand(instability) : undefined}
+                  doom={collapseProximity(instability)}
+                  collapse={collapsePlaying}
+                  onCollapseDone={() => {
+                    setCollapsePlaying(false)
+                    playSfx('gameover')
+                    // テストプレイ中（#67 §7）は結果画面を出さず、そのままエディタへ戻る
+                    if (testPlayActive) endTestPlay()
+                    else setScreen('gameover')
+                  }}
+                  animation={animation}
+                  onAnimationDone={onAnimationDone}
+                  fitPoints={showAimPreview ? fitPoints : undefined}
+                  onFieldClick={showAimPreview && fitPickActive ? onFieldClick : undefined}
+                  pickMode={showAimPreview && fitPickActive}
+                  onAim={showAimPreview && !fitPickActive && activeComposer?.mode === 'rotate' ? aimAt : undefined}
+                  aimAngle={showAimPreview && activeComposer?.mode === 'rotate' ? activeComposer.angle : undefined}
+                  aimEnemyId={activeReadout?.ray.enemyId ?? null}
+                />
+              )}
+
+              {/* 盤面に重ねる読み（θ と凡例）。ドラッグで射線が回ることをここで伝える */}
+              {composing && activeComposer && (
+                <div className="board-aim">
+                  θ <b>{Math.round((activeComposer.angle * 180) / Math.PI)}°</b>
+                  <span className="sep">|</span>
+                  {fitPickActive ? '盤面をタップで通過点' : '盤面をドラッグで回転'}
+                </div>
+              )}
+              <div className="board-legend">
+                同心円 = z(t)・半径が飛行距離 t
+                <br />
+                <span className="el-light">金＝光</span> / <span className="el-dark">紫＝闇</span> /
+                無色＝中立・濃さ＝強度
+              </div>
+
+              {/* 戦闘ログ（盤面右上の常設タブ） */}
+              <BattleLog log={battle.log} collapsed={logCollapsed} onToggle={() => setLogCollapsed((v) => !v)} />
+
+              {/* 見返し（プレイバック）：解決済みターンをスクラブして経路・命中・削れを追う */}
+              {canReplay &&
+                (replay ? (
+                  <PlaybackBar
+                    turns={replays.map((r) => r.turn)}
+                    currentTurn={replay.turn}
+                    onSelectTurn={(t) =>
+                      setReplay({ turn: t, paused: false, seekMs: 0, seekToken: 0, rate: 1, posMs: 0, totalMs: 1 })
+                    }
+                    posMs={replay.posMs}
+                    totalMs={replay.totalMs}
+                    paused={replay.paused}
+                    rate={replay.rate}
+                    onTogglePlay={() =>
+                      setReplay((r) => {
+                        if (!r) return r
+                        // 終端で再生を押したら頭から流し直す
+                        const restart = r.paused && r.posMs >= r.totalMs - 16
+                        return restart
+                          ? { ...r, paused: false, seekMs: 0, seekToken: r.seekToken + 1, posMs: 0 }
+                          : { ...r, paused: !r.paused }
+                      })
+                    }
+                    onSeek={(ms) =>
+                      setReplay((r) =>
+                        r ? { ...r, paused: true, seekMs: ms, seekToken: r.seekToken + 1, posMs: ms } : r,
+                      )
+                    }
+                    onStep={(d) =>
+                      setReplay((r) => {
+                        if (!r) return r
+                        const ms = Math.max(0, Math.min(r.totalMs, r.posMs + d))
+                        return { ...r, paused: true, seekMs: ms, seekToken: r.seekToken + 1, posMs: ms }
+                      })
+                    }
+                    onCycleRate={() =>
+                      setReplay((r) => (r ? { ...r, rate: r.rate === 1 ? 0.5 : r.rate === 0.5 ? 0.25 : 1 } : r))
+                    }
+                    onClose={() => setReplay(null)}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className="btn small replay-open"
+                    onClick={() => {
+                      const last = replays[replays.length - 1]
+                      setReplay({
+                        turn: last.turn,
+                        paused: false,
+                        seekMs: 0,
+                        seekToken: 0,
+                        rate: 1,
+                        posMs: 0,
+                        totalMs: 1,
+                      })
+                    }}
+                  >
+                    ⏮ 見返す
+                  </button>
+                ))}
+            </div>
+          </div>
+
+          {/* ===== 右レール：読み取り値・z(t)・術者 ===== */}
+          <div className="gm-rail">
+            {activeReadout && <ReadoutStats readout={activeReadout} />}
+            <ZPlot zAt={activeZAt} rDistance={activeReadout?.ray.d ?? 0} pole={activeReadout?.pole ?? null} />
+            <CasterCards
+              allies={battle.allies}
+              composers={composers}
+              readouts={readouts}
+              activeAllyId={activeAllyId}
+              impairedIds={impairedIds}
+              touchedIds={[...touchedAllies]}
+              onSelect={switchAlly}
+            />
+          </div>
+        </div>
+
+        {/* ===== 詠唱コンソール ＋ 発射列 ===== */}
+        <div className="gm-console">
+          {composing && activeComposer && activeReadout ? (
+            <>
+              <FunctionPanel
+                allyName={battle.allies.find((a) => a.id === activeAllyId)?.name ?? ''}
+                composer={activeComposer}
+                onChange={onChange}
+                readout={activeReadout}
+                focus={consoleFocus}
+                onFocusChange={setConsoleFocus}
+                onSolveAngle={solveAngleNow}
+                solving={solving}
+                draftOpen={draftOpen}
+                onToggleDraft={() => setDraftOpen((o) => !o)}
+                padOpen={padOpen}
+                fitPickActive={fitPickActive}
+                fitPointCount={fitPoints.length}
+                onToggleFitPick={toggleFitPick}
+                onRunFit={runFit}
+                onClearFitPoints={clearFit}
+              />
+              <div className="fire-col">
+                <div className="fire-tools">
+                  <button type="button" className="btn small" onClick={() => setPadOpen((o) => !o)}>
+                    記号盤 {padOpen ? '▾' : '▸'}
+                  </button>
+                  <button type="button" className="btn small" aria-label="手引き" onClick={() => setGuideOpen(true)}>
+                    ?
+                  </button>
+                  <button type="button" className="btn small" onClick={() => setCodexOpen(true)}>
+                    図鑑
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  className="btn small"
+                  onClick={recommendAll}
+                  disabled={!anyCastable}
+                  title="全員に無難に当たる術式を割り当てる"
+                >
+                  全員おまかせ
+                </button>
+                <button
+                  type="button"
+                  className={`fire-btn${confirmArmed ? ' danger' : ''}`}
+                  onClick={() => fireAll()}
+                >
+                  <span className="fire-label">
+                    {confirmArmed ? '⚠ それでも発射' : anyCastable ? '詠唱' : '次のターンへ'}
+                  </span>
+                  <span className="fire-sub">
+                    {confirmArmed ? '崩壊の危険' : anyCastable ? '3人 同時発射 ▸▸' : '▸▸'}
+                  </span>
                 </button>
               </div>
-            )}
-            {!bottomSlotTaken && (
-              <div className="bottom-bar">
-                <div className="rwin cmd-win-panel">
-                  <CommandWindow
-                    showOmakase={composing && anyCastable}
-                    onOmakase={recommendAll}
-                    showComposer={composing}
-                    onOpenComposer={() => setView('edit')}
-                    fireLabel={confirmArmed ? '⚠ それでも発射' : anyCastable ? '詠唱 ― 全員発射' : '次のターンへ'}
-                    fireDanger={confirmArmed}
-                    onFire={() => fireAll()}
-                  />
-                </div>
-                <div className="rwin status-win-panel">
-                  <Hud
-                    side="ally"
-                    allies={battle.allies}
-                    activeAllyId={activeAllyId}
-                    instability={{ count: instability, visible: collapseSeen }}
-                    onSelectAlly={composing ? switchAlly : undefined}
-                    impairedIds={impairedIds}
-                    touchedIds={[...touchedAllies]}
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* 詠唱ウィンドウ：味方タップ／「術式を組む」で開く。bottom-bar と排他表示（DESIGN.md §5） */}
-            {view === 'edit' && <div className="sheet-backdrop" aria-hidden="true" />}
-            {view === 'edit' && (
-              <div className="rwin msg-win-panel msg-win">
-                {composing && activeComposer && activePreview && activeReadout ? (
-              <>
-                <div className="ally-tabs">
-                  <button className="btn small back-to-stage" onClick={() => setView('stage')} aria-label="盤面へ戻る">
-                    ✕
-                  </button>
-                  {battle.allies.map((a) => {
-                    const impaired = impairedIds.includes(a.id)
-                    const dead = a.hp <= 0
-                    return (
-                      <button
-                        key={a.id}
-                        className={`btn small ally-tab${a.id === activeAllyId ? ' selected' : ''}${dead ? ' dead' : ''}`}
-                        disabled={dead}
-                        onClick={() => switchAlly(a.id)}
-                      >
-                        {a.name}
-                        {impaired && !dead ? '（ひるみ）' : ''}
-                      </button>
-                    )
-                  })}
-                </div>
-                <ReadoutStats readout={activeReadout} />
-                <FunctionPanel
-                  allyName={battle.allies.find((a) => a.id === activeAllyId)?.name ?? ''}
-                  composer={activeComposer}
-                  onChange={onChange}
-                  readout={activeReadout}
-                  focus={consoleFocus}
-                  onFocusChange={setConsoleFocus}
-                  onSolveAngle={solveAngleNow}
-                  solving={solving}
-                  draftOpen={draftOpen}
-                  onToggleDraft={() => setDraftOpen((o) => !o)}
-                  onOpenCodex={() => setCodexOpen(true)}
-                  padOpen={padOpen}
-                  onTogglePad={() => setPadOpen((o) => !o)}
-                  fitPickActive={fitPickActive}
-                  fitPointCount={fitPoints.length}
-                  onToggleFitPick={toggleFitPick}
-                  onRunFit={runFit}
-                  onClearFitPoints={clearFit}
-                />
-                {draftOpen && (
-                  <DraftPad
-                    composer={activeComposer}
-                    onChange={onChange}
-                    rDistance={activeReadout.ray.d}
-                    focus={consoleFocus}
-                    onClose={() => setDraftOpen(false)}
-                  />
-                )}
-                <div className="action-row">
-                  <button className="btn small" onClick={recommend} title="無難に当たるおすすめ術式">
-                    おまかせ
-                  </button>
-                  <button className="btn small" onClick={adjustZOnStage}>
-                    盤面で z を調整
-                  </button>
-                  <button className={`btn primary fire-all${confirmArmed ? ' danger' : ''}`} onClick={() => fireAll()}>
-                    {confirmArmed ? '⚠ それでも発射' : anyCastable ? '詠唱 ― 全員発射' : '次のターンへ'}
-                  </button>
-                  <button className="btn small" onClick={() => setView('stage')}>
-                    盤面へ戻る
-                  </button>
-                </div>
-              </>
-            ) : (
-              <div>
-                <div className="section-title">解決中…</div>
-                <p className="hint">魔法が進行・解決しています。</p>
-              </div>
-            )}
-              </div>
-            )}
-          </>
-        )}
+            </>
+          ) : (
+            <div className="console-resolving">魔法が進行・解決しています…</div>
+          )}
+        </div>
       </div>
+
+      {/* 作図台：関数空間の方眼紙。盤面の上に重ねる */}
+      {draftOpen && composing && activeComposer && activeReadout && (
+        <div className="draft-overlay" onClick={() => setDraftOpen(false)} role="presentation">
+          <div onClick={(e) => e.stopPropagation()}>
+            <DraftPad
+              composer={activeComposer}
+              onChange={onChange}
+              rDistance={activeReadout.ray.d}
+              focus={consoleFocus}
+              onClose={() => setDraftOpen(false)}
+            />
+          </div>
+        </div>
+      )}
 
       {confirmFire && (
         <div className="overlay" onClick={() => setConfirmFire(false)}>

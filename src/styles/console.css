@@ -101,7 +101,7 @@
 .spell-console {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 .console-head {
@@ -319,13 +319,16 @@
   grid-template-columns: repeat(11, 1fr);
   gap: 3px;
 }
+.gm-console .keypad {
+  max-width: 720px;
+}
 .pad-key {
   background: var(--bg-2);
   border: 2px solid var(--edge-lite);
   color: var(--text);
   font-family: var(--expr);
   font-size: 13px;
-  padding: 6px 0;
+  padding: 4px 0;
   box-shadow: 0 2px 0 var(--edge-dark);
   cursor: pointer;
 }

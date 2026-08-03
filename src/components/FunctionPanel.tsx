@@ -2,7 +2,6 @@
 // y（軌道）と z（属性場）を別入力として並べ、いま編集している側のコントロールだけを出す。
 // y 欄は `r=` で始めると結界（極座標 r=f(θ)）になる。z 欄の変数は t＝術者からの距離。
 import { useRef } from 'react'
-import { FIELD } from '../data/constants'
 import { type ComposerState, setCoeffPatch, yTextPatch, zTextPatch, yTextOf } from './composer'
 import type { Readout } from './readout'
 import { elementReadout } from './readout'
@@ -23,10 +22,8 @@ interface Props {
   /** 作図台（点入力→多項式フィット）の開閉 */
   onToggleDraft: () => void
   draftOpen: boolean
-  onOpenCodex: () => void
-  /** 記号盤（キーパッド）の開閉 */
+  /** 記号盤（キーパッド）を出すか（開閉ボタンは発射列にある） */
   padOpen: boolean
-  onTogglePad: () => void
   /** 盤面の通過点フィット（#46・射出のみ） */
   fitPickActive?: boolean
   fitPointCount?: number
@@ -296,16 +293,7 @@ export default function FunctionPanel(props: Props) {
         </div>
       )}
 
-      {/* 記号盤 */}
-      <div className="console-tools">
-        <button type="button" className="btn small" onClick={props.onTogglePad}>
-          記号盤 {props.padOpen ? '▾' : '▸'}
-        </button>
-        <button type="button" className="btn small" onClick={props.onOpenCodex}>
-          図鑑
-        </button>
-        <span className="hint">初速は固定（{FIELD.fixedSpeed}）。|z|={FIELD.zPeak} で強度最大・ただし最大減速。</span>
-      </div>
+      {/* 記号盤（開閉は発射列の「記号盤」ボタン） */}
       {props.padOpen && (
         <div className="keypad">
           {PAD_KEYS.map((t, i) => (

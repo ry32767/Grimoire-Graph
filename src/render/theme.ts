@@ -18,6 +18,7 @@ export const COLORS = {
   enemyDark: '#9c3650',
   ghost: TOKENS.dark,
   obstacle: '#8a7bbf',
+  hpOk: TOKENS.hpOk,
 } as const
 
 /** 属性の代表色（弾・テキスト用） */

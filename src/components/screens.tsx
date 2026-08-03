@@ -1,5 +1,37 @@
 // タイトル・物語・結果の全画面コンポーネント。
+import { useEffect, useRef } from 'react'
 import { TITLE_TEXT } from '../data/story'
+import { drawTitleScene } from '../render/titleScreen'
+import { TUTORIAL_PAGES } from '../render/tutorialFigures'
+
+/** タイトル背景：式から絵が出ていることを、そのまま動かして見せる（DC プロトタイプ v3）。 */
+function TitleBackdrop() {
+  const ref = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    const cv = ref.current
+    if (!cv) return
+    const ctx = cv.getContext('2d')
+    if (!ctx) return
+    let raf = 0
+    const loop = (now: number) => {
+      const dpr = Math.min(2, window.devicePixelRatio || 1)
+      const w = cv.clientWidth
+      const h = cv.clientHeight
+      const pw = Math.round(w * dpr)
+      const ph = Math.round(h * dpr)
+      if (cv.width !== pw || cv.height !== ph) {
+        cv.width = pw
+        cv.height = ph
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      drawTitleScene(ctx, w, h, now)
+      raf = requestAnimationFrame(loop)
+    }
+    raf = requestAnimationFrame(loop)
+    return () => cancelAnimationFrame(raf)
+  }, [])
+  return <canvas ref={ref} className="title-canvas" aria-hidden="true" />
+}
 
 export function TitleScreen({
   onStart,
@@ -11,43 +43,42 @@ export function TitleScreen({
   onStageSelect?: () => void
 }) {
   return (
-    <main className="screen-center title-screen">
-      <div className="title-emblem rwin rwin-flat" aria-hidden="true">
-        <svg viewBox="0 0 180 180" role="presentation">
-          <circle className="emblem-orbit" cx="90" cy="90" r="62" />
-          <path className="emblem-axis" d="M24 90h132M90 24v132" />
-          <path className="emblem-light" d="M26 116C52 116 56 52 89 52s38 64 65 64" />
-          <path className="emblem-dark" d="M26 70c24 0 34 42 61 42s39-42 67-42" />
-          <rect className="emblem-origin" x="85" y="85" width="10" height="10" />
-        </svg>
-        <div className="emblem-formula">z = f(x, y)</div>
-      </div>
-
+    <main className="title-screen">
+      <TitleBackdrop />
       <div className="title-content">
-        <div className="title-kicker">FUNCTION BATTLE RPG</div>
-        <h1 className="title-main">{TITLE_TEXT.title}</h1>
-        <div className="title-sub">{TITLE_TEXT.subtitle}</div>
-        <p className="title-lead">{TITLE_TEXT.lead}</p>
-        <p className="title-pitch">
-          敵の術式を読み、関数を描き、3人の魔導士で同時に撃ち返す。数式がそのまま軌道と属性になる、約15分の冒険。
-        </p>
-        <div className="title-loop" aria-label="ゲームの流れ">
-          <span>敵の式を読む</span><i aria-hidden="true">▸</i><span>関数を描く</span><i aria-hidden="true">▸</i><span>同時発射</span>
+        <div className="title-kicker">f(x) · z(t) · RPG</div>
+        <h1 className="title-main">
+          GRIMOIRE
+          <br />
+          GRAPH
+        </h1>
+        <div className="title-rule">
+          <span className="title-rule-line" aria-hidden="true" />
+          <span className="title-sub">FUNCTION SPELLCRAFT · TURN-BASED</span>
         </div>
-        <div className="center-actions">
-          <button className="btn primary" onClick={onStart}>
-            魔導書をひらく
+        <p className="title-lead">
+          式を書いて撃つ。<span className="el-light">y = f(x)</span> が弾の道、
+          <span className="el-dark">z = g(t)</span> が纏う属性。
+          <br />
+          属性場は完全に読める。当たるかどうかは、撃つまで分からない。
+        </p>
+        <div className="title-actions">
+          <button className="title-cta" onClick={onStart}>
+            <span className="cta-label">詠唱を始める</span>
+            <span className="cta-arrow">▸▸</span>
           </button>
-          <button className="btn" onClick={onGuide}>
-            先に遊び方を見る
+          <button className="title-sub-cta" onClick={onGuide}>
+            <span>はじめての人へ</span>
+            <span className="hint">図解 {TUTORIAL_PAGES.length} 枚</span>
           </button>
           {onStageSelect && (
-            <button className="btn" onClick={onStageSelect}>
-              間を選ぶ／試しの間
+            <button className="title-sub-cta" onClick={onStageSelect}>
+              <span>間を選ぶ／試しの間</span>
+              <span className="hint">練習・エンドロール</span>
             </button>
           )}
         </div>
-        <div className="hint title-device-note">PC・スマホ対応 ／ ブラウザだけで遊べます</div>
+        <div className="hint title-device-note">{TITLE_TEXT.subtitle} ／ PC・スマホ対応</div>
       </div>
     </main>
   )

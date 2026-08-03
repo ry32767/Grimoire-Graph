@@ -210,6 +210,8 @@ interface Props {
   onPlaybackTick?: (posMs: number, totalMs: number) => void
   /** 見返しモード：終端に達しても onAnimationDone を呼ばず、その位置に留まる */
   replay?: boolean
+  /** 射線上の敵ID（頭上の HP バーを金色で強調する） */
+  aimEnemyId?: string | null
 }
 
 /** プレイバック（見返し）の制御値。 */
@@ -383,6 +385,8 @@ export default function BattleCanvas(props: Props) {
           const a = props.allies.find((al) => al.id === props.activeAllyId)
           if (a && a.hp > 0) drawAimArrow(ctx, a.pos, props.aimAngle, vp)
         }
+        // 敵ごとの残り HP は頭の上（盤面の隅にウィンドウを置かない）
+        drawEnemyHpBars(ctx, props.enemies, vp, undefined, props.aimEnemyId)
         // 通過点フィットの選択点を✛で表示（#46）
         drawFitPoints(ctx, props.fitPoints, vp)
         // 点ピック中は指の上に拡大鏡（ルーペ）を出す（#49：指で点が隠れない）
@@ -785,6 +789,9 @@ export default function BattleCanvas(props: Props) {
 
       ctx.restore() // ステージ全体シェイクの translate を戻す
 
+      // 敵ごとの残り HP（揺れの外＝読みやすい位置。消滅中の敵は出さない）
+      drawEnemyHpBars(ctx, props.enemies, vp, hideEnemyIds, null)
+
       // ダメージ／回復の数値（揺れの外＝読みやすい UI として安定表示・#42）
       for (let i = 0; i < popups.length; i++) {
         const p = popups[i]
@@ -838,6 +845,7 @@ export default function BattleCanvas(props: Props) {
     props.misfireBand,
     props.doom,
     props.collapse,
+    props.aimEnemyId,
     view.zoom,
     view.pan,
   ])
@@ -1144,6 +1152,69 @@ function drawPickLoupe(ctx: CanvasRenderingContext2D, pos: Vec2, vp: Viewport): 
   ctx.moveTo(fs.x, fs.y - 7)
   ctx.lineTo(fs.x, fs.y + 7)
   ctx.stroke()
+  ctx.restore()
+}
+
+/**
+ * 敵ごとの残り HP を頭の上に描く（DC プロトタイプ v3 の _drawEnemyHp）。
+ * 盤面の隅に別ウィンドウを置かず、対象のすぐ上で読ませる。射線上の敵は金色で強調する。
+ * 近い敵どうしでバーが重ならないよう、上へ積み上げる。
+ */
+function drawEnemyHpBars(
+  ctx: CanvasRenderingContext2D,
+  enemies: Enemy[],
+  vp: Viewport,
+  hide: Set<string> | undefined,
+  aimEnemyId: string | null | undefined,
+): void {
+  const rows = enemies.filter((e) => e.hp > 0 && !hide?.has(e.id))
+  if (rows.length === 0) return
+  ctx.save()
+  ctx.textBaseline = 'alphabetic'
+  const placed: { x: number; y: number; w: number }[] = []
+  for (const e of rows) {
+    const p = toScreen(e.pos, vp)
+    const hr = e.hitboxRadius * (vp.zoom ?? 1) * (Math.min(vp.width, vp.height) / 2 / vp.unitsRadius)
+    const frac = Math.max(0, Math.min(1, e.hp / (e.maxHp || 1)))
+    const W = Math.max(34, Math.min(74, hr * 2.6))
+    const H = 5
+    const x = Math.round(p.x - W / 2)
+    let y = Math.round(p.y - hr - 16)
+    for (let g = 0; g < 20; g++) {
+      const c = placed.find((q) => Math.abs(q.x - (x + W / 2)) < (q.w + W) / 2 + 2 && Math.abs(q.y - y) < 15)
+      if (!c) break
+      y = c.y - 15
+    }
+    placed.push({ x: x + W / 2, y, w: W })
+    const aimed = !!aimEnemyId && e.id === aimEnemyId
+    const bar = frac > 0.5 ? COLORS.hpOk : frac > 0.22 ? COLORS.light1 : COLORS.enemy
+    ctx.fillStyle = 'rgba(4,4,10,.82)'
+    ctx.fillRect(x - 2, y - 2, W + 4, H + 4)
+    ctx.fillStyle = '#1b1b2e'
+    ctx.fillRect(x, y, W, H)
+    ctx.fillStyle = bar
+    ctx.fillRect(x, y, Math.max(frac > 0 ? 1 : 0, Math.round(W * frac)), H)
+    ctx.strokeStyle = aimed ? COLORS.light2 : 'rgba(125,143,196,.85)'
+    ctx.lineWidth = 1
+    ctx.strokeRect(x - 0.5, y - 0.5, W + 1, H + 1)
+    ctx.fillStyle = 'rgba(6,6,14,.7)' // 四分割の目盛り
+    for (let k = 1; k < 4; k++) ctx.fillRect(Math.round(x + (W * k) / 4), y, 1, H)
+    ctx.font = "700 10px 'DotGothic16', monospace"
+    ctx.textAlign = 'center'
+    const txt = `${Math.ceil(e.hp)}/${e.maxHp}`
+    ctx.strokeStyle = '#05040b'
+    ctx.lineWidth = 3
+    ctx.strokeText(txt, x + W / 2, y - 3)
+    ctx.fillStyle = aimed ? COLORS.light2 : '#c9d2e6'
+    ctx.fillText(txt, x + W / 2, y - 3)
+    if (e.boss) {
+      ctx.strokeStyle = '#05040b'
+      ctx.lineWidth = 3
+      ctx.strokeText('☠', x - 8, y + H)
+      ctx.fillStyle = COLORS.enemy
+      ctx.fillText('☠', x - 8, y + H)
+    }
+  }
   ctx.restore()
 }
 

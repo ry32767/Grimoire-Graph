@@ -195,7 +195,11 @@ src/
 | `components/polyFit.ts` | 作図台の最小二乗多項式フィットと式整形 |
 | `components/solveAngle.ts` | 「⟳ 解く」：形はそのままに的を通る θ を数値探索（`simulateFlight` を実際に回す） |
 | `components/testStage.ts` | 「試しの間」（壁 4 種＋直射敵 2 体の練習部屋）の Stage を組み立てる |
+| `components/TopRail.tsx` | 上段レール（間・進行・ターン・味方/敵の合計HP・膜） |
+| `components/ZPlot.tsx` | 右レールの z(t) 断面（描画は `render/zplot.ts`） |
+| `components/CasterCards.tsx` | 右レールの術者カード（HP・式・読み出しの一行） |
 | `render/tutorialFigures.ts` | 手引き（8 枚）の canvas 図版 |
+| `render/titleScreen.ts` | タイトル背景（式が動くループアニメーション） |
 | `render/endroll.ts` | エンドロールの AI 同士の自動対戦（`planEnemyShots`/`enemyFlight`/`resolveParry` をそのまま使う） |
 
 ### `ComposerState`（`composer.ts`）
@@ -208,7 +212,7 @@ src/
   yText, zText,                   // 入力欄に表示する「ユーザーが打った生のテキスト」
   fitTemplate, fitParams, fitValues,      // 式中の数値リテラル→係数スライダー（#46）
   zRadial: boolean,               // true: z を g(t)（術者からの距離）として読む（既定）
-  zPresetId, zCoeffs,             // zRadial=false の互換経路のみ使う
+  zPresetId, zCoeffs,             // zRadial=false の互換経路のみ使う（現行 UI は使わない）
   zUseFree, zFreeExpr, zFreeError,
   zFitTemplate, zFitParams, zFitValues,
 }
@@ -224,3 +228,7 @@ src/
 `playback: {paused, seekMs, seekToken, rate}` を渡し、`replay` を立てて終端でも `onAnimationDone` を呼ばせない。
 `seekToken` が変わったフレームだけ時計が飛び、そのとき既に過ぎている演出は「はるか過去」に畳んで無音で通過させる
 （巻き戻しで全エフェクトが一斉に再生されるのを防ぐ）。
+
+> **廃止したコンポーネント**：`Hud.tsx`（味方ステータス窓／敵陣営ウィンドウ）と
+> `CommandWindow.tsx`（コマンド窓）は DC プロトタイプ v3 の UI 移植で削除した。
+> 役割は 上段レール（合計 HP・膜）／術者カード（個別 HP・式）／盤面の敵 HP バー／発射列 が引き継いでいる。
