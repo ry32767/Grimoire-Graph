@@ -3,7 +3,7 @@
 import type { Attribute, Obstacle, Trajectory, Vec2 } from './types'
 import { COMBAT } from '../data/constants'
 import { sampleTrajectory, validFinitePrefix, dist } from './coords'
-import { zfieldAt, attributeOf, strengthOf, affinityMultiplier } from './attribute'
+import { zfieldAt, attributeOf, strengthOf, computeDamage } from './attribute'
 import { isSolidAt } from './obstacle'
 import { firstCrossing } from './parry'
 import { simulatePath } from './physics'
@@ -151,11 +151,9 @@ export function orbitSweep(
   for (const t of targets) {
     const n = nearest(ring, t.pos)
     if (n.d <= t.radius + thickness) {
-      const z = ring[n.idx].z
-      const attr = attributeOf(z)
-      const strength = strengthOf(z)
-      const damage = (ring[n.idx].speed ?? 0) * strength * affinityMultiplier(attr, t.element)
-      if (damage > 0) hits.push({ id: t.id, damage, attr, strength })
+      // ダメージ式は発射魔法と完全に共有する（computeDamage）。速度だけがリング点の速度になる
+      const d = computeDamage(ring[n.idx].speed ?? 0, ring[n.idx].z, t.element)
+      if (d.damage > 0) hits.push({ id: t.id, damage: d.damage, attr: d.attackAttr, strength: d.strength })
     }
   }
   return hits

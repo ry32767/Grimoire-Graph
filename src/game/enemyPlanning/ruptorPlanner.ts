@@ -13,6 +13,7 @@ import { perceivedPos, threatScore, avoiderFamiliesOf } from './perception'
 import { buildPlanningEnv } from './planningEnv'
 import { findRoute, type RouteMode } from './routeSearch'
 import { fitRouteToFamilies } from './routeFit'
+import { fitComplexityFor } from './fitComplexity'
 import { evaluateEnemyShot, compareRank } from './evaluate'
 import type { EnemyPlan } from '../enemyAI'
 
@@ -110,6 +111,8 @@ export function planRuptorShot(
   const own = avoiderFamiliesOf(enemy).filter((f) => AVOIDER_FAMILIES.includes(f))
   const fams: readonly EnemyFamily[] = own.length > 0 ? own : AVOIDER_FAMILIES
   const wide: readonly EnemyFamily[] = AVOIDER_FAMILIES.filter((f) => !fams.includes(f))
+  // 暴発型も迂回型と同じ「LVL で決まる式の複雑さ」に従う（#70・05b §2.1）
+  const fitCx = fitComplexityFor(enemy.level)
   const guaranteed = FIELD.aoeRadius * (1 - varianceOf(instability))
   // 自爆・味方巻き込みの危険圏（#65）：AoE 半径は instability で上振れしうるため、
   // 「上振れ込みの最大半径」より内側に極を置く計画は自爆と見なして避ける
@@ -201,7 +204,7 @@ export function planRuptorShot(
     }
     const tryFams = (list: readonly EnemyFamily[], ownFam: boolean) => {
       for (const fam of list) {
-        for (const traj of familyTrajectories(fam, enemy.pos, base, z, hFold, fieldR)) {
+        for (const traj of familyTrajectories(fam, enemy.pos, base, z, hFold, fieldR, fitCx)) {
           consider(evalTraj(traj, aim, cover, ownFam))
         }
       }
@@ -210,7 +213,7 @@ export function planRuptorShot(
       if (!env) return
       const route = findRoute(env, enemy.pos, aim, mode)
       if (!route) return
-      for (const fit of fitRouteToFamilies(route.points, enemy.pos, AVOIDER_FAMILIES)) {
+      for (const fit of fitRouteToFamilies(route.points, enemy.pos, AVOIDER_FAMILIES, fitCx)) {
         const traj: Trajectory = { mode: 'rotate', g: fit.g, angle: fit.angle, origin: enemy.pos, z, fieldR }
         consider(evalTraj(traj, aim, cover, fams.includes(fit.family), fit.turnXs))
       }

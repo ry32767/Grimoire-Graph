@@ -240,6 +240,133 @@ export const ENEMY_ROUTE_PLANNING = {
    * 「通過点は通るが暴れる」過適合を避け、実際に飛べるなめらかな解を選ぶ。
    */
   harmonicRidge: 0.02,
+  /**
+   * 多項式フィット（6次以上）の正則化係数（#70）。基底は u=x/L に正規化したうえで、
+   * 高次の項ほど強く罰する（λ·k²）。**通過点への密着を邪魔しないごく弱い値**にする：
+   * 目的は「通過点が足りない・並びが悪いときに正規方程式が特異化するのを防ぐ」ことだけで、
+   * 平滑化そのものではない（暴れる解は後段の本番物理検証が落とす）。
+   */
+  polyRidge: 1e-6,
+} as const
+
+/**
+ * 敵が「最適化できる式の複雑さ」の段階（#70・05b §2.1）。
+ * 迂回型（および暴発型）は経路を1本の式へフィットして回り込むが、**その式の自由度は敵の LVL で決まる**。
+ * 弱い敵は1次・2次の素直な曲線しか合わせられず、強い敵ほど
+ *   ① 多項式の次数（1次→2次→3〜5次→7次）
+ *   ② |x−h| の折れ点の数（1枚のV字→何枚も重ねた折れ線）
+ *   ③ sin/cos/exp を**掛け合わせた**包絡（積の因子）
+ * を増やせる＝同じ隙間でも、強い敵ほど経路に密着した軌道を出せる。
+ * tiers は minLevel 昇順。enemy.level 以下で最大の minLevel の段が適用される。
+ */
+export const ENEMY_FIT_COMPLEXITY = {
+  tiers: [
+    {
+      /** LVL1〜2：直線と緩い放物線だけ。壁の隙間を「縫う」ような式は組めない */
+      minLevel: 0,
+      label: '一次〜二次',
+      polyDegrees: [1, 2],
+      absFolds: 1,
+      harmonicTerms: 1,
+      /** 包絡（積の因子）：expA=x の指数・cosB=余弦の周期。0,0＝積なし（純粋な正弦級数） */
+      waveFactors: [{ expA: 0, cosB: 0 }],
+    },
+    {
+      /** LVL3〜4：3次まで（S字が1回作れる） */
+      minLevel: 3,
+      label: '三次まで',
+      polyDegrees: [2, 3],
+      absFolds: 1,
+      harmonicTerms: 2,
+      waveFactors: [{ expA: 0, cosB: 0 }],
+    },
+    {
+      /** LVL5〜6：3〜5次・折れ2枚・指数包絡つきの多重サイン */
+      minLevel: 5,
+      label: '五次・指数積',
+      polyDegrees: [3, 5],
+      absFolds: 2,
+      harmonicTerms: 5,
+      waveFactors: [
+        { expA: 0, cosB: 0 },
+        { expA: 1.2, cosB: 0 },
+        { expA: -1.2, cosB: 0 },
+      ],
+    },
+    {
+      /** LVL7（ボス級）：7次まで・折れ4枚・exp×cos×多重サインの積 */
+      minLevel: 7,
+      label: '七次・多重積',
+      polyDegrees: [3, 4, 5, 7],
+      absFolds: 4,
+      harmonicTerms: 6,
+      waveFactors: [
+        { expA: 0, cosB: 0 },
+        { expA: 1.2, cosB: 0 },
+        { expA: -1.2, cosB: 0 },
+        { expA: 0, cosB: 1.5 },
+        { expA: 1.2, cosB: 1.5 },
+        { expA: -1.2, cosB: 0.5 },
+      ],
+    },
+  ],
+} as const
+
+/**
+ * 守護型（guardian）の結界最適化（#71・05b §5.4）。
+ * 守護型は「素材に絶対触れない外形」「自分と近くの味方を覆う」「既に張ってある結界とは別の結界を
+ * 重ねる」を満たす閉曲線 r=f(θ) を組む。外形は角度ごとの半径プロファイル（上限＝素材に触れない
+ * 自由半径／下限＝味方を覆う要求半径）を **K 項のフーリエ級数**へフィットして作り、
+ * z 場は本番物理で採点して選ぶ。K・z 場の式・重ね張り枚数は敵の LVL で決まる（#70 と同じ思想）。
+ */
+export const ENEMY_GUARD_PLANNING = {
+  /** 外形サンプリングの角度分割数（自由半径プロファイル・フーリエフィット共通） */
+  angleSamples: 72,
+  /**
+   * 素材から最低限離す余白（ユニット）。周回は素材に一度触れただけで丸ごと霧散する（#34）ため、
+   * 本番の判定（リング点が素材内か）より広く取り「絶対に触れない」を保証する。
+   */
+  clearance: 0.9,
+  /** 結界半径の下限（ユニット）。これ未満は退化＝結界として機能しない */
+  minRadius: 2.2,
+  /**
+   * 基準半径（GAME.enemyGuardRadius）に対する倍率ラダー。縮めて壁を避け、広げて味方を覆う。
+   * 同点なら基準半径に近いものを選ぶ（＝囲う相手がいなければ従来どおりの大きさ）。
+   */
+  radiusScales: [1, 0.85, 0.7, 0.55, 0.4, 1.15, 1.3, 1.45, 1.6],
+  /** 味方を「覆った」と見なす余白（ユニット）：ヒットボックス外周からさらにこれだけ内側に入れる */
+  coverMargin: 1.2,
+  /**
+   * 外形フィットの制約投影の反復回数。フーリエ級数（有限項）は角度ごとの上限（自由半径）を
+   * 少し超えて振動するため、超えた角度の目標半径を下げて再フィットする、を数回繰り返す。
+   */
+  fitPasses: 5,
+  /** 本番と同じ密なリング点列で検証する上位候補の数（順位づけは軽い判定で行い、検証だけ絞る） */
+  rankedVerifyLimit: 6,
+  /**
+   * 最終検証でリング点に加えて見る半径方向の安全余白（ユニット）。
+   * 自由半径プロファイルの余白（clearance）は角度サンプル上の保証なので、点列そのものに
+   * ここぶんの厚みを足して「サンプルの隙間にある薄い素材」も落とす。
+   */
+  verifyMargin: 0.35,
+  /** 既存の自前結界と「同じ結界」とみなす平均半径差（ユニット）。これ未満なら重ね張りにならない */
+  distinctRadius: 1.2,
+  /** z 場の採点で見る脅威方向の扇の半角[rad]（この扇の最小迎撃威力＝抜かれにくさで採点する） */
+  threatWedge: Math.PI / 6,
+  /**
+   * LVL 段階表（minLevel 昇順・level 未設定の個体は最下段＝従来動作）。
+   * - shapeTerms：外形フーリエ級数の項数（0＝真円のみ。大きいほど壁の隙間に沿って歪められる）
+   * - zHarmonics：z 場の多重余弦の項数（1＝単一の余弦まで。2以上で sin/cos の重ね合わせ）
+   * - zSharp：z 場の exp 包絡の鋭さ κ（0 なら exp の積を使えない）
+   * - zOverdrive：|z| の上限倍率（1＝zRef 以下のみ。>1 なら過励起を試せる＝強度は上がるが減速する）
+   * - maxLayers：同時に保持できる自前の結界の枚数（turn.ts のオーラ加算上限と同じ2枚まで）
+   */
+  tiers: [
+    { minLevel: 0, label: '真円・一様', shapeTerms: 0, zHarmonics: 1, zSharp: 0, zOverdrive: 1, maxLayers: 1 },
+    { minLevel: 5, label: '変形円・多重余弦', shapeTerms: 2, zHarmonics: 3, zSharp: 0, zOverdrive: 1, maxLayers: 1 },
+    { minLevel: 6, label: 'exp積・二重張り', shapeTerms: 3, zHarmonics: 4, zSharp: 2.5, zOverdrive: 1, maxLayers: 2 },
+    { minLevel: 7, label: '多重積・過励起', shapeTerms: 5, zHarmonics: 6, zSharp: 4, zOverdrive: 1.4, maxLayers: 2 },
+  ],
 } as const
 
 /**

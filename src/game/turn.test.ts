@@ -2,7 +2,10 @@ import { describe, it, expect } from 'vitest'
 import { resolveTurn, traverseObstacles } from './turn'
 import { simulateFlight } from './physics'
 import { isSolidAt } from './obstacle'
-import { FIELD } from '../data/constants'
+import { firstHit } from './collision'
+import { computeDamage, zfieldAt } from './attribute'
+import { orbitSweep } from './orbit'
+import { FIELD, GAME } from '../data/constants'
 import type { ActiveOrbit, Ally, AllyCast, Enemy, Mechanics, Obstacle, Trajectory } from './types'
 
 // 新モデル（#30）：属性は z 場（位置の関数）。テスト用の一定 z 場。
@@ -848,5 +851,59 @@ describe('複数回パリィ（同時刻の共存で判定・勝ち残りは次�
     expect(s2.flight?.end).toBe('vanished') // 同威力＝両方消滅
     expect(s1.flight?.end).not.toBe('vanished') // 先撃ちでも時刻が遅い衝突は起きない
     expect(res.allies.find((a) => a.id === 'v')!.hp).toBe(20)
+  })
+})
+
+// ===== #70：ダメージ式は術者の種別に依らない（敵の role/family/species で変わらない） =====
+describe('ダメージ計算は術者の種別に依らない（#70）', () => {
+  const victim = (): Ally => ally('v', { x: 0, y: -12 }, 'light', 5000)
+
+  /** 敵1体を1ターン撃たせ、命中があれば「その一撃のダメージと命中点の速度・z」を返す。 */
+  const fireOnce = (over: Partial<Enemy>) => {
+    const e: Enemy = { ...enemy('e0', { x: 0, y: 12 }, 'dark', 300, 8, -FIELD.zRef), ...over }
+    const res = resolveTurn({
+      allies: [victim()], casts: [], enemies: [e], castingEnemyIds: [e.id],
+      obstacles: [], mechanics: withFire,
+    })
+    const shot = res.enemyShots[0]
+    const hit = firstHit(shot.flight.samples, victim().pos, GAME.allyHitbox)
+    return { shot, hit, traj: shot.traj }
+  }
+
+  it('敵弾のダメージは共有の computeDamage（速度×強度×相性）と一致する＝種別の項が無い', () => {
+    // 役割・得意関数・種族を振っても、命中したなら必ず同じ式で解決される
+    const variants: Partial<Enemy>[] = [
+      { role: 'attacker', family: 'arc' },
+      { role: 'breaker', family: 'line' },
+      { role: 'attacker', family: 'abs', families: ['abs'], species: 'wraith', level: 6 },
+      { role: 'breaker', family: 'exp', families: ['exp'], species: 'oni', level: 3 },
+    ]
+    let compared = 0
+    for (const v of variants) {
+      const { shot, hit, traj } = fireOnce(v)
+      if (!hit) continue // 曲がって外れた個体は対象外（当たった弾の式だけを比べる）
+      const expected = computeDamage(hit.speed, zfieldAt(traj, hit.pos), 'light').damage
+      expect(shot.damage, JSON.stringify(v)).toBeCloseTo(expected, 6)
+      expect(expected).toBeGreaterThan(0)
+      compared++
+    }
+    // 命中した個体はすべて同じ式で解決された（曲がりの深い個体は外れることがあるので下限で見る）
+    expect(compared).toBeGreaterThanOrEqual(3)
+  })
+
+  it('同じ速度・同じ z・同じ対象属性なら、味方弾・敵弾・周回掃射のダメージは同一', () => {
+    const speed = 9.3
+    const z = -FIELD.zRef // 闇
+    const target: Ally['element'] = 'light'
+    const base = computeDamage(speed, z, target).damage
+    // 周回掃射（orbitSweep）も同じ式を通る＝リング速度を入れれば一致する
+    const ring = [
+      { pos: { x: 0, y: 0 }, z, speed },
+      { pos: { x: 1, y: 0 }, z, speed },
+      { pos: { x: 1, y: 1 }, z, speed },
+    ]
+    const hits = orbitSweep(ring, [{ id: 't', pos: { x: 0, y: 0 }, radius: 1, element: target }])
+    expect(hits).toHaveLength(1)
+    expect(hits[0].damage).toBeCloseTo(base, 9)
   })
 })

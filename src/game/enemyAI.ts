@@ -21,10 +21,12 @@ import {
   shapeCandidates,
   enemyFlight,
 } from './enemyPlanning/trajectories'
-import { perceivedPos, threatScore, enemyFamilies, avoiderFamiliesOf } from './enemyPlanning/perception'
+import { perceivedPos, enemyFamilies, avoiderFamiliesOf } from './enemyPlanning/perception'
+import { planGuardianBarrier } from './enemyPlanning/guardianPlanner'
 import { buildPlanningEnv, type PlanningEnv } from './enemyPlanning/planningEnv'
 import { findRoute, type Route } from './enemyPlanning/routeSearch'
 import { fitRouteToFamilies } from './enemyPlanning/routeFit'
+import { fitComplexityFor } from './enemyPlanning/fitComplexity'
 import { evaluateEnemyShot, compareRank } from './enemyPlanning/evaluate'
 import { planRuptorShot, buildRuptorZField } from './enemyPlanning/ruptorPlanner'
 
@@ -83,87 +85,6 @@ export const ARCHETYPES: Record<EnemyFamily, { label: string; glyph: EnemyFamily
 }
 
 /**
- * 守護型の脅威方向 φ_threat（05b §5.4・#47）：見えている味方のうち最も脅威度の高い者の方向。
- * threatScore（woundFocus/lowHpBias）で選び、その味方を敵から見た角度を返す。見えなければ null。
- */
-function threatDirection(enemy: Enemy, allies: Ally[]): number | null {
-  const visible = allies.filter((a) => a.hp > 0 && (a.concealed ?? 0) < COMBAT.orbitConcealFull)
-  if (visible.length === 0) return null
-  const t = visible.reduce((best, a) => (threatScore(a) > threatScore(best) ? a : best))
-  return aimAt(enemy.pos, t.pos)
-}
-
-/**
- * 守護型の結界 z 場を組む（05b §5.4）。
- * - 通常（一様）：z = sign·zRef（全周一定・|z|=zRef で失速しない）。
- * - 方向づけ（directedAura・#47）：z(x,y) = sign·zRef·cos(φ−φ_threat)。脅威方向 φ_threat で
- *   |z| 最大（=zRef）、そこから離れるほど弱まる。全周で |z|≤zRef を保つため失速自滅しない。
- *   alternatingAura と併用時も sign（guardZSign）を振幅に掛けるだけで振幅≤zRef を維持する。
- * z 場は術者位置 origin を原点として評価される（#52）ため、(x,y) は origin 相対で受ける。
- */
-function buildGuardZField(enemy: Enemy, sign: 1 | -1, threatPhi: number | null): ZField {
-  if (!enemy.directedAura || threatPhi === null) return constZField(sign * FIELD.zRef)
-  const amp = sign * FIELD.zRef
-  // (x,y) は origin 相対。その点の方位角 φ と脅威方向の差の余弦で強度を傾ける
-  return (x, y) => amp * Math.cos(Math.atan2(y, x) - threatPhi)
-}
-
-/**
- * 防御ロール（guardian・#28/05b §5.4）：自分の周りに周回結界（閉じた円）を張る。
- * z は自陣の属性（交互張り個体は guardZSign）で、減速しない最大強度 |z|≤zRef に張る
- * （#31：|z|>zRef だと結界自身が失速して霧散する＝「リング全周で |z|≤zRef」の自壊回避）。
- * directedAura 個体は脅威方向に強度を偏らせた非一様場を張る（#47・全周で |z|≤zRef を維持）。
- * 半径は障害物の素材に触れないものを選ぶ（触れると orbitWallBreak で即霧散するため・05b §5.4）。
- */
-function planGuardianOrbit(
-  enemy: Enemy,
-  allies: Ally[] = [],
-  obstacles: Obstacle[] = [],
-  teammates: TeamMate[] = [],
-  fieldR?: number,
-): EnemyPlan {
-  const sign = enemy.guardZSign ?? (enemy.element === 'dark' ? -1 : 1)
-  const touches = (r: number): boolean => {
-    for (let i = 0; i < 24; i++) {
-      const a = (i / 24) * Math.PI * 2
-      const p = { x: enemy.pos.x + r * Math.cos(a), y: enemy.pos.y + r * Math.sin(a) }
-      if (obstacles.some((ob) => isSolidAt(ob, p))) return true
-    }
-    return false
-  }
-  // 半径 r の結界が囲える味方の数（自分＋余裕をもって内側に入る生存味方・05b §5.4）
-  const coverOf = (r: number): number =>
-    1 + teammates.filter((t) => t.id !== enemy.id && t.hp > 0 && dist(t.pos, enemy.pos) <= r - 1).length
-  // 候補半径：既定 → 縮小2段（壁回避）→ 拡大1段（自分だけでなく味方も囲む・05b §5.4）。
-  // 壁に触れない候補のうち、囲える味方が最多のものを選ぶ（同数なら既定寄りの大きい方＝従来動作）。
-  const radii = [
-    GAME.enemyGuardRadius,
-    GAME.enemyGuardRadius * 0.75,
-    GAME.enemyGuardRadius * 0.55,
-    GAME.enemyGuardRadius * 1.3,
-  ]
-  let radius = GAME.enemyGuardRadius * 0.55 // 全候補が壁に触れるときの既定（最小）
-  let bestCover = -1
-  for (const r of radii) {
-    if (touches(r)) continue
-    const c = coverOf(r)
-    if (c > bestCover) {
-      bestCover = c
-      radius = r
-    }
-  }
-  const threatPhi = threatDirection(enemy, allies)
-  const traj: Trajectory = {
-    mode: 'polar',
-    f: () => radius,
-    origin: enemy.pos,
-    z: buildGuardZField(enemy, sign, threatPhi),
-    fieldR,
-  }
-  return { trajectory: traj, targetId: '', expectedDamage: 0 }
-}
-
-/**
  * ボスの断末魔の変異体（#45・06b §6 第7面）：HP0 直後の「最後の一手」＝暴発型3連・固定。
  * 物理・干渉ルールは通常の崩し手と完全に同一（特例なし）。
  */
@@ -185,10 +106,11 @@ export function planEnemyShots(
   teammates: TeamMate[] = [],
   fieldR?: number,
   instability = 0,
+  ownRings: RingPoint[][] = [],
 ): EnemyPlan[] {
   const count = Math.max(1, enemy.castCount ?? 1)
   if (count === 1) {
-    const p = planEnemyShot(enemy, allies, obstacles, standingRings, teammates, fieldR, instability)
+    const p = planEnemyShot(enemy, allies, obstacles, standingRings, teammates, fieldR, instability, ownRings)
     return p ? [p] : []
   }
   const pool: EnemyRole[] =
@@ -209,7 +131,7 @@ export function planEnemyShots(
     }
     const remaining = alive.filter((a) => !taken.has(a.id))
     const pickFrom = remaining.length > 0 ? remaining : alive
-    const plan = planEnemyShot(variant, pickFrom, obstacles, standingRings, teammates, fieldR, instability)
+    const plan = planEnemyShot(variant, pickFrom, obstacles, standingRings, teammates, fieldR, instability, ownRings)
     if (!plan) continue
     if (plan.targetId) taken.add(plan.targetId)
     plans.push(plan)
@@ -251,12 +173,16 @@ export function planEnemyShot(
   teammates: TeamMate[] = [],
   fieldR?: number,
   instability = 0,
+  ownRings: RingPoint[][] = [],
 ): EnemyPlan | null {
   const alive = allies.filter((a) => a.hp > 0)
   if (alive.length === 0) return null
 
-  // 防御ロール：自陣（自分＋味方）を守る周回結界を張る（#28/05b §5.4）
-  if (enemy.role === 'guardian') return planGuardianOrbit(enemy, allies, obstacles, teammates, fieldR)
+  // 防御ロール：自陣（自分＋近くの味方）を覆う周回結界を張る（#28/#71・05b §5.4）。
+  // 素材に触れない外形が組めなければ null＝このターンは張らない（触れる結界は即霧散して無駄）
+  if (enemy.role === 'guardian') {
+    return planGuardianBarrier(enemy, { allies, obstacles, teammates, ownRings, fieldR })
+  }
 
   // 崩し手（#42）：狙った対象の近傍で暴発させる専用計画（enemyPlanning/ruptorPlanner）。
   // teammates（敵チーム）を渡し、自爆・味方巻き込みになる極を避けさせる（§12.7）
@@ -276,6 +202,9 @@ export function planEnemyShot(
   // harmonic を持つ個体（#69・終盤の強敵）はフーリエ正弦級数フィットも候補に入る。
   const fitFams = families.filter((f) => ELITE_FIT_FAMILIES.includes(f))
   const routeFams: readonly EnemyFamily[] = fitFams.length > 0 ? fitFams : AVOIDER_FAMILIES
+  // 敵の LVL で「最適化できる式の複雑さ」が決まる（#70・05b §2.1）：
+  // 弱い敵は1次・2次の素直な曲線まで、強い敵ほど高次・多重の折れ・積の式まで合わせられる
+  const fitCx = fitComplexityFor(enemy.level)
   const env = obstacles.length > 0 ? buildPlanningEnv(obstacles, fieldR) : null
   // 広い車線を優先する探索用の環境（#69）。素材から wideClearance だけ離れた経路を探す
   const wideEnv =
@@ -283,11 +212,13 @@ export function planEnemyShot(
 
   // 採点結果（プロパティ経由＝クロージャ代入でも型の絞り込みが崩れない）
   const sel = { best: null as { plan: EnemyPlan; rank: readonly number[] } | null }
-  // 火力型の掘削候補（#64・#69）：どの候補も命中しない＝壁が厚いとき、壁を掘る一手を布石に選ぶ。
-  // 何を「良い掘削」とするか（#69：明らかに非効率な削り方の根絶）：
+  // 掘削候補（#64・#69・#70）：どの候補も命中しない＝壁が厚いとき、牽制でお茶を濁さず
+  // **障害物に当ててでも相手へ向かう**一手を布石に選ぶ（#70 で火力型から全ロールへ拡張）。
+  // 何を「良い掘削」とするか（#69：明らかに非効率な削り方の根絶／#70：相手へ最短で届く経路）：
   //   ① この一撃のあと、狙いまでの経路に**残る素材の長さ**が最小（＝あと少しで貫通する）
   //   ② 同点なら、この一撃で**削り取った素材の長さ**が最大（＝仕事量が多い）
   //   ③ さらに同点なら、狙いの近くまで到達している
+  //   ④ それでも同点なら、経路そのものが短い（＝遠回りせず最短で相手へ届く・#70）
   // 壁を浅い角度で舐める軌道は「素材の中を長々と進むのに、ほとんど貫通に近づかない」ため
   // ① で必ず負ける。壁へ正面から入る軌道（＝最短の厚みを抜く）が自然に選ばれる。
   const drill = { best: null as { plan: EnemyPlan; rank: readonly number[] } | null }
@@ -296,18 +227,22 @@ export function planEnemyShot(
     if (!last) return
     if (ev.materialArcs.length === 0) return // 素材を削らず失速/逸れた候補は掘削でない
     // 「掘れば道が開く」見込みのない候補は掘削にしない（不可解な壁撃ちの根絶）：
-    // (1) 壁が無くても z 減速で狙いへ届かない弾は、掘って壁の速度損を消しても永遠に届かない。
+    // (1) 実際に素材が減っていない一撃（＝硬すぎて弾かれただけ）は掘削の進捗にならない
+    const removed = ev.materialLenBefore - ev.materialLenAfter
+    if (removed <= 1e-6) return
+    // 既にある最良候補より①②③で明確に劣るなら、この先の検証（自由飛行の再シミュレート）は不要。
+    // compareRank は短い方の長さで比較するので、3キーのまま4キーの best と突き合わせられる。
+    const base = [ev.materialLenAfter, -removed, dist(last.pos, aimPos)] as const
+    if (drill.best && compareRank(base, drill.best.rank) > 0) return
+    // (2) 壁が無くても z 減速で狙いへ届かない弾は、掘って壁の速度損を消しても永遠に届かない。
     //     障害物なしの自由飛行が狙いのヒットボックスへ届くことを掘削の前提条件にする。
     const free = enemyFlight(traj, enemy.castInitialSpeed).flight
     const freeHit = firstHit(free.samples, aimPos, GAME.allyHitbox)
     if (!freeHit || freeHit.speed <= 0) return
-    // (2) 狙いへ達する前に unbreakable（削れない壁）を横切る経路は、掘り進めても必ずそこで
+    // (3) 狙いへ達する前に unbreakable（削れない壁）を横切る経路は、掘り進めても必ずそこで
     //     止まる＝トンネルは開通しない（手前で止まっている今も、掘り切った後も同じ）。
     if (ev.unbreakableArc !== null && ev.unbreakableArc < freeHit.arcLen) return
-    // (3) 実際に素材が減っていない一撃（＝硬すぎて弾かれただけ）は掘削の進捗にならない
-    const removed = ev.materialLenBefore - ev.materialLenAfter
-    if (removed <= 1e-6) return
-    const rank = [ev.materialLenAfter, -removed, dist(last.pos, aimPos)] as const
+    const rank = [...base, freeHit.arcLen] as const
     if (!drill.best || compareRank(rank, drill.best.rank) < 0) {
       drill.best = { plan: { trajectory: traj, targetId: ally.id, expectedDamage: 0 }, rank }
     }
@@ -317,15 +252,17 @@ export function planEnemyShot(
     const ev = evaluateEnemyShot(traj, enemy.castInitialSpeed, obstacles, standingRings, { turnXs, aimPos })
     const hit = firstHit(ev.flight.samples, aimPos, GAME.allyHitbox)
     if (!hit || hit.speed <= 0) {
-      if (breaker) trackDrill(traj, ally, aimPos, ev) // 不達でも掘削の布石として記録（#64）
+      // 不達でも掘削の布石として記録（#64／#70：迂回型も牽制でなく壁を掘って相手へ向かう）
+      trackDrill(traj, ally, aimPos, ev)
       return false // 失速・不達の候補は捨てる（#31）
     }
     // 破壊不能壁（unbreakable）は削れず必ず弾を止める＝命中前に横切る候補は全ロールで棄却
     if (ev.unbreakableArc !== null && ev.unbreakableArc < hit.arcLen) return false
     const matBefore = ev.materialArcs.filter((a) => a < hit.arcLen).length
     const turnsBefore = ev.turnInMaterialArcs.filter((a) => a < hit.arcLen).length
-    // 迂回型は壁内部で曲がる候補を棄却（§9.3：壁の中は入口→出口の直線だけを許す）
-    if (!breaker && turnsBefore > 0) return false
+    // 壁内部で曲がる候補（§9.3：壁の中は入口→出口の直線が理想）は**棄却せず降格**する（#70）。
+    // 命中を最優先するため：rank の第0要素（clean 優先）・第1要素（壁内の折れ点数）で
+    // 必ず下位に沈むので、クリーン命中も「壁の中で曲がらない貫通命中」も無いときにだけ選ばれる。
     const ringsBefore = ev.oppositeRingArcs.filter((a) => a < hit.arcLen).length
     // 属性・強度の評価：迂回型は命中点の z 場（削り・結界減速込みの実速度 × 実強度＝本番と同じ
     // ダメージ）。火力型はランプ z の到達点＝代表 zVal（06b B.7「直進の火力弾」の設計を保つ：
@@ -418,7 +355,7 @@ export function planEnemyShot(
     let cleanHit = false
     for (const fam of families) {
       for (const zc of zCands) {
-        for (const traj of familyTrajectories(fam, enemy.pos, base, zc.z, hFold, fieldR)) {
+        for (const traj of familyTrajectories(fam, enemy.pos, base, zc.z, hFold, fieldR, fitCx)) {
           if (consider(traj, ally, aimPos, zc.zVal, 1)) cleanHit = true
         }
       }
@@ -427,7 +364,7 @@ export function planEnemyShot(
     // breaker は壊して進むので使わない（従来どおり）。
     if (!breaker && env && wideEnv && !cleanHit) {
       for (const route of cleanRoutes(env, wideEnv, enemy.pos, aimPos)) {
-        for (const fit of fitRouteToFamilies(route.points, enemy.pos, routeFams)) {
+        for (const fit of fitRouteToFamilies(route.points, enemy.pos, routeFams, fitCx)) {
           for (const zc of zCands) {
             const traj: Trajectory = { mode: 'rotate', g: fit.g, angle: fit.angle, origin: enemy.pos, z: zc.z, fieldR }
             consider(traj, ally, aimPos, zc.zVal, MANEUVER, fit.turnXs)
@@ -442,7 +379,7 @@ export function planEnemyShot(
     for (const { ally, aimPos, zCands } of aims) {
       const route = findRoute(env, enemy.pos, aimPos, 'wallTunnel')
       if (!route) continue
-      for (const fit of fitRouteToFamilies(route.points, enemy.pos, routeFams)) {
+      for (const fit of fitRouteToFamilies(route.points, enemy.pos, routeFams, fitCx)) {
         for (const zc of zCands) {
           const traj: Trajectory = { mode: 'rotate', g: fit.g, angle: fit.angle, origin: enemy.pos, z: zc.z, fieldR }
           consider(traj, ally, aimPos, zc.zVal, MANEUVER, fit.turnXs)
@@ -455,6 +392,10 @@ export function planEnemyShot(
   // 火力型（#64）：どの候補も命中しない＝壁が厚い。牽制でお茶を濁さず、
   // 「1番奥まで掘れる」候補で壁を掘り進める（毎ターン掘り足せばいずれ道が開く）。
   if (breaker && drill.best) return drill.best.plan
+
+  // 迂回型（#70）：結界も突破できないなら、**障害物に当ててでも相手へ向かう**。
+  // 牽制（当たらない一撃）より、狙いまでに残る素材が最小＝相手へ最短で届く経路を掘る方が常に良い。
+  if (drill.best) return drill.best.plan
 
   // 命中見込みなし：最もHPが低い味方へ牽制（見える相手・見かけ位置へ・#35）。
   // family は得意関数から選ぶ（line を持たない個体＝迂回型/暴発型は曲線で牽制・05b §2）。

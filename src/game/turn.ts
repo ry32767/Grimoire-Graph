@@ -22,7 +22,6 @@ import {
   attributeOf,
   strengthOf,
   computeDamage,
-  affinityMultiplier,
   zfieldAt,
 } from './attribute'
 import {
@@ -298,7 +297,11 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     .map((ao) => ao.ring as RingPoint[])
   for (const e of enemies) {
     if (!input.castingEnemyIds.includes(e.id)) continue
-    for (const plan of planEnemyShots(e, allies, obstacles, visibleRings, enemies, input.fieldR, instability0)) {
+    // 守護型が「同じ結界を重ね張りしない／上限まで達したら張り直す」判断に使う自前の持続結界（#71）
+    const ownRings = activeOrbits
+      .filter((ao) => ao.owner === 'enemy' && ao.ownerId === e.id && ao.ring.length >= 3)
+      .map((ao) => ao.ring as RingPoint[])
+    for (const plan of planEnemyShots(e, allies, obstacles, visibleRings, enemies, input.fieldR, instability0, ownRings)) {
       if (classifyTrajectory(plan.trajectory) === 'orbit') {
         // 敵の周回結界も壁/失速で丸ごと霧散する（#34/#31：敵が使った場合も同様）。形状は霧散演出のため残す
         const ring = attachRingSpeeds(buildRing(plan.trajectory), e.castInitialSpeed) // 点ごとの速度（#60）
@@ -1062,12 +1065,15 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     // 命中しても敵弾は減速せず消えない（貫通）：通過した全味方に命中する
     for (const hit of allHitsAmong(shot.flight.samples, allyTargets)) {
       if (hit.speed <= 0) continue
-      const bZ = zfieldAt(shot.traj, hit.pos)
-      const bAttr = attributeOf(bZ)
-      const bStr = strengthOf(bZ)
       const idx = allies.findIndex((a) => a.id === hit.id)
       if (idx < 0) continue
-      const damage = hit.speed * bStr * affinityMultiplier(bAttr, allies[idx].element)
+      // ダメージ式は味方弾（§5）と完全に共有する（computeDamage）。
+      // 術者が敵か味方か・敵の種別（role/family/species）でダメージが変わることはない
+      const { attackAttr: bAttr, strength: bStr, damage } = computeDamage(
+        hit.speed,
+        zfieldAt(shot.traj, hit.pos),
+        allies[idx].element,
+      )
       allies[idx] = {
         ...allies[idx],
         hp: Math.max(0, allies[idx].hp - damage),

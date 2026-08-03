@@ -144,17 +144,46 @@ function runResume() {
   })
 }
 
-// 利用上限メッセージの検出。可能なら解除時刻(epoch)も取り出す。
-// 例: "Claude AI usage limit reached|1754035200"
+/**
+ * 利用上限メッセージの検出。可能なら解除時刻も取り出す。
+ * 実際に観測した文言（2026-08-01）：
+ *   "You've hit your session limit · resets 5am (Asia/Tokyo)"
+ *   "Claude AI usage limit reached|1754035200"（epoch 形式）
+ * 解除時刻が読めれば**その時刻まで眠る**。読めなければ 10→20→30 分のバックオフ。
+ */
 function detectLimit(out) {
-  if (!/usage limit|rate.?limit|limit reached|利用上限|上限に達し/i.test(out)) return null
-  const m = out.match(/(?:limit reached|limit_reached|resets? at)\D{0,20}(\d{10,13})/i)
-  if (m) {
-    let v = Number(m[1])
-    if (v < 1e12) v *= 1000 // 秒 → ミリ秒
+  if (!/usage limit|rate.?limit|session limit|limit reached|hit your .{0,20}limit|利用上限|上限に達し/i.test(out)) {
+    return null
+  }
+  // ① epoch（秒 or ミリ秒）
+  const epoch = out.match(/(?:limit reached|limit_reached|resets? at)\D{0,20}(\d{10,13})/i)
+  if (epoch) {
+    let v = Number(epoch[1])
+    if (v < 1e12) v *= 1000
     if (v > Date.now()) return { resetAt: v }
   }
+  // ② "resets 5am" / "resets at 5:30pm" / "resets 17:00" のような時刻表記（ローカル時間）
+  const at = out.match(/resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i)
+  if (at) {
+    const v = nextLocalTime(Number(at[1]), at[2] ? Number(at[2]) : 0, at[3])
+    if (v) return { resetAt: v }
+  }
   return { resetAt: null }
+}
+
+/** 「次に hour:minute（12時間表記なら meridiem つき）になる瞬間」の epoch ms。 */
+function nextLocalTime(hour, minute, meridiem) {
+  if (!Number.isFinite(hour) || hour > 23 || minute > 59) return null
+  let h = hour
+  if (meridiem) {
+    const pm = meridiem.toLowerCase() === 'pm'
+    h = hour % 12
+    if (pm) h += 12
+  }
+  const now = new Date()
+  const t = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, minute, 0, 0)
+  if (t.getTime() <= now.getTime()) t.setDate(t.getDate() + 1) // 過ぎていれば翌日
+  return t.getTime()
 }
 
 // --- ユーティリティ --------------------------------------------------

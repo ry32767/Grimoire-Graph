@@ -4,6 +4,7 @@ import type { EnemyFamily, Flight, Trajectory, Vec2, ZField } from '../types'
 import { sampleTrajectory, validPrefix } from '../coords'
 import { simulatePath } from '../physics'
 import { zfieldAt } from '../attribute'
+import { DEFAULT_FIT_COMPLEXITY, maxEnumPolyDegree, type FitComplexity } from './fitComplexity'
 
 /**
  * 迂回型（attacker の avoider 運用）・暴発型（ruptor）が使える family（#46・05b §2）。
@@ -160,14 +161,18 @@ export function familyTrajectories(
   z: ZField,
   hFold: number,
   fieldR?: number,
+  complexity: FitComplexity = DEFAULT_FIT_COMPLEXITY,
 ): Trajectory[] {
   const offsets = family === 'spiral' ? [0] : [-0.28, -0.14, 0, 0.14, 0.28]
   const out: Trajectory[] = []
+  // 決め打ちパレットも敵の強さで絞る（#70）：低 LVL の個体は 4/5 次の捻れを持ち出せない
+  const maxDeg = maxEnumPolyDegree(complexity)
   for (const off of offsets) {
     const angle = baseAngle + off
     if (family === 'poly34') {
       // 3〜5 次を次数ごとに展開（05b §2）
       for (const ps of POLY34_SHAPES) {
+        if (ps.deg > maxDeg) continue
         out.push({ mode: 'rotate', g: polyG(ps.deg, ps.shape), angle, origin, z, fieldR })
       }
       continue

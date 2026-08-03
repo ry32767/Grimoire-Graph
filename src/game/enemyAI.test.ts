@@ -269,3 +269,81 @@ describe('多重サイン（harmonic・#69）', () => {
     expect(turns).toBeGreaterThanOrEqual(3)
   })
 })
+
+// ===== #70：命中を最優先し、届かないなら壁を貫いてでも最短で相手へ向かう =====
+describe('命中最優先と壁越しの最短経路（#70）', () => {
+  /** 全幅を塞ぐ厚み thickness の normal 壁（迂回路なし）。 */
+  const fullWall = (y: number, thickness: number): Obstacle => ({
+    id: 'w',
+    element: 'neutral',
+    solids: [],
+    rects: [{ x: -30, y: y - thickness / 2, w: 60, h: thickness }],
+    carves: [],
+  })
+
+  /**
+   * 迂回型（abs 主体）。牽制は「折れ点 h=20 固定・最小傾き」の決め打ちなので、
+   * 距離25 の対象へは自由飛行でも 6.75 も外す＝「相手へ向かう一手」と明確に区別できる。
+   */
+  const avoider = (over: Partial<Enemy> = {}): Enemy => ({
+    ...enemy({ x: 0, y: 12 }, 'abs', 'dark'),
+    families: ['abs'],
+    level: 5,
+    castInitialSpeed: 8,
+    ...over,
+  })
+
+  it('壁を貫けば当たる局面では、迂回できなくても命中する候補を選ぶ', async () => {
+    const { evaluateEnemyShot } = await import('./enemyPlanning/evaluate')
+    const wall = fullWall(0, 1) // 薄い壁で全幅を塞ぐ＝迂回路は無いが貫通はできる
+    const e = avoider({ castInitialSpeed: 14 })
+    const a = ally('a', { x: 0, y: -13 }, 'light')
+    const plan = planEnemyShot(e, [a], [wall], [], [e], 40)!
+    expect(plan).not.toBeNull()
+    expect(plan.expectedDamage).toBeGreaterThan(0) // 牽制でなく命中候補
+    const ev = evaluateEnemyShot(plan.trajectory, e.castInitialSpeed, [wall], [], { aimPos: a.pos })
+    const hit = firstHit(ev.flight.samples, a.pos, GAME.allyHitbox)
+    expect(hit).not.toBeNull() // 本番の削り込みでも実際に届く
+    expect(hit!.speed).toBeGreaterThan(0)
+  })
+
+  it('厚い壁で完全に塞がれた迂回型は牽制せず、相手へ最短で届く経路を掘り進めて命中する', async () => {
+    const { resolveTurn } = await import('./turn')
+    const { evaluateEnemyShot } = await import('./enemyPlanning/evaluate')
+    const e = avoider({ id: 'e0' })
+    let obstacles: Obstacle[] = [fullWall(0, 5)] // 厚み5＝1発では抜けない・迂回路なし
+    let allies: Ally[] = [ally('a', { x: 0, y: -13 }, 'light', 5000, 5000)]
+    const straight = Math.hypot(allies[0].pos.x - e.pos.x, allies[0].pos.y - e.pos.y)
+    let prevRemain = Infinity
+    let hitTurn = -1
+    for (let turn = 1; turn <= 10; turn++) {
+      const plan = planEnemyShot(e, allies, obstacles, [], [e], 40)!
+      expect(plan).not.toBeNull()
+      // 障害物が無ければ必ず対象へ届く軌道＝「相手へ向かう一手」（牽制の折れは自由飛行でも外す）
+      const free = enemyFlight(plan.trajectory, e.castInitialSpeed).flight
+      const freeHit = firstHit(free.samples, allies[0].pos, GAME.allyHitbox)
+      expect(freeHit, `turn ${turn}`).not.toBeNull()
+      // 最短で届く：対象までの弧長が直線距離の1.3倍以内＝遠回りの掘削を選ばない
+      expect(freeHit!.arcLen).toBeLessThan(straight * 1.3)
+      const ev = evaluateEnemyShot(plan.trajectory, e.castInitialSpeed, obstacles, [], { aimPos: allies[0].pos })
+      // まだ届かない間は、必ず壁を削り進める（牽制で足踏みしない）＝残り素材は単調に減る
+      if (!firstHit(ev.flight.samples, allies[0].pos, GAME.allyHitbox)) {
+        expect(ev.materialLenBefore - ev.materialLenAfter, `turn ${turn}`).toBeGreaterThan(0)
+        expect(ev.materialLenAfter).toBeLessThanOrEqual(prevRemain + 1e-6)
+        prevRemain = ev.materialLenAfter
+      }
+      // 本番のターン解決で盤面へ削りを反映する（次ターンの計画は掘った穴を見る）
+      const res = resolveTurn({
+        allies, casts: [], enemies: [e], castingEnemyIds: [e.id],
+        obstacles, mechanics: { obstacles: true, enemyFire: true },
+      })
+      obstacles = res.obstacles
+      allies = res.allies
+      if (res.enemyShots.some((sh) => sh.hits.length > 0)) {
+        hitTurn = turn
+        break
+      }
+    }
+    expect(hitTurn).toBeGreaterThan(0) // 掘り抜いていずれ命中する
+  })
+})
