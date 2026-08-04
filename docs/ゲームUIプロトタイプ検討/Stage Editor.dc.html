@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Silkscreen:wght@400;700&display=swap" rel="stylesheet">
+<script type="module" src="./engine/loader.js"></script>
+<style>
+*{box-sizing:border-box;border-radius:0 !important}
+html,body{margin:0;height:100%}
+#root{height:100%}
+body{background:#06060c;color:#e9e9f4;font-family:'DotGothic16',monospace;-webkit-font-smoothing:none;overflow:hidden;letter-spacing:.4px;
+ --gold:#f4c65a;--gold2:#ffe6a0;--goldd:#6b4e14;--vio:#957dff;--vio2:#c3b6ff;--viod:#342765;--neu:#aab3c6;--red:#ff7d5e;--grn:#7fe6a4;
+ --panel:#0d0d18;--edge:#26263c;--edge2:#3a3a58;--dim:#7c7f94;--dot:'DotGothic16',monospace;--px:'Silkscreen','DotGothic16',monospace}
+a,a:hover{color:var(--gold);text-decoration:none}
+button{font-family:var(--dot);letter-spacing:.5px;cursor:pointer;color:inherit;transition:none}
+button:active{transform:translate(1px,1px)}
+input,select,textarea{font-family:var(--dot);letter-spacing:.5px;background:#0c0c16;border:1.5px solid var(--edge2);color:#e6ecfa;padding:3px 5px;font-size:11px}
+canvas{image-rendering:pixelated}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:#2a2a42}
+</style>
+</helmet>
+
+<div style="position:absolute;inset:0;display:flex;flex-direction:column;background:#06060c">
+
+  <!-- ===== toolbar ===== -->
+  <div style="flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:5px 9px;border-bottom:1.5px solid var(--edge2);background:#0b0b14">
+    <span style="flex:none;font-family:var(--px);font-size:10px;letter-spacing:2px;color:var(--gold2)">STAGE CAD</span>
+    <select value="{{ baseSel }}" onChange="{{ loadBase }}" title="下敷きにするステージ" style="flex:none;width:132px">
+      <sc-for list="{{ baseOpts }}" as="o" hint-placeholder-count="7">
+        <option value="{{ o.v }}">{{ o.label }}</option>
+      </sc-for>
+    </select>
+    <input value="{{ stageName }}" onChange="{{ setName }}" title="面の名前" style="flex:none;width:150px">
+    <span style="flex:none;width:1px;height:16px;background:var(--edge2)"></span>
+    <span style="flex:none;font-size:10px;color:var(--dim)">LVL</span>
+    <input type="number" min="1" max="7" step="1" value="{{ lvl }}" onChange="{{ setLvl }}" style="flex:none;width:46px">
+    <span style="flex:none;font-size:10px;color:var(--dim)">rField</span>
+    <input type="range" min="20" max="100" step="1" value="{{ rField }}" onChange="{{ setR }}" onInput="{{ setR }}" style="flex:none;width:120px;accent-color:#f4c65a">
+    <input type="number" min="20" max="100" step="1" value="{{ rField }}" onChange="{{ setRNum }}" style="flex:none;width:52px">
+    <span style="flex:none;width:1px;height:16px;background:var(--edge2)"></span>
+    <span style="flex:none;font-size:10px;color:var(--dim)">吸着</span>
+    <sc-for list="{{ snapBtns }}" as="s" hint-placeholder-count="4">
+      <button onClick="{{ s.click }}" style="{{ s.style }}">{{ s.label }}</button>
+    </sc-for>
+    <button onClick="{{ toggleGrid }}" title="方眼の表示" style="{{ gridStyle }}">方眼</button>
+    <button onClick="{{ toggleSight }}" title="味方→敵の射線が通るか" style="{{ sightStyle }}">射線</button>
+    <div style="flex:1;min-width:0"></div>
+    <button onClick="{{ undo }}" title="Ctrl+Z" style="{{ undoStyle }}">↶</button>
+    <button onClick="{{ redo }}" title="Ctrl+Shift+Z" style="{{ redoStyle }}">↷</button>
+    <button onClick="{{ askReset }}" style="flex:none;padding:5px 9px;background:#0c0c16;border:1.5px solid var(--edge2);font-size:10px;color:var(--dim)">{{ resetLabel }}</button>
+    <button onClick="{{ openExport }}" style="flex:none;padding:5px 11px;background:#241d06;border:1.5px solid var(--gold);font-size:10.5px;color:var(--gold2)">書き出し</button>
+  </div>
+
+  <div style="flex:1;min-height:0;display:flex">
+    <!-- ===== drawing area ===== -->
+    <div style="flex:1;min-width:0;position:relative;background:#05050b">
+      <canvas data-editor-canvas="1" ref="{{ canvasRef }}" style="position:absolute;inset:0;width:100%;height:100%;display:block;cursor:crosshair"></canvas>
+      <div style="{{ warnStyle }}">{{ warnText }}</div>
+
+      <!-- 右クリックメニュー -->
+      <sc-if value="{{ menuOpen }}" hint-placeholder-val="{{ false }}">
+        <div onClick="{{ closeMenu }}" onContextMenu="{{ closeMenu }}" style="position:absolute;inset:0;z-index:20">
+          <div onClick="{{ stopProp }}" style="{{ menuStyle }}">
+            <div style="{{ menuBackStyle }}">
+              <button onClick="{{ menuBack }}" style="width:100%;text-align:left;padding:5px 9px;background:#0c0c16;border:none;font-size:10px;color:var(--dim)">← {{ menuTitle }}</button>
+            </div>
+            <sc-for list="{{ menuItems }}" as="m" hint-placeholder-count="6">
+              <button onClick="{{ m.click }}" title="{{ m.title }}" style="{{ m.style }}">
+                <span style="flex:1;min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ m.label }}</span>
+                <span style="flex:none;font-size:9px;color:var(--dim)">{{ m.hint }}</span>
+              </button>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+    </div>
+
+    <!-- ===== properties ===== -->
+    <div style="flex:none;width:274px;border-left:1.5px solid var(--edge2);background:#0a0a12;display:flex;flex-direction:column;overflow-y:auto">
+      <div style="flex:none;padding:8px 10px;border-bottom:1.5px solid var(--edge);background:#0e0e1a;font-size:10.5px;color:var(--dim);letter-spacing:1px">{{ selHead }}</div>
+      <div style="flex:none;padding:9px 10px;display:flex;flex-direction:column;gap:7px;border-bottom:1.5px solid var(--edge)">
+        <div style="{{ selEmptyStyle }}">盤面を右クリックで追加。クリックで選択、ドラッグで移動、Ctrl＋ドラッグで複製して移動、四隅のハンドルで大きさを変える。</div>
+        <div style="{{ selBodyStyle }}">
+          <div style="{{ selTextStyle }}">
+            <input value="{{ selName }}" onChange="{{ setSelName }}" style="width:100%">
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:6px">
+            <sc-for list="{{ selFields }}" as="f" hint-placeholder-count="4">
+              <label style="display:flex;flex-direction:column;gap:2px;font-size:9px;color:var(--dim)">
+                <span>{{ f.label }}</span>
+                <input type="number" min="{{ f.min }}" max="{{ f.max }}" step="{{ f.step }}" value="{{ f.val }}" onChange="{{ f.set }}">
+              </label>
+            </sc-for>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:5px;margin-top:8px">
+            <sc-for list="{{ selEnums }}" as="e" hint-placeholder-count="2">
+              <div style="display:flex;flex-direction:column;gap:3px">
+                <span style="font-size:9px;color:var(--dim)">{{ e.label }}</span>
+                <div style="display:flex;flex-wrap:wrap;gap:3px">
+                  <sc-for list="{{ e.opts }}" as="o" hint-placeholder-count="3">
+                    <button onClick="{{ o.click }}" title="{{ o.title }}" style="{{ o.style }}">{{ o.label }}</button>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="font-size:9.5px;color:var(--dim);line-height:1.6;margin-top:8px">{{ selNote }}</div>
+        </div>
+      </div>
+      <div style="flex:none;padding:8px 10px;border-bottom:1.5px solid var(--edge);background:#0e0e1a;font-size:10.5px;color:var(--dim);letter-spacing:1px">{{ listHead }}</div>
+      <div style="flex:1;padding:7px 10px 14px;display:flex;flex-direction:column;gap:2px">
+        <sc-for list="{{ rows }}" as="r" hint-placeholder-count="6">
+          <button onClick="{{ r.click }}" style="{{ r.style }}">
+            <span style="flex:none;width:12px;text-align:center;color:{{ r.dot }}">●</span>
+            <span style="flex:1;min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.label }}</span>
+            <span style="flex:none;font-size:9px;color:var(--dim)">{{ r.meta }}</span>
+          </button>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== status bar ===== -->
+  <div style="flex:none;display:flex;align-items:center;gap:14px;padding:4px 10px;border-top:1.5px solid var(--edge2);background:#0b0b14;font-size:9.5px;color:var(--dim)">
+    <span style="flex:none">{{ statusPos }}</span>
+    <span style="flex:none">{{ statusSel }}</span>
+    <div style="flex:1;min-width:0"></div>
+    <span style="flex:none">右クリック 追加 ／ Ctrl+C コピー ・ Ctrl+V 貼り付け ・ Ctrl+D 複製 ・ Ctrl+Z 戻す ・ Del 削除 ・ 矢印 微調整</span>
+  </div>
+
+  <!-- ===== export ===== -->
+  <sc-if value="{{ exportOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeExport }}" style="position:absolute;inset:0;z-index:40;background:#04040af2;display:flex;align-items:center;justify-content:center;padding:24px">
+      <div onClick="{{ stopProp }}" style="width:min(880px,96vw);height:min(660px,94%);display:flex;flex-direction:column;background:#0b0b14;border:1.5px solid var(--edge2);box-shadow:7px 7px 0 #000">
+        <div style="flex:none;display:flex;align-items:center;gap:10px;padding:10px 13px;border-bottom:1.5px solid var(--edge2);background:#0e0e1a">
+          <span style="font-family:var(--dot);font-size:13px;color:var(--gold2);letter-spacing:1px">書き出し</span>
+          <sc-for list="{{ expTabs }}" as="t" hint-placeholder-count="2">
+            <button onClick="{{ t.click }}" style="{{ t.style }}">{{ t.label }}</button>
+          </sc-for>
+          <div style="flex:1"></div>
+          <button onClick="{{ copyExport }}" style="padding:5px 12px;background:#241d06;border:1.5px solid var(--gold);font-size:11px;color:var(--gold2)">{{ copyLabel }}</button>
+          <button onClick="{{ closeExport }}" style="padding:5px 11px;background:#0c0c16;border:1.5px solid var(--edge2);font-size:11px;color:var(--dim)">閉じる ✕</button>
+        </div>
+        <textarea readOnly="{{ true }}" value="{{ exportText }}" style="flex:1;min-height:0;resize:none;font-size:11px;line-height:1.65;border:none;background:#07070f;padding:12px 14px;white-space:pre;overflow:auto"></textarea>
+        <div style="flex:none;padding:8px 13px;border-top:1.5px solid var(--edge);background:#09090f;font-size:9.5px;color:var(--dim);line-height:1.6">{{ exportNote }}</div>
+      </div>
+    </div>
+  </sc-if>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1280,&quot;height&quot;:800}}">
+class Component extends DCLogic {
+  state={ ready:false, err:'', name:'新しい面', lvl:1, rField:25, ops:[], foes:[], allies:[],
+    sel:null, snap:1, sight:true, grid:true, exportOpen:false, expTab:'ts', copied:false,
+    resetArm:false, base:'blank', hist:[], future:[], clip:null, menu:null };
+
+  R=2.4; STEP=2.4; WSTEP=3.36; // stageBuilders の素材寸法
+  OPF={
+    disc:[['cx','中心x',-100,100,0.5],['cy','中心y',-100,100,0.5],['r','半径',0.6,60,0.2]],
+    rect:[['x','左下x',-100,100,0.5],['y','左下y',-100,100,0.5],['w','幅',0.5,160,0.5],['h','高さ',0.5,160,0.5]],
+    pillar:[['cx','中心x',-100,100,0.5],['y0','下端y',-100,100,0.5],['n','段数',1,40,1]],
+    block:[['x0','x',-100,100,0.5],['y0','y',-100,100,0.5],['cols','列数',1,40,1],['rows','段数',1,40,1]],
+    wall:[['x0','始点x',-100,100,0.5],['x1','終点x',-100,100,0.5],['y0','y',-100,100,0.5],['rows','段数',1,20,1]],
+    ring:[['cx','中心x',-100,100,0.5],['cy','中心y',-100,100,0.5],['radius','半径',2,90,0.5]],
+    colonnade:[['x0','始点x',-100,100,0.5],['x1','終点x',-100,100,0.5],['step','柱間隔',1,30,0.5],['y0','y',-100,100,0.5],['n','段数',1,20,1]],
+    spiralArm:[['cx','中心x',-100,100,0.5],['cy','中心y',-100,100,0.5],['n','点数',3,80,1],['turns','巻数',0.2,4,0.1],['phase','位相',0,6.3,0.1]],
+    roomWalls:[['xL','左',-100,100,0.5],['xR','右',-100,100,0.5],['yB','下',-100,100,0.5],['yT','上',-100,100,0.5]],
+    roomWallsOpenEnds:[['xL','左',-100,100,0.5],['xR','右',-100,100,0.5]],
+    raw:[['dx','移動x',-100,100,0.5],['dy','移動y',-100,100,0.5]],
+  };
+  OPXY={ disc:[['cx'],['cy']], rect:[['x'],['y']], pillar:[['cx'],['y0']], block:[['x0'],['y0']],
+    wall:[['x0','x1'],['y0']], ring:[['cx'],['cy']], colonnade:[['x0','x1'],['y0']],
+    spiralArm:[['cx'],['cy']], roomWalls:[['xL','xR'],['yB','yT']], roomWallsOpenEnds:[['xL','xR'],[]],
+    raw:[['dx'],['dy']] };
+  OPLABEL={ disc:'円（柱）', rect:'長方形', pillar:'縦柱', block:'ブロック', wall:'横壁',
+    ring:'リング', colonnade:'列柱', spiralArm:'渦の腕', roomWalls:'部屋の囲い', roomWallsOpenEnds:'部屋（左右）', raw:'既存の壁' };
+  OPNEW={ disc:{cx:0,cy:6,r:3}, rect:{x:-6,y:4,w:12,h:3}, pillar:{cx:0,y0:4,n:3},
+    block:{x0:-4,y0:4,cols:3,rows:2}, wall:{x0:-8,x1:8,y0:6,rows:2}, ring:{cx:0,cy:0,radius:10},
+    colonnade:{x0:-12,x1:12,step:6,y0:6,n:2}, spiralArm:{cx:0,cy:0,n:16,turns:1.2,phase:0},
+    roomWalls:{xL:-14,xR:14,yB:-20,yT:20}, roomWallsOpenEnds:{xL:-14,xR:14} };
+  // 大きさをハンドルで変えられる形（BOX＝矩形ハンドル8個／CIRC＝半径ハンドル）
+  BOXT=['rect','roomWalls','roomWallsOpenEnds','block','wall','pillar','colonnade'];
+  CIRCT=['disc','ring'];
+  KINDS=[['normal','普通'],['fragile','もろい'],['tough','頑丈'],['unbreakable','不壊']];
+  ELS=[['neutral','無'],['light','光'],['dark','闇']];
+  FAMS=[['line','直進'],['arc','弧'],['wave','波'],['spiral','渦'],['exp','昇り'],['poly34','捻れ'],['harmonic','重波'],['abs','折れ']];
+  ROLES=[['attacker','攻撃'],['breaker','破壊'],['guardian','守護'],['ruptor','崩し']];
+  SPECIES=[['proto','原型'],['oni','鋼鬼'],['wraith','亡霊'],['redWraith','紅亡霊'],['golem','ゴーレム']];
+  TIERS={
+    proto:[{id:'p1',t:'原型',lv:1,name:'石像の番人',el:'dark',fam:'line',hp:90}],
+    oni:[{id:'o1',t:'I',lv:3,name:'白の祭司',el:'light',role:'breaker',fam:'line',hp:130},
+      {id:'o2',t:'I',lv:3,name:'黒の祭司',el:'dark',role:'breaker',fam:'line',hp:130},
+      {id:'o3',t:'II',lv:4,name:'鏡像の衛士（光）',el:'light',role:'breaker',fam:'line',hp:125},
+      {id:'o4',t:'II',lv:4,name:'鏡像の衛士（闇）',el:'dark',role:'breaker',fam:'line',hp:125},
+      {id:'o5',t:'III',lv:6,name:'守護者の眷属（鋼鬼）',el:'light',role:'breaker',fam:'line',hp:130}],
+    wraith:[{id:'w1',t:'I',lv:2,name:'回廊の衛士',el:'dark',fam:'arc',hp:110},
+      {id:'w2',t:'I',lv:2,name:'影の射手',el:'dark',fam:'abs',hp:105},
+      {id:'w3',t:'II',lv:3,name:'坑道の弓手',el:'light',fam:'abs',hp:125},
+      {id:'w4',t:'III',lv:5,name:'鏡像の射手（闇）',el:'dark',fam:'abs',hp:120,slip:true},
+      {id:'w5',t:'IV',lv:6,name:'守護者の眷属（亡霊魔術師）',el:'dark',fam:'abs',hp:130,slip:true}],
+    redWraith:[{id:'r1',t:'I',lv:5,name:'崩し手（提示個体）',el:'dark',role:'ruptor',fam:'arc',every:2,off:1},
+      {id:'r2',t:'II',lv:6,name:'崩し手・弧',el:'light',role:'ruptor',fam:'arc',hp:175,every:2,off:1,spd:6.5},
+      {id:'r3',t:'II',lv:6,name:'崩し手・折れ',el:'dark',role:'ruptor',fam:'abs',hp:175,every:2,spd:6.5}],
+    golem:[{id:'g1',t:'I',lv:4,name:'渦の番兵',el:'dark',role:'guardian',fam:'spiral',hp:140},
+      {id:'g2',t:'II',lv:5,name:'鏡守のゴーレム',el:'light',role:'guardian',fam:'spiral',hp:160,dir:true},
+      {id:'g3',t:'III',lv:6,name:'封印の番人',el:'light',role:'guardian',fam:'spiral',hp:180,dir:true,alt:true}],
+  };
+
+  componentDidMount(){
+    const K=this.constructor;
+    const boot=(E)=>{ K.__E=E; this.E=E; if(!K.__booted){ K.__booted=true; this._blank(); }
+      this._set({ready:true}); this._loop(); };
+    if(K.__E){ boot(K.__E); return; }
+    if(window.GrimoireEngine) boot(window.GrimoireEngine);
+    else{
+      window.addEventListener('grimoire-engine-ready',(ev)=>{ if(!this.E) boot(ev.detail||window.GrimoireEngine); },{once:true});
+      const poll=setInterval(()=>{ if(this.E){ clearInterval(poll); return; }
+        if(window.GrimoireEngine){ clearInterval(poll); boot(window.GrimoireEngine); }
+        else if(window.GrimoireEngineReady){ clearInterval(poll);
+          window.GrimoireEngineReady.then(boot).catch(e=>this._set({err:String(e&&e.message||e)})); } },120);
+    }
+    if(!K.__key){ K.__key=(ev)=>{ const c=K.__cur; if(c&&c.inst) c.inst._onKey(ev); };
+      window.addEventListener('keydown',K.__key); }
+  }
+  _loop(){ const K=this.constructor; if(K.__iv) return;
+    K.__iv=setInterval(()=>{ const c=K.__cur, s=(c&&c.inst)||this;
+      try{ s._draw(); }catch(e){ s._derr=String(e&&e.message||e); } },1000/30); }
+  _S(){ const c=this.constructor.__cur; return (c&&c.state)||this['state']; }
+  _set(patch){ const c=this.constructor.__cur; ((c&&c.inst)||this).setState(patch); }
+
+  // ---------- モデル ----------
+  _uid(p){ const K=this.constructor; K.__n=(K.__n||0)+1; return p+K.__n; }
+  _blank(){
+    const party=(this.E&&this.E.party&&this.E.party.PARTY)||[];
+    this._set({ name:'新しい面', lvl:1, rField:25, base:'blank', sel:null, hist:[], future:[], menu:null,
+      allies:party.map((a,i)=>({ id:a.id||('a'+i), name:a.name||('術者'+(i+1)), x:a.pos?a.pos.x:(i-1)*10, y:a.pos?a.pos.y:-16, element:a.element||'neutral' })),
+      foes:[ this._foeFrom('proto',this.TIERS.proto[0],{x:0,y:15}) ],
+      ops:[ { id:this._uid('op'), t:'roomWallsOpenEnds', element:'neutral', kind:'unbreakable', p:{...this.OPNEW.roomWallsOpenEnds} } ] });
+  }
+  _foeFrom(species,tp,pos){
+    return { id:this._uid('e'), species, name:tp.name, x:pos.x, y:pos.y, element:tp.el, level:tp.lv,
+      family:tp.fam, role:tp.role||'attacker', hp:tp.hp||null, slip:!!tp.slip, dir:!!tp.dir, alt:!!tp.alt,
+      every:tp.every||null, off:tp.off||null, spd:tp.spd||null, boss:false, castCount:null };
+  }
+  _push(patch){
+    const S=this._S(), snap={ name:S.name, lvl:S.lvl, rField:S.rField, ops:S.ops, foes:S.foes, allies:S.allies };
+    this._set({ ...patch, hist:[...S.hist.slice(-60),snap], future:[] });
+  }
+  undo(){ const S=this._S(); if(!S.hist.length) return;
+    const prev=S.hist[S.hist.length-1];
+    const cur={ name:S.name, lvl:S.lvl, rField:S.rField, ops:S.ops, foes:S.foes, allies:S.allies };
+    this._set({ ...prev, hist:S.hist.slice(0,-1), future:[cur,...S.future].slice(0,60), menu:null }); }
+  redo(){ const S=this._S(); if(!S.future.length) return;
+    const nxt=S.future[0];
+    const cur={ name:S.name, lvl:S.lvl, rField:S.rField, ops:S.ops, foes:S.foes, allies:S.allies };
+    this._set({ ...nxt, future:S.future.slice(1), hist:[...S.hist,cur], menu:null }); }
+
+  _loadStage(i){
+    const E=this.E, st=(E.stages.STAGES||[])[i]; if(!st) return;
+    const ops=(st.obstacles||[]).map(o=>({ id:this._uid('op'), t:'raw', element:o.element||'neutral',
+      kind:o.kind||'normal', p:{dx:0,dy:0}, obs:{ solids:(o.solids||[]).map(s=>({...s})), rects:(o.rects||[]).map(r=>({...r})) } }));
+    const foes=(st.enemies||[]).map(e=>({ id:this._uid('e'), species:e.species||'proto', name:e.name,
+      x:e.pos.x, y:e.pos.y, element:e.element, level:e.level||1, family:e.family, role:e.role||'attacker',
+      hp:e.maxHp, slip:!!e.slipThrough, dir:!!e.directedAura, alt:!!e.alternatingAura,
+      every:e.fireEvery||null, off:e.fireOffset||null, spd:e.castInitialSpeed||null, boss:!!e.boss, castCount:e.castCount||null }));
+    const party=(E.party.PARTY||[]);
+    const apos=st.allyPositions||(st.allies||[]).map(a=>a.pos)||[];
+    this._push({ name:st.name||('第'+(i+1)+'面'), lvl:st.lvl||st.level||i+1, rField:st.rField||25,
+      ops, foes, sel:null, base:'s'+i, menu:null,
+      allies:party.map((a,k)=>{ const p=apos[k]||a.pos||{x:(k-1)*10,y:-16};
+        return { id:a.id||('a'+k), name:a.name, x:p.x, y:p.y, element:a.element||'neutral' }; }) });
+  }
+
+  // ---------- 幾何 ----------
+  _buildOp(op,rField){
+    const B=this.E.builders, p=op.p, el=op.element||'neutral', k=op.kind||'normal';
+    try{
+      if(op.t==='disc') return B.disc(p.cx,p.cy,p.r,el,k);
+      if(op.t==='rect') return B.rect(p.x,p.y,p.w,p.h,el,k);
+      if(op.t==='pillar') return B.pillar(p.cx,p.y0,p.n,el,k);
+      if(op.t==='block') return B.block(p.x0,p.y0,p.cols,p.rows,el,k);
+      if(op.t==='wall') return B.wall(p.x0,p.x1,p.y0,p.rows,el,k);
+      if(op.t==='ring') return B.ring(p.cx,p.cy,p.radius,el,k);
+      if(op.t==='colonnade') return B.colonnade(p.x0,p.x1,p.step,p.y0,p.n,[el],k);
+      if(op.t==='spiralArm') return B.spiralArm(p.cx,p.cy,p.n,p.turns,p.phase,el,2.5,k);
+      if(op.t==='roomWalls') return B.roomWalls(p.xL,p.xR,p.yB,p.yT,rField,el,k);
+      if(op.t==='roomWallsOpenEnds') return B.roomWallsOpenEnds(p.xL,p.xR,rField);
+      if(op.t==='raw') return { element:el, kind:k, carves:[],
+        solids:(op.obs.solids||[]).map(s=>({...s,x:s.x+p.dx,y:s.y+p.dy})),
+        rects:(op.obs.rects||[]).map(q=>({...q,x:q.x+p.dx,y:q.y+p.dy})) };
+    }catch(_){ }
+    return null;
+  }
+  _obstacles(){
+    const S=this._S(), out=[];
+    S.ops.forEach(op=>{ const r=this._buildOp(op,S.rField);
+      (Array.isArray(r)?r:r?[r]:[]).forEach((o,i)=>out.push({ ...o, carves:o.carves||[], id:op.id+'#'+i, __op:op.id })); });
+    return out;
+  }
+  _enemies(){
+    const B=this.E.builders;
+    return this._S().foes.map(f=>{
+      let e;
+      try{ e=B.enemy(f.name,{x:f.x,y:f.y},f.element,f.level,f.family,{ role:f.role, hp:f.hp||undefined,
+        castInitialSpeed:f.spd||undefined, fireEvery:f.every||undefined, fireOffset:f.off||undefined,
+        slipThrough:f.slip, directedAura:f.dir, alternatingAura:f.alt, boss:f.boss,
+        castCount:f.castCount||undefined, species:f.species }); }
+      catch(_){ e={ pos:{x:f.x,y:f.y}, hp:100, maxHp:100, element:f.element, hitboxRadius:2, statuses:[], species:f.species, level:f.level }; }
+      return { ...e, id:f.id, statuses:[] };
+    });
+  }
+  _cells(o){ try{ return this.E.obstacle.materialCells(o); }catch(_){ return (o.solids||[]).map(s=>({...s})); } }
+  // op の外形（数学座標の矩形）
+  _bbox(op){
+    const r=this._buildOp(op,this._S().rField), arr=Array.isArray(r)?r:r?[r]:[];
+    let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;
+    // 矩形は矩形そのまま、円は中心±半径で測る（materialCells の格子で丸めない）
+    arr.forEach(o=>{
+      (o.solids||[]).forEach(c=>{ x0=Math.min(x0,c.x-c.r); x1=Math.max(x1,c.x+c.r);
+        y0=Math.min(y0,c.y-c.r); y1=Math.max(y1,c.y+c.r); });
+      (o.rects||[]).forEach(r2=>{ x0=Math.min(x0,r2.x); x1=Math.max(x1,r2.x+r2.w);
+        y0=Math.min(y0,r2.y); y1=Math.max(y1,r2.y+r2.h); });
+    });
+    if(x0>x1) return null;
+    return {x0,x1,y0,y1};
+  }
+  // 外形の矩形から各ヘルパーのパラメータへ写す（CAD 的なリサイズ）
+  _boxToP(op,b){
+    const R=this.R, ST=this.STEP, WS=this.WSTEP, p={...op.p};
+    const w=Math.max(0.6,b.x1-b.x0), h=Math.max(0.6,b.y1-b.y0);
+    const cx=(b.x0+b.x1)/2, cy=(b.y0+b.y1)/2;
+    if(op.t==='rect'){ p.x=b.x0; p.y=b.y0; p.w=w; p.h=h; }
+    else if(op.t==='roomWalls'){ p.xL=b.x0; p.xR=b.x1; p.yB=b.y0; p.yT=b.y1; }
+    else if(op.t==='roomWallsOpenEnds'){ p.xL=b.x0; p.xR=b.x1; }
+    else if(op.t==='block'){ p.x0=b.x0+R; p.y0=b.y0+R;
+      p.cols=Math.max(1,Math.round((w-2*R)/ST)+1); p.rows=Math.max(1,Math.round((h-2*R)/ST)+1); }
+    else if(op.t==='wall'){ p.x0=b.x0+R; p.x1=Math.max(b.x0+R,b.x1-R); p.y0=b.y0+R;
+      p.rows=Math.max(1,Math.round((h-2*R)/WS)+1); }
+    else if(op.t==='pillar'){ p.cx=cx; p.y0=b.y0+R; p.n=Math.max(1,Math.round((h-2*R)/ST)+1); }
+    else if(op.t==='colonnade'){ p.x0=b.x0+R; p.x1=Math.max(b.x0+R,b.x1-R); p.y0=b.y0+R;
+      p.n=Math.max(1,Math.round((h-2*R)/ST)+1); }
+    else if(op.t==='disc'){ p.cx=cx; p.cy=cy; p.r=Math.max(0.6,Math.min(w,h)/2); }
+    else if(op.t==='ring'){ p.cx=cx; p.cy=cy; p.radius=Math.max(2,Math.min(w,h)/2-R); }
+    Object.keys(p).forEach(k=>{ if(typeof p[k]==='number') p[k]=Math.round(p[k]*100)/100; });
+    return p;
+  }
+  _handles(op){ // 数学座標のハンドル一覧
+    const b=this._bbox(op); if(!b) return [];
+    if(this.CIRCT.indexOf(op.t)>=0){
+      const cx=(b.x0+b.x1)/2, cy=(b.y0+b.y1)/2;
+      return [{k:'r',x:b.x1,y:cy},{k:'r',x:cx,y:b.y1}];
+    }
+    if(this.BOXT.indexOf(op.t)<0) return [];
+    const mx=(b.x0+b.x1)/2, my=(b.y0+b.y1)/2;
+    return [{k:'nw',x:b.x0,y:b.y1},{k:'n',x:mx,y:b.y1},{k:'ne',x:b.x1,y:b.y1},
+      {k:'w',x:b.x0,y:my},{k:'e',x:b.x1,y:my},
+      {k:'sw',x:b.x0,y:b.y0},{k:'s',x:mx,y:b.y0},{k:'se',x:b.x1,y:b.y0}];
+  }
+  _issues(obs){
+    const S=this._S(), byOp={};
+    obs.forEach(o=>{ (byOp[o.__op]=byOp[o.__op]||[]).push(...this._cells(o).slice(0,90)); });
+    const keys=Object.keys(byOp), overlap=new Set();
+    for(let i=0;i<keys.length;i++) for(let j=i+1;j<keys.length;j++){
+      const A=byOp[keys[i]], Bc=byOp[keys[j]];
+      let hit=false;
+      for(const a of A){ for(const b of Bc){ if(Math.hypot(a.x-b.x,a.y-b.y) < (a.r+b.r)*0.62){ hit=true; break; } } if(hit) break; }
+      if(hit){ overlap.add(keys[i]); overlap.add(keys[j]); }
+    }
+    const outside=new Set(), names=[];
+    S.foes.forEach(f=>{ if(Math.hypot(f.x,f.y)>S.rField){ outside.add(f.id); names.push(f.name); } });
+    S.allies.forEach(a=>{ if(Math.hypot(a.x,a.y)>S.rField){ outside.add(a.id); names.push(a.name); } });
+    return { overlap, outside, names };
+  }
+  _blocked(a,b,obs){
+    const dx=b.x-a.x, dy=b.y-a.y, L=Math.hypot(dx,dy)||1, ux=dx/L, uy=dy/L;
+    for(const o of obs){ for(const c of this._cells(o)){
+      const t=Math.max(0,Math.min(L,(c.x-a.x)*ux+(c.y-a.y)*uy));
+      if(Math.hypot(a.x+ux*t-c.x, a.y+uy*t-c.y) <= c.r) return true; } }
+    return false;
+  }
+
+  // ---------- 描画 ----------
+  canvasRef=(el)=>{
+    if(!el) return;
+    this._cv=el; this.constructor.__cv=el;
+    if(el.__ggBound) return; el.__ggBound=true;
+    el.addEventListener('pointerdown',(ev)=>{ const c=this.constructor.__cur, s=(c&&c.inst)||this; s._down(ev); });
+    el.addEventListener('pointermove',(ev)=>{ const c=this.constructor.__cur, s=(c&&c.inst)||this; s._move(ev); });
+    el.addEventListener('pointerup',()=>{ const c=this.constructor.__cur, s=(c&&c.inst)||this; s._up(); });
+    el.addEventListener('pointercancel',()=>{ const c=this.constructor.__cur, s=(c&&c.inst)||this; s._up(); });
+    el.addEventListener('contextmenu',(ev)=>{ ev.preventDefault();
+      const c=this.constructor.__cur, s=(c&&c.inst)||this; s._context(ev); });
+  };
+  _vp(cv){ return { width:cv.clientWidth, height:cv.clientHeight, unitsRadius:this._S().rField*1.12, zoom:1, pan:{x:0,y:0} }; }
+  _draw(){
+    if(!this._cv){ const el=document.querySelector('[data-editor-canvas]'); if(el) this.canvasRef(el); }
+    if(!this.E) this.E=this.constructor.__E;
+    const cv=this._cv, E=this.E; if(!cv||!E) return;
+    const d=Math.min(2,window.devicePixelRatio||1);
+    const w=Math.round(cv.clientWidth*d), h=Math.round(cv.clientHeight*d);
+    if(cv.width!==w||cv.height!==h){ cv.width=w; cv.height=h; }
+    const ctx=cv.getContext('2d'); ctx.setTransform(d,0,0,d,0,0); ctx.imageSmoothingEnabled=false;
+    const S=this._S(), vp=this._vp(cv), W=cv.clientWidth, H=cv.clientHeight;
+    const P=(p)=>E.coords.toScreen(p,vp), s=E.coords.scaleOf(vp);
+    ctx.fillStyle='#05050b'; ctx.fillRect(0,0,W,H);
+    // 方眼（細 1・太 5・極太 25）
+    if(S.grid){
+      const lim=Math.ceil(S.rField*1.2/5)*5+5;
+      ctx.lineWidth=1;
+      for(let g=-lim;g<=lim;g+=1){
+        const major=(g%25===0)?2:(g%5===0)?1:0;
+        if(major===0 && s<12) continue;
+        ctx.strokeStyle=major===2?'rgba(90,98,136,.55)':major===1?'rgba(58,58,88,.5)':'rgba(40,40,62,.34)';
+        const a=P({x:g,y:-lim}), b=P({x:g,y:lim});
+        ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+        const c=P({x:-lim,y:g}), e2=P({x:lim,y:g});
+        ctx.beginPath(); ctx.moveTo(c.x,c.y); ctx.lineTo(e2.x,e2.y); ctx.stroke();
+      }
+    }
+    const O=P({x:0,y:0});
+    ctx.strokeStyle='rgba(120,130,166,.6)'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(0,O.y); ctx.lineTo(W,O.y); ctx.moveTo(O.x,0); ctx.lineTo(O.x,H); ctx.stroke();
+    ctx.strokeStyle='rgba(244,198,90,.75)'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(O.x,O.y,S.rField*s,0,Math.PI*2); ctx.stroke();
+    ctx.fillStyle='rgba(244,198,90,.7)'; ctx.font='10px "DotGothic16",monospace'; ctx.textAlign='left';
+    ctx.fillText('rField '+S.rField, O.x+4, O.y-S.rField*s-5);
+
+    const obs=this._obstacles(), foes=this._enemies();
+    try{ E.draw.drawObstacles(ctx,obs,vp); }catch(_){ }
+    const iss=this._issues(obs);
+    // 射線
+    if(S.sight) S.allies.forEach(a=>{ S.foes.forEach(f=>{
+      const bl=this._blocked({x:a.x,y:a.y},{x:f.x,y:f.y},obs);
+      const A=P({x:a.x,y:a.y}), Bp=P({x:f.x,y:f.y});
+      ctx.strokeStyle=bl?'rgba(255,125,94,.26)':'rgba(127,230,164,.38)';
+      ctx.setLineDash(bl?[3,4]:[]); ctx.lineWidth=1.2;
+      ctx.beginPath(); ctx.moveTo(A.x,A.y); ctx.lineTo(Bp.x,Bp.y); ctx.stroke(); ctx.setLineDash([]); }); });
+    try{ E.draw.drawEnemies(ctx,foes,vp,undefined,Date.now()/500,undefined,new Set()); }catch(_){
+      foes.forEach(f=>{ const Q=P(f.pos); ctx.fillStyle='#957dff'; ctx.beginPath(); ctx.arc(Q.x,Q.y,8,0,6.3); ctx.fill(); }); }
+    try{ E.draw.drawCasters(ctx,S.allies.map(a=>({ id:a.id, name:a.name, pos:{x:a.x,y:a.y}, hp:100, maxHp:100,
+      element:a.element, statuses:[] })),vp,null,undefined,Date.now()/500); }catch(_){
+      S.allies.forEach(a=>{ const Q=P({x:a.x,y:a.y}); ctx.fillStyle='#f4c65a'; ctx.beginPath(); ctx.arc(Q.x,Q.y,7,0,6.3); ctx.fill(); }); }
+
+    // 重なり警告
+    const drawn={};
+    obs.forEach(o=>{ if(drawn[o.__op]||!iss.overlap.has(o.__op)) return; drawn[o.__op]=1; });
+    S.ops.forEach(op=>{ if(!iss.overlap.has(op.id)) return;
+      const b=this._bbox(op); if(!b) return;
+      const A=P({x:b.x0,y:b.y1}), Bp=P({x:b.x1,y:b.y0});
+      ctx.strokeStyle='rgba(255,125,94,.8)'; ctx.setLineDash([4,3]); ctx.lineWidth=1.4;
+      ctx.strokeRect(A.x,A.y,Bp.x-A.x,Bp.y-A.y); ctx.setLineDash([]); });
+
+    // 選択の枠とハンドル
+    const sel=S.sel;
+    if(sel&&sel.t==='obs'){
+      const op=S.ops.find(o=>o.id===sel.id), b=op&&this._bbox(op);
+      if(b){
+        const A=P({x:b.x0,y:b.y1}), Bp=P({x:b.x1,y:b.y0});
+        ctx.strokeStyle='rgba(255,230,160,.95)'; ctx.lineWidth=1.5;
+        ctx.strokeRect(A.x-1,A.y-1,Bp.x-A.x+2,Bp.y-A.y+2);
+        const hs=this._handles(op);
+        hs.forEach(hh=>{ const Q=P(hh); ctx.fillStyle='#0b0b14';
+          ctx.fillRect(Q.x-4,Q.y-4,8,8);
+          ctx.strokeStyle='rgba(255,230,160,.95)'; ctx.lineWidth=1.5; ctx.strokeRect(Q.x-4,Q.y-4,8,8); });
+        // 寸法表示
+        ctx.font='9.5px "DotGothic16",monospace'; ctx.fillStyle='rgba(255,230,160,.9)'; ctx.textAlign='center';
+        ctx.fillText((b.x1-b.x0).toFixed(1),(A.x+Bp.x)/2,Bp.y+13);
+        ctx.save(); ctx.translate(A.x-9,(A.y+Bp.y)/2); ctx.rotate(-Math.PI/2);
+        ctx.fillText((b.y1-b.y0).toFixed(1),0,0); ctx.restore();
+      }
+    }
+    const mark=(p,selected,warn)=>{ const Q=P(p);
+      if(selected){ ctx.strokeStyle='rgba(255,230,160,.95)'; ctx.lineWidth=1.5; ctx.strokeRect(Q.x-13,Q.y-13,26,26); }
+      if(warn){ ctx.strokeStyle='rgba(255,125,94,.9)'; ctx.setLineDash([3,3]); ctx.lineWidth=1.5;
+        ctx.strokeRect(Q.x-15,Q.y-15,30,30); ctx.setLineDash([]); } };
+    S.foes.forEach(f=>mark({x:f.x,y:f.y}, sel&&sel.t==='foe'&&sel.id===f.id, iss.outside.has(f.id)));
+    S.allies.forEach(a=>mark({x:a.x,y:a.y}, sel&&sel.t==='ally'&&sel.id===a.id, iss.outside.has(a.id)));
+    // 十字カーソル
+    if(this.constructor.__mouse){ const Q=P(this.constructor.__mouse);
+      ctx.strokeStyle='rgba(244,198,90,.35)'; ctx.lineWidth=1; ctx.setLineDash([2,4]);
+      ctx.beginPath(); ctx.moveTo(Q.x,0); ctx.lineTo(Q.x,H); ctx.moveTo(0,Q.y); ctx.lineTo(W,Q.y); ctx.stroke(); ctx.setLineDash([]); }
+    this._iss=iss;
+  }
+
+  // ---------- ポインタ ----------
+  _c(){ return this._cv||this.constructor.__cv; }
+  _pt(ev){ const cv=this._c(), r=cv.getBoundingClientRect();
+    return this.E.coords.toMath({x:ev.clientX-r.left,y:ev.clientY-r.top},this._vp(cv)); }
+  _local(ev){ const r=this._c().getBoundingClientRect(); return {x:ev.clientX-r.left,y:ev.clientY-r.top}; }
+  _snapv(x){ const q=this._S().snap; return q?Math.round(x/q)*q:x; }
+  _pick(m){
+    const S=this._S();
+    let pick=null;
+    S.foes.forEach(f=>{ if(Math.hypot(f.x-m.x,f.y-m.y)<3.2) pick={t:'foe',id:f.id}; });
+    if(!pick) S.allies.forEach(a=>{ if(Math.hypot(a.x-m.x,a.y-m.y)<3.2) pick={t:'ally',id:a.id}; });
+    if(!pick){ const obs=this._obstacles();
+      for(const o of obs){ for(const c of this._cells(o)){
+        if(Math.hypot(c.x-m.x,c.y-m.y)<=c.r){ pick={t:'obs',id:o.__op}; break; } } if(pick) break; } }
+    return pick;
+  }
+  _down(ev){
+    if(ev.button!==0) return;
+    const S=this._S(), m=this._pt(ev), lp=this._local(ev);
+    if(S.menu) this._set({menu:null});
+    // ハンドル（選択中の壁）を掴んだか
+    if(S.sel&&S.sel.t==='obs'){
+      const op=S.ops.find(o=>o.id===S.sel.id);
+      if(op){ const vp=this._vp(this._c());
+        for(const hh of this._handles(op)){
+          const Q=this.E.coords.toScreen(hh,vp);
+          if(Math.abs(Q.x-lp.x)<=7 && Math.abs(Q.y-lp.y)<=7){
+            this.constructor.__drag={ mode:'resize', id:op.id, k:hh.k, box:this._bbox(op), moved:false };
+            try{ this._c().setPointerCapture(ev.pointerId); }catch(_){ }; return; } } }
+    }
+    const pick=this._pick(m);
+    this._set({sel:pick,resetArm:false});
+    if(pick){ this.constructor.__drag={ mode:'move', ...pick, m, moved:false, dup:(ev.ctrlKey||ev.metaKey) };
+      try{ this._c().setPointerCapture(ev.pointerId); }catch(_){ }; }
+  }
+  _move(ev){
+    if(this._c()) this.constructor.__mouse=this._pt(ev);
+    const g=this.constructor.__drag; if(!g) return;
+    const S=this._S();
+    if(g.mode==='resize'){
+      const m=this._pt(ev), b={...g.box}, k=g.k;
+      if(k==='r'){ const cx=(g.box.x0+g.box.x1)/2, cy=(g.box.y0+g.box.y1)/2;
+        const rr=Math.max(0.6,this._snapv(Math.max(Math.abs(m.x-cx),Math.abs(m.y-cy))));
+        b.x0=cx-rr; b.x1=cx+rr; b.y0=cy-rr; b.y1=cy+rr; }
+      else{
+        if(k.indexOf('w')>=0) b.x0=Math.min(this._snapv(m.x),b.x1-1);
+        if(k.indexOf('e')>=0) b.x1=Math.max(this._snapv(m.x),b.x0+1);
+        if(k.indexOf('s')>=0) b.y0=Math.min(this._snapv(m.y),b.y1-1);
+        if(k.indexOf('n')>=0) b.y1=Math.max(this._snapv(m.y),b.y0+1);
+      }
+      if(!g.moved){ g.moved=true; this._push({}); }
+      this._set({ ops:S.ops.map(op=>op.id===g.id?{...op,p:this._boxToP(op,b)}:op) });
+      return;
+    }
+    const m=this._pt(ev), dx=m.x-g.m.x, dy=m.y-g.m.y;
+    if(!g.moved && Math.hypot(dx,dy)<0.35) return;
+    if(!g.moved){
+      g.moved=true; this._push({});
+      // ドラッグ中は自前の作業配列を持ち、毎フレームそれを丸ごと書く（setState の遅れに影響されない）
+      const S0=this._S();
+      g.foes=S0.foes.slice(); g.ops=S0.ops.slice(); g.allies=S0.allies.slice();
+      if(g.dup && g.t!=='ally'){ // Ctrl＋ドラッグ＝複製して複製側を動かす（味方は対象外）
+        if(g.t==='foe'){ const f=g.foes.find(q=>q.id===g.id);
+          if(f){ const n={...f,id:this._uid('e')}; g.foes.push(n); g.id=n.id; } }
+        else{ const o=g.ops.find(q=>q.id===g.id);
+          if(o){ const n={...o,id:this._uid('op'),p:{...o.p}};
+            if(o.obs) n.obs=JSON.parse(JSON.stringify(o.obs)); g.ops.push(n); g.id=n.id; } } }
+      // 掴んだ時点の値を覚えて、毎回「元の値＋総移動量」を吸着する（累積の丸め誤差を出さない）
+      g.m0={x:g.m.x,y:g.m.y};
+      if(g.t==='foe'){ const f=g.foes.find(q=>q.id===g.id); g.base=f?{x:f.x,y:f.y}:{x:0,y:0}; }
+      else if(g.t==='ally'){ const a=g.allies.find(q=>q.id===g.id); g.base=a?{x:a.x,y:a.y}:{x:0,y:0}; }
+      else{ const o=g.ops.find(q=>q.id===g.id); g.baseP=o?{...o.p}:{}; }
+      this._set({ sel:{t:g.t,id:g.id} });
+    }
+    const tdx=m.x-g.m0.x, tdy=m.y-g.m0.y;
+    if(g.t==='foe'){ g.foes=g.foes.map(f=>f.id===g.id
+        ?{...f,x:this._snapv(g.base.x+tdx),y:this._snapv(g.base.y+tdy)}:f);
+      this._set({ foes:g.foes }); }
+    else if(g.t==='ally'){ g.allies=g.allies.map(a=>a.id===g.id
+        ?{...a,x:this._snapv(g.base.x+tdx),y:this._snapv(g.base.y+tdy)}:a);
+      this._set({ allies:g.allies }); }
+    else{ g.ops=g.ops.map(op=>{ if(op.id!==g.id) return op;
+        const [xs,ys]=this.OPXY[op.t]||[[],[]], p={...op.p};
+        xs.forEach(k=>p[k]=this._snapv((g.baseP[k]||0)+tdx));
+        ys.forEach(k=>p[k]=this._snapv((g.baseP[k]||0)+tdy));
+        return {...op,p}; });
+      this._set({ ops:g.ops }); }
+  }
+  _up(){ this.constructor.__drag=null; }
+  // Ctrl＋ドラッグ用：その場に複製して、以後は複製側を動かす（味方は複製しない）
+  _dupTo(t,id){
+    const S=this._S();
+    if(t==='foe'){ const f=S.foes.find(q=>q.id===id); if(!f) return null;
+      const n={...f,id:this._uid('e')}; this._set({ foes:[...S.foes,n], sel:{t:'foe',id:n.id} }); return n.id; }
+    if(t==='obs'){ const o=S.ops.find(q=>q.id===id); if(!o) return null;
+      const n={...o,id:this._uid('op'),p:{...o.p}}; if(o.obs) n.obs={ solids:(o.obs.solids||[]).map(s=>({...s})), rects:(o.obs.rects||[]).map(r=>({...r})) };
+      this._set({ ops:[...S.ops,n], sel:{t:'obs',id:n.id} }); return n.id; }
+    return null;
+  }
+
+  // ---------- 右クリックメニュー ----------
+  _context(ev){
+    const m=this._pt(ev), lp=this._local(ev), pick=this._pick(m);
+    this._set({ sel:pick, menu:{ x:lp.x, y:lp.y, mx:m.x, my:m.y, path:null } });
+  }
+  _menuAt(){ const mn=this._S().menu; return mn?{x:mn.mx,y:mn.my}:(this.constructor.__mouse||{x:0,y:0}); }
+
+  // ---------- 編集 ----------
+  _addFoe(species,tp,pos){ const S=this._S();
+    const f=this._foeFrom(species,tp,{x:this._snapv(pos.x),y:this._snapv(pos.y)});
+    this._push({ foes:[...S.foes,f], sel:{t:'foe',id:f.id}, menu:null }); }
+  _addOp(t,pos){ const S=this._S(), p={...this.OPNEW[t]};
+    const [xs,ys]=this.OPXY[t]||[[],[]];
+    const b0={ // 既定形をクリック位置へ寄せる
+      x:this._snapv(pos.x), y:this._snapv(pos.y) };
+    const ref=this._bbox({t,p,element:'neutral',kind:'normal'});
+    if(ref){ const cx=(ref.x0+ref.x1)/2, cy=(ref.y0+ref.y1)/2;
+      xs.forEach(k=>p[k]+=b0.x-cx); ys.forEach(k=>p[k]+=b0.y-cy); }
+    const op={ id:this._uid('op'), t, element:'neutral',
+      kind:(t==='roomWalls'||t==='roomWallsOpenEnds')?'unbreakable':'normal', p };
+    this._push({ ops:[...S.ops,op], sel:{t:'obs',id:op.id}, menu:null }); }
+  copySel(){ const S=this._S(), sel=S.sel; if(!sel||sel.t==='ally') return;
+    if(sel.t==='foe'){ const f=S.foes.find(q=>q.id===sel.id); if(f) this._set({clip:{t:'foe',data:{...f}}}); }
+    else { const o=S.ops.find(q=>q.id===sel.id); if(o) this._set({clip:{t:'obs',data:JSON.parse(JSON.stringify(o))}}); } }
+  cutSel(){ this.copySel(); this.delSel(); }
+  paste(at){
+    const S=this._S(), c=S.clip; if(!c) return;
+    const pos=at||this._menuAt();
+    if(c.t==='foe'){ const n={...c.data,id:this._uid('e'),x:this._snapv(pos.x),y:this._snapv(pos.y)};
+      this._push({ foes:[...S.foes,n], sel:{t:'foe',id:n.id}, menu:null }); return; }
+    const o=JSON.parse(JSON.stringify(c.data)); o.id=this._uid('op');
+    const ref=this._bbox(o);
+    if(ref){ const [xs,ys]=this.OPXY[o.t]||[[],[]], cx=(ref.x0+ref.x1)/2, cy=(ref.y0+ref.y1)/2;
+      xs.forEach(k=>o.p[k]+=this._snapv(pos.x)-cx); ys.forEach(k=>o.p[k]+=this._snapv(pos.y)-cy); }
+    this._push({ ops:[...S.ops,o], sel:{t:'obs',id:o.id}, menu:null });
+  }
+  delSel(){ const S=this._S(), sel=S.sel; if(!sel) return;
+    if(sel.t==='foe') this._push({ foes:S.foes.filter(f=>f.id!==sel.id), sel:null, menu:null });
+    else if(sel.t==='ally') this._set({ menu:null });
+    else this._push({ ops:S.ops.filter(o=>o.id!==sel.id), sel:null, menu:null }); }
+  dupSel(){ const S=this._S(), sel=S.sel; if(!sel||sel.t==='ally') return;
+    if(sel.t==='foe'){ const f=S.foes.find(q=>q.id===sel.id); if(!f) return;
+      const n={...f,id:this._uid('e'),x:f.x+3,y:f.y+3};
+      this._push({ foes:[...S.foes,n], sel:{t:'foe',id:n.id}, menu:null }); return; }
+    const o=S.ops.find(q=>q.id===sel.id); if(!o) return;
+    const n={...o,id:this._uid('op'),p:{...o.p}};
+    if(o.obs) n.obs=JSON.parse(JSON.stringify(o.obs));
+    const [xs,ys]=this.OPXY[o.t]||[[],[]];
+    xs.forEach(k=>n.p[k]+=3); ys.forEach(k=>n.p[k]+=3);
+    this._push({ ops:[...S.ops,n], sel:{t:'obs',id:n.id}, menu:null }); }
+  _shift(dx,dy){
+    const S=this._S(), sel=S.sel; if(!sel) return;
+    if(sel.t==='foe') this._set({ foes:S.foes.map(f=>f.id===sel.id?{...f,x:f.x+dx,y:f.y+dy}:f) });
+    else if(sel.t==='ally') this._set({ allies:S.allies.map(a=>a.id===sel.id?{...a,x:a.x+dx,y:a.y+dy}:a) });
+    else this._set({ ops:S.ops.map(op=>{ if(op.id!==sel.id) return op;
+      const [xs,ys]=this.OPXY[op.t]||[[],[]], p={...op.p};
+      xs.forEach(k=>p[k]+=dx); ys.forEach(k=>p[k]+=dy); return {...op,p}; }) });
+  }
+  _onKey(ev){
+    const S=this._S(), tag=(ev.target&&ev.target.tagName)||'';
+    if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return;
+    const mod=ev.ctrlKey||ev.metaKey, k=ev.key.toLowerCase();
+    if(mod&&k==='z'){ ev.preventDefault(); ev.shiftKey?this.redo():this.undo(); return; }
+    if(mod&&k==='y'){ ev.preventDefault(); this.redo(); return; }
+    if(mod&&k==='c'){ ev.preventDefault(); this.copySel(); return; }
+    if(mod&&k==='x'){ ev.preventDefault(); this.cutSel(); return; }
+    if(mod&&k==='v'){ ev.preventDefault(); this.paste(this.constructor.__mouse); return; }
+    if(mod&&k==='d'){ ev.preventDefault(); this.dupSel(); return; }
+    if(ev.key==='Escape'){ this._set({menu:null,sel:null}); return; }
+    if(!S.sel) return;
+    const nudge={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,1],ArrowDown:[0,-1]}[ev.key];
+    if(nudge){ ev.preventDefault(); const q=(S.snap||1)*(ev.shiftKey?4:1);
+      this._push({}); this._shift(nudge[0]*q,nudge[1]*q); return; }
+    if(ev.key==='Delete'||ev.key==='Backspace'){ ev.preventDefault(); this.delSel(); }
+  }
+
+  // ---------- 書き出し ----------
+  _num(n){ return String(Math.round(n*100)/100); }
+  _ts(){
+    const S=this._S(), L=[];
+    L.push('// '+S.name+'（LVL '+S.lvl+' ／ rField '+S.rField+'）— Stage Editor で書き出し');
+    L.push('{');
+    L.push("  id: 'sN',");
+    L.push("  name: '"+S.name+"',");
+    L.push('  lvl: '+S.lvl+',');
+    L.push('  rField: '+S.rField+',');
+    L.push('  allyPositions: ['+S.allies.map(a=>'{ x: '+this._num(a.x)+', y: '+this._num(a.y)+' }').join(', ')+'],');
+    L.push('  enemies: [');
+    S.foes.forEach(f=>{
+      const o=[];
+      if(f.role&&f.role!=='attacker') o.push("role: '"+f.role+"'");
+      if(f.hp) o.push('hp: '+f.hp);
+      if(f.spd) o.push('castInitialSpeed: '+f.spd);
+      if(f.every) o.push('fireEvery: '+f.every);
+      if(f.off) o.push('fireOffset: '+f.off);
+      if(f.slip) o.push('slipThrough: true');
+      if(f.dir) o.push('directedAura: true');
+      if(f.alt) o.push('alternatingAura: true');
+      if(f.boss) o.push('boss: true');
+      if(f.castCount) o.push('castCount: '+f.castCount);
+      o.push("species: '"+f.species+"'");
+      L.push("    enemy('"+f.name+"', { x: "+this._num(f.x)+", y: "+this._num(f.y)+" }, '"+f.element+"', "+f.level+", '"+f.family+"', { "+o.join(', ')+" }),");
+    });
+    L.push('  ],');
+    L.push('  obstacles: [');
+    S.ops.forEach(op=>{
+      const p=op.p, el="'"+(op.element||'neutral')+"'", k="'"+(op.kind||'normal')+"'";
+      const a=(...xs)=>xs.map(v=>typeof v==='number'?this._num(v):v).join(', ');
+      if(op.t==='disc') L.push('    disc('+a(p.cx,p.cy,p.r,el,k)+'),');
+      else if(op.t==='rect') L.push('    rect('+a(p.x,p.y,p.w,p.h,el,k)+'),');
+      else if(op.t==='pillar') L.push('    pillar('+a(p.cx,p.y0,p.n,el,k)+'),');
+      else if(op.t==='block') L.push('    block('+a(p.x0,p.y0,p.cols,p.rows,el,k)+'),');
+      else if(op.t==='wall') L.push('    wall('+a(p.x0,p.x1,p.y0,p.rows,el,k)+'),');
+      else if(op.t==='ring') L.push('    ring('+a(p.cx,p.cy,p.radius,el,k)+'),');
+      else if(op.t==='colonnade') L.push('    ...colonnade('+a(p.x0,p.x1,p.step,p.y0,p.n)+', ['+el+'], '+k+'),');
+      else if(op.t==='spiralArm') L.push('    spiralArm('+a(p.cx,p.cy,p.n,p.turns,p.phase,el)+', 2.5, '+k+'),');
+      else if(op.t==='roomWalls') L.push('    ...roomWalls('+a(p.xL,p.xR,p.yB,p.yT,S.rField,el,k)+'),');
+      else if(op.t==='roomWallsOpenEnds') L.push('    ...roomWallsOpenEnds('+a(p.xL,p.xR,S.rField)+'),');
+      else if(op.t==='raw'){
+        const sol=(op.obs.solids||[]).map(s=>'{ x: '+this._num(s.x+p.dx)+', y: '+this._num(s.y+p.dy)+', r: '+this._num(s.r)+' }');
+        const rec=(op.obs.rects||[]).map(r=>'{ x: '+this._num(r.x+p.dx)+', y: '+this._num(r.y+p.dy)+', w: '+this._num(r.w)+', h: '+this._num(r.h)+' }');
+        if(sol.length) L.push('    ob('+el+', ['+sol.join(', ')+'], '+k+'),');
+        if(rec.length) L.push('    obRect('+el+', ['+rec.join(', ')+'], '+k+'),');
+      }
+    });
+    L.push('  ],');
+    L.push('}');
+    return L.join('\n');
+  }
+  _json(){
+    const S=this._S();
+    return JSON.stringify({ name:S.name, lvl:S.lvl, rField:S.rField,
+      allies:S.allies.map(a=>({id:a.id,name:a.name,pos:{x:a.x,y:a.y}})),
+      enemies:S.foes, obstacleOps:S.ops }, null, 2);
+  }
+
+  renderVals(){
+    const S=this['state'];
+    if(!this.E) this.E=this.constructor.__E;
+    const E=this.E;
+    this.constructor.__cur={ state:S, inst:this };
+    if(E) this._loop();
+    const btn=(on,extra)=>'flex:none;padding:4px 8px;font-family:var(--dot);font-size:10px;letter-spacing:.5px;background:'
+      +(on?'#241d06':'#0c0c16')+';border:1.5px solid '+(on?'var(--gold)':'var(--edge2)')+';color:'+(on?'var(--gold2)':'var(--dim)')+';'+(extra||'');
+    if(!S.ready) return { statusPos:S.err?('エンジン読み込み失敗：'+S.err):'エンジンを読み込み中…', statusSel:'',
+      warnStyle:'display:none', selEmptyStyle:'font-size:9.5px;color:var(--dim);line-height:1.6',
+      selBodyStyle:'display:none', selHead:'プロパティ', listHead:'オブジェクト', stageName:S.name, rField:String(S.rField), lvl:String(S.lvl),
+      exportOpen:false, menuOpen:false, snapBtns:[], rows:[], selFields:[], selEnums:[], menuItems:[],
+      baseOpts:[], expTabs:[], canvasRef:this.canvasRef, gridStyle:btn(true), sightStyle:btn(true),
+      undoStyle:btn(false), redoStyle:btn(false), resetLabel:'リセット' };
+
+    const STG=(E.stages.STAGES||[]);
+    const baseOpts=[{v:'blank',label:'空のテンプレート'}].concat(STG.map((st,i)=>({v:'s'+i,label:'第'+(i+1)+'面 '+(st.name||'')})));
+    const snapBtns=[[0,'—'],[0.5,'0.5'],[1,'1'],[2.4,'2.4'],[5,'5']].map(q=>({ label:q[1],
+      click:()=>this._set({snap:q[0]}), style:btn(S.snap===q[0]) }));
+
+    // ---- 右クリックメニュー ----
+    const mn=S.menu, sel=S.sel;
+    const mItem=(label,click,hint,title,danger)=>({ label, click, hint:hint||'', title:title||'',
+      style:'display:flex;align-items:center;gap:8px;width:100%;padding:5px 9px;background:#0c0c16;border:none;border-bottom:1px solid #15151f;'
+        +'font-family:var(--dot);font-size:10.5px;color:'+(danger?'var(--red)':'#e6ecfa') });
+    let menuItems=[], menuTitle='', menuBackStyle='display:none';
+    if(mn){
+      const at={x:mn.mx,y:mn.my};
+      if(mn.path && mn.path[0]==='foe' && mn.path[1]){
+        const sp=mn.path[1];
+        menuTitle='敵を追加 — '+(this.SPECIES.find(q=>q[0]===sp)||['','種族'])[1]; menuBackStyle='';
+        menuItems=(this.TIERS[sp]||[]).map(tp=>mItem(tp.t+'　'+tp.name,()=>this._addFoe(sp,tp,at),'LVL'+tp.lv));
+      } else if(mn.path && mn.path[0]==='foe'){
+        menuTitle='敵を追加'; menuBackStyle='';
+        menuItems=this.SPECIES.map(sp=>mItem(sp[1],()=>this._set({menu:{...mn,path:['foe',sp[0]]}}),'▸'));
+      } else if(mn.path && mn.path[0]==='obs'){
+        menuTitle='障害物を追加'; menuBackStyle='';
+        menuItems=Object.keys(this.OPNEW).map(t=>mItem(this.OPLABEL[t],()=>this._addOp(t,at)));
+      } else {
+        const selName=sel?(sel.t==='obs'?(this.OPLABEL[(S.ops.find(o=>o.id===sel.id)||{}).t]||'壁')
+          :sel.t==='foe'?((S.foes.find(f=>f.id===sel.id)||{}).name||'敵'):'味方'):null;
+        menuItems=[
+          mItem('敵を追加',()=>this._set({menu:{...mn,path:['foe']}}),'▸'),
+          mItem('障害物を追加',()=>this._set({menu:{...mn,path:['obs']}}),'▸'),
+          mItem('部屋の囲い（四方）',()=>this._addOp('roomWalls',{x:0,y:0})),
+          mItem('部屋の囲い（左右）',()=>this._addOp('roomWallsOpenEnds',{x:0,y:0})),
+        ];
+        if(S.clip) menuItems.push(mItem('貼り付け',()=>this.paste(at),'Ctrl+V'));
+        if(sel&&sel.t!=='ally'){
+          menuItems.push(mItem('コピー — '+selName,()=>{ this.copySel(); this._set({menu:null}); },'Ctrl+C'));
+          menuItems.push(mItem('複製',()=>this.dupSel(),'Ctrl+D'));
+          menuItems.push(mItem('切り取り',()=>this.cutSel(),'Ctrl+X'));
+          menuItems.push(mItem('削除',()=>this.delSel(),'Del',null,true));
+        } else if(sel&&sel.t==='ally'){
+          menuItems.push(mItem('味方は複製・削除できない','',''));
+        }
+      }
+    }
+
+    // ---- プロパティ ----
+    let selHead='プロパティ — 未選択', selFields=[], selEnums=[], selName='', selNote='', selTextStyle='display:none';
+    const numField=(label,val,min,max,step,set)=>({ label, val:String(val), min:String(min), max:String(max), step:String(step),
+      set:(ev)=>{ const v=parseFloat(ev.target.value); if(isFinite(v)) set(v); } });
+    if(sel&&sel.t==='obs'){
+      const op=S.ops.find(o=>o.id===sel.id);
+      if(op){
+        selHead='プロパティ — '+this.OPLABEL[op.t];
+        selFields=(this.OPF[op.t]||[]).map(f=>numField(f[1],op.p[f[0]],f[2],f[3],f[4],
+          (v)=>this._push({ ops:S.ops.map(o=>o.id===op.id?{...o,p:{...o.p,[f[0]]:v}}:o) })));
+        const setOp=(patch)=>this._push({ ops:S.ops.map(o=>o.id===op.id?{...o,...patch}:o) });
+        selEnums=[
+          { label:'属性', opts:this.ELS.map(e=>({ label:e[1], title:e[0], style:btn(op.element===e[0]), click:()=>setOp({element:e[0]}) })) },
+          { label:'種別', opts:this.KINDS.map(k=>({ label:k[1], title:k[0], style:btn((op.kind||'normal')===k[0]), click:()=>setOp({kind:k[0]}) })) },
+          { label:'形を変える', opts:['rect','disc','ring','wall','block','pillar','colonnade'].map(t=>({ label:this.OPLABEL[t], title:t,
+            style:btn(op.t===t), click:()=>{ if(op.t===t) return; const b=this._bbox(op)||{x0:-3,x1:3,y0:-3,y1:3};
+              const base={ ...op, t, p:{...this.OPNEW[t]} };
+              this._push({ ops:S.ops.map(o=>o.id===op.id?{...base,p:this._boxToP(base,b)}:o) }); } })) },
+        ];
+        selNote=op.t==='raw'
+          ? '既存ステージから読み込んだ壁。形は固定で、移動と属性・種別だけ変えられる。'
+          : this.CIRCT.indexOf(op.t)>=0 ? 'ハンドルを引くと半径が変わる。数値欄でも直接指定できる。'
+          : this.BOXT.indexOf(op.t)>=0 ? 'ハンドルを引くと縦横が変わる。段数・列数は寸法から自動で決まる。'
+          : 'ドラッグで移動。大きさは数値欄で指定する。';
+      }
+    } else if(sel&&sel.t==='foe'){
+      const f=S.foes.find(q=>q.id===sel.id);
+      if(f){
+        selHead='プロパティ — 敵'; selName=f.name; selTextStyle='';
+        const set=(patch)=>this._push({ foes:S.foes.map(q=>q.id===f.id?{...q,...patch}:q) });
+        selFields=[ numField('位置 x',f.x,-100,100,0.5,(v)=>set({x:v})), numField('位置 y',f.y,-100,100,0.5,(v)=>set({y:v})),
+          numField('LVL',f.level,1,7,1,(v)=>set({level:v})), numField('HP',f.hp||0,0,900,5,(v)=>set({hp:v||null})),
+          numField('発射間隔',f.every||0,0,4,1,(v)=>set({every:v||null})), numField('多重詠唱',f.castCount||0,0,5,1,(v)=>set({castCount:v||null})) ];
+        selEnums=[
+          { label:'属性', opts:this.ELS.map(e=>({ label:e[1], title:e[0], style:btn(f.element===e[0]), click:()=>set({element:e[0]}) })) },
+          { label:'戦い方', opts:this.ROLES.map(r=>({ label:r[1], title:r[0], style:btn(f.role===r[0]), click:()=>set({role:r[0]}) })) },
+          { label:'得意な系統', opts:this.FAMS.map(r=>({ label:r[1], title:r[0], style:btn(f.family===r[0]), click:()=>set({family:r[0]}) })) },
+          { label:'種族', opts:this.SPECIES.map(r=>({ label:r[1], title:r[0], style:btn(f.species===r[0]), click:()=>set({species:r[0]}) })) },
+          { label:'特性', opts:[['slip','同極すり抜け'],['dir','方向づけ'],['alt','交互張り'],['boss','ボス']]
+            .map(r=>({ label:r[1], title:r[0], style:btn(!!f[r[0]]), click:()=>set({[r[0]]:!f[r[0]]}) })) },
+        ];
+        selNote='初速は全敵 8 固定（06b §2）。崩し手のみ 6.5 の例外。';
+      }
+    } else if(sel&&sel.t==='ally'){
+      const a=S.allies.find(q=>q.id===sel.id);
+      if(a){
+        selHead='プロパティ — 味方（テスト配置）'; selName=a.name; selTextStyle='';
+        const set=(patch)=>this._push({ allies:S.allies.map(q=>q.id===a.id?{...q,...patch}:q) });
+        selFields=[ numField('位置 x',a.x,-100,100,0.5,(v)=>set({x:v})), numField('位置 y',a.y,-100,100,0.5,(v)=>set({y:v})) ];
+        selEnums=[{ label:'既定に戻す', opts:[{ label:'party.ts の位置へ', title:'reset', style:btn(false),
+          click:()=>{ const P=(E.party.PARTY||[]).find(q=>q.id===a.id); if(P) set({x:P.pos.x,y:P.pos.y}); } }] }];
+        selNote='味方は 3 人固定。複製・削除はできず、位置だけ動かせる。';
+      }
+    }
+
+    const iss=this._iss||{overlap:new Set(),outside:new Set()};
+    const warn=[]; if(iss.overlap.size) warn.push('壁の重なり '+iss.overlap.size+' 箇所');
+    if(iss.outside.size) warn.push('場の外：'+(iss.names||[]).join('・'));
+    const rowStyle=(on,bad)=>'display:flex;align-items:center;gap:5px;padding:4px 5px;font-size:10px;background:'
+      +(on?'#171233':'#0c0c16')+';border:1.5px solid '+(bad?'var(--red)':on?'var(--gold)':'var(--edge)')+';color:#e6ecfa';
+    const rows=[].concat(
+      S.foes.map(f=>({ label:f.name, meta:'LVL'+f.level, dot:f.element==='light'?'#f4c65a':f.element==='dark'?'#957dff':'#aab3c6',
+        click:()=>this._set({sel:{t:'foe',id:f.id}}), style:rowStyle(sel&&sel.t==='foe'&&sel.id===f.id,false) })),
+      S.ops.map(o=>({ label:this.OPLABEL[o.t], meta:(o.kind||'normal')+(iss.overlap.has(o.id)?' ⚠':''),
+        dot:o.element==='light'?'#f4c65a':o.element==='dark'?'#957dff':'#5c6076',
+        click:()=>this._set({sel:{t:'obs',id:o.id}}), style:rowStyle(sel&&sel.t==='obs'&&sel.id===o.id,iss.overlap.has(o.id)) })),
+      S.allies.map(a=>({ label:a.name, meta:'味方', dot:'#7fe6a4',
+        click:()=>this._set({sel:{t:'ally',id:a.id}}), style:rowStyle(sel&&sel.t==='ally'&&sel.id===a.id,false) })));
+
+    const cur=this.constructor.__mouse;
+    return {
+      canvasRef:this.canvasRef,
+      statusPos:cur?('x '+cur.x.toFixed(1)+'　y '+cur.y.toFixed(1)):'x —　y —',
+      statusSel:sel?('選択：'+selHead.replace('プロパティ — ','')):'選択なし',
+      warnText:warn.join(' ・ '),
+      warnStyle:warn.length?'position:absolute;left:10px;top:10px;font-size:10px;color:var(--red);background:#1a0b0bd8;padding:3px 7px;border:1px solid var(--red);pointer-events:none':'display:none',
+      stageName:S.name, setName:(ev)=>this._set({name:ev.target.value}),
+      lvl:String(S.lvl), setLvl:(ev)=>{ const v=parseInt(ev.target.value,10); if(v>=1&&v<=7) this._push({lvl:v}); },
+      rField:String(S.rField),
+      setR:(ev)=>this._set({rField:parseInt(ev.target.value,10)}),
+      setRNum:(ev)=>{ const v=parseInt(ev.target.value,10); if(v>=20&&v<=100) this._set({rField:v}); },
+      baseSel:S.base, baseOpts,
+      loadBase:(ev)=>{ const v=ev.target.value; if(v==='blank'){ this._push({}); this._blank(); } else this._loadStage(parseInt(v.slice(1),10)); },
+      undo:()=>this.undo(), redo:()=>this.redo(),
+      undoStyle:btn(false,'opacity:'+(S.hist.length?1:0.4)+';width:28px;text-align:center'),
+      redoStyle:btn(false,'opacity:'+(S.future.length?1:0.4)+';width:28px;text-align:center'),
+      resetLabel:S.resetArm?'もう一度で巻き戻す':'リセット',
+      askReset:()=>{ if(S.resetArm){ this._set({resetArm:false}); if(S.base==='blank') this._blank(); else this._loadStage(parseInt(S.base.slice(1),10)); }
+        else this._set({resetArm:true}); },
+      snapBtns, rows,
+      toggleSight:()=>this._set({sight:!S.sight}), sightStyle:btn(S.sight),
+      toggleGrid:()=>this._set({grid:!S.grid}), gridStyle:btn(S.grid),
+      listHead:'オブジェクト（敵 '+S.foes.length+' ／ 壁 '+S.ops.length+' ／ 味方 '+S.allies.length+'）',
+      selHead, selFields, selEnums, selName, selNote, selTextStyle,
+      setSelName:(ev)=>{ const v=ev.target.value;
+        if(sel&&sel.t==='foe') this._set({foes:S.foes.map(q=>q.id===sel.id?{...q,name:v}:q)});
+        else if(sel&&sel.t==='ally') this._set({allies:S.allies.map(q=>q.id===sel.id?{...q,name:v}:q)}); },
+      selEmptyStyle:sel?'display:none':'font-size:9.5px;color:var(--dim);line-height:1.6',
+      selBodyStyle:sel?'display:flex;flex-direction:column':'display:none',
+      menuOpen:!!mn, menuItems, menuTitle, menuBackStyle,
+      menuStyle:mn?('position:absolute;left:'+Math.round(mn.x)+'px;top:'+Math.round(mn.y)+'px;width:212px;'
+        +'background:#0c0c16;border:1.5px solid var(--edge2);box-shadow:5px 5px 0 #000;display:flex;flex-direction:column'):'display:none',
+      menuBack:()=>this._set({menu:{...mn,path:(mn&&mn.path&&mn.path.length>1)?[mn.path[0]]:null}}),
+      closeMenu:()=>this._set({menu:null}), stopProp:(ev)=>ev.stopPropagation(),
+      exportOpen:S.exportOpen, openExport:()=>this._set({exportOpen:true,copied:false}),
+      closeExport:()=>this._set({exportOpen:false}),
+      expTabs:[['ts','TS コード片'],['json','JSON']].map(t=>({ label:t[1], style:btn(S.expTab===t[0]),
+        click:()=>this._set({expTab:t[0],copied:false}) })),
+      exportText:S.expTab==='ts'?this._ts():this._json(),
+      copyLabel:S.copied?'コピーした ✓':'クリップボードへ',
+      copyExport:()=>{ const txt=S.expTab==='ts'?this._ts():this._json();
+        try{ navigator.clipboard.writeText(txt); this._set({copied:true}); }catch(_){ } },
+      exportNote:'TS 片は stages.ts の STAGES 配列にそのまま貼れる（enemy / disc / rect / wall / roomWalls などのヘルパーを import 済みの前提）。JSON は差分確認・他ツール用。',
+    };
+  }
+}
+</script>
+</body>
+</html>

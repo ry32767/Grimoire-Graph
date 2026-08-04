@@ -8,7 +8,7 @@ import type { Attribute, Enemy, Vec2, ZPoint } from '../game/types'
 import { toScreen, scaleOf, type Viewport } from '../game/coords'
 import { attributeOf, strengthOf } from '../game/attribute'
 import { acceleration } from '../game/physics'
-import { FIELD, SAMPLING } from '../data/constants'
+import { COMBAT, FIELD, SAMPLING } from '../data/constants'
 
 /** 射線ローカル軸の長さ（coords.ts の回転サンプリングと同じ規則）。 */
 function rayReach(fieldR: number): number {
@@ -401,6 +401,9 @@ export function drawOrbitRing(
   // 帯
   ctx.save()
   ctx.lineCap = 'round'
+  // 帯の太さ＝当たり判定の厚み（2×orbitBandHalf）をピクセルへ直したもの（#72）。
+  // 速度・強度は太さでなく明るさで語らせる（判定と見た目を必ず一致させる）。
+  ctx.lineWidth = 2 * COMBAT.orbitBandHalf * scaleOf(vp)
   for (let i = 0; i < n; i++) {
     const p = ring[i]
     const q = ring[(i + 1) % n]
@@ -408,9 +411,7 @@ export function drawOrbitRing(
     const f = Math.max(0, Math.min(1, sp / VM))
     const P = toScreen(p.pos, vp)
     const Q = toScreen(q.pos, vp)
-    const st = strengthOf(p.z)
     ctx.strokeStyle = zRgba(p.z, 0.14 + f * 0.72)
-    ctx.lineWidth = 1 + f * 2.6 + (st / FIELD.sMax) * 1.2
     ctx.beginPath()
     ctx.moveTo(P.x, P.y)
     ctx.lineTo(Q.x, Q.y)
@@ -560,8 +561,31 @@ export function drawDarkVeil(
       ctx.clip()
       path(rings[j])
       ctx.clip()
+      // 2 重は「全てが靄に沈む」＝中が一切見えない（#73）。
+      // 平らな黒だと穴が開いたように見えるので、濃い靄をゆっくり渦巻かせる
       ctx.fillStyle = '#04030a'
       ctx.fillRect(0, 0, vp.width, vp.height)
+      const ai = box(rings[i])
+      const bj = box(rings[j])
+      const mcx = (ai.cx + bj.cx) / 2
+      const mcy = (ai.cy + bj.cy) / 2
+      const span = Math.max(ai.x1 - ai.x0, bj.x1 - bj.x0)
+      ctx.globalCompositeOperation = 'lighter'
+      for (let k = 0; k < 11; k++) {
+        const a = phase * 0.35 + (k * Math.PI * 2) / 11
+        const rad = span * (0.16 + 0.11 * ((k % 3) + 1))
+        const px = mcx + Math.cos(a) * span * (0.14 + (k % 4) * 0.06)
+        const py = mcy + Math.sin(a * 0.8 + k) * span * (0.12 + (k % 3) * 0.05)
+        const g = ctx.createRadialGradient(px, py, 0, px, py, rad)
+        g.addColorStop(0, `rgba(72,52,126,${(0.30 + Math.sin(phase * 0.8 + k) * 0.14).toFixed(3)})`)
+        g.addColorStop(0.55, 'rgba(40,28,80,0.16)')
+        g.addColorStop(1, 'rgba(20,12,40,0)')
+        ctx.fillStyle = g
+        ctx.beginPath()
+        ctx.arc(px, py, rad, 0, Math.PI * 2)
+        ctx.fill()
+      }
+      ctx.globalCompositeOperation = 'source-over'
       ctx.restore()
       const a = box(rings[i])
       const b = box(rings[j])
@@ -617,6 +641,8 @@ export function drawFlightPath(
   if (upto < 1) return
   ctx.save()
   ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  // ① 属性色の帯：太さ＝属性強度 |z|（#74）。強い所ほど道が太く残る
   for (let i = 1; i <= upto; i++) {
     const A = pts[i - 1]
     const B = pts[i]
@@ -624,15 +650,32 @@ export function drawFlightPath(
     const age = 1 - (upto - i) / Math.max(1, upto)
     const P = toScreen(A.pos, vp)
     const Q = toScreen(B.pos, vp)
-    ctx.strokeStyle = zRgba(A.z, 0.1 + age * 0.3)
-    ctx.lineWidth = 0.9 + sizeFrac(A.speed, A.z) * 2.2
+    ctx.strokeStyle = zRgba(A.z, 0.2 + age * 0.55)
+    ctx.lineWidth = trailWidthPx(A.z, vp)
     ctx.beginPath()
     ctx.moveTo(P.x, P.y)
     ctx.lineTo(Q.x, Q.y)
     ctx.stroke()
   }
-  // 道に落ちた燐光（ゆっくり明滅して残る）
+  // ② 白熱の芯：太さは一定で、**明るさ＝威力**（速度×強度）。太さ＝強度と役割を分ける（#74）
   ctx.globalCompositeOperation = 'lighter'
+  for (let i = 1; i <= upto; i++) {
+    const A = pts[i - 1]
+    const B = pts[i]
+    if (!A || !B) break
+    const fr = sizeFrac(A.speed, A.z)
+    if (fr <= 0.04) continue
+    const age = 1 - (upto - i) / Math.max(1, upto)
+    const P = toScreen(A.pos, vp)
+    const Q = toScreen(B.pos, vp)
+    ctx.strokeStyle = `rgba(255,248,225,${(fr * (0.18 + age * 0.5)).toFixed(3)})`
+    ctx.lineWidth = Math.max(0.8, trailWidthPx(A.z, vp) * 0.34)
+    ctx.beginPath()
+    ctx.moveTo(P.x, P.y)
+    ctx.lineTo(Q.x, Q.y)
+    ctx.stroke()
+  }
+  // ③ 道に落ちた燐光（ゆっくり明滅して残る）
   for (let i = 6; i <= upto; i += 10) {
     const A = pts[i]
     if (!A) break
@@ -645,6 +688,68 @@ export function drawFlightPath(
     ctx.fill()
   }
   ctx.restore()
+}
+
+/**
+ * 威力を語るドット絵の煙（#74）。頭の後ろに四角い粒を置いて、外へ流れながら消える。
+ * 粒の数は固定（12）で、位置はサンプル添字と phase から決まる＝毎フレーム跳ねず、負荷も一定。
+ * 大きさ・濃さが威力（速度×強度）に比例するので、「重い魔法ほどもうもうと煙る」。
+ */
+export function drawPowerSmoke(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  pts: PreviewPoint[],
+  idx: number,
+  phase: number,
+  powerFrac: number,
+): void {
+  if (powerFrac <= 0.06 || idx < 2) return
+  const PUFFS = 12
+  ctx.save()
+  for (let k = 0; k < PUFFS; k++) {
+    const back = 2 + k * 3
+    const j = idx - back
+    if (j < 0) break
+    const a = pts[j]
+    const b = pts[Math.min(j + 1, pts.length - 1)]
+    if (!a || !b) break
+    const P = toScreen(a.pos, vp)
+    const Q = toScreen(b.pos, vp)
+    const dx = Q.x - P.x
+    const dy = Q.y - P.y
+    const m = Math.hypot(dx, dy) || 1
+    // 進行方向の法線へ、後ろほど大きく開きながら流れる
+    const spread = (k / PUFFS) * (5 + powerFrac * 18)
+    const side = k % 2 === 0 ? 1 : -1
+    const wob = Math.sin(phase * 1.3 + k * 1.9) * 0.6
+    const ox = (-dy / m) * (spread * side + wob)
+    const oy = (dx / m) * (spread * side + wob)
+    const fade = 1 - k / PUFFS
+    const px = Math.max(2, Math.round((2.5 + powerFrac * 7) * fade))
+    ctx.globalAlpha = Math.min(0.85, (0.25 + powerFrac) * fade * 0.9)
+    // 手前は白熱、後ろは属性色に冷える（色相は属性のまま＝威力は明るさで語る）
+    ctx.fillStyle = k < 3 ? 'rgba(255,248,225,1)' : zRgba(a.z, 1)
+    ctx.fillRect(Math.round(P.x + ox - px / 2), Math.round(P.y + oy - px / 2), px, px)
+  }
+  ctx.restore()
+}
+
+/** 飛行の軌跡の太さ（ユニット・#74）：属性強度 |z| が 0 のときの下限。 */
+const TRAIL_W_MIN = 0.12
+/**
+ * 軌跡の最大の太さ（ユニット・#74）。**弾の本体（＝当たり判定 2×bulletRadius）より必ず細い**こと。
+ * 太い軌跡を当たり判定と読み違えないよう、本体の最小直径（2×bulletRadiusMin）の 6 割に抑える。
+ * bulletRadiusMin から導くので、当たり半径を調整しても勝手にズレない。
+ */
+const TRAIL_W_MAX = COMBAT.bulletRadiusMin * 1.2
+
+/**
+ * z（属性強度）から軌跡の太さ（画面ピクセル）を引く（#74）。
+ * **戦闘アニメとエンドロールが必ず同じ見た目になるよう、太さの規則はここ1か所に置く。**
+ */
+export function trailWidthPx(z: number, vp: Viewport): number {
+  const f = Math.min(1, strengthOf(z) / FIELD.sMax)
+  return (TRAIL_W_MIN + (TRAIL_W_MAX - TRAIL_W_MIN) * f) * scaleOf(vp)
 }
 
 /** 発射の閃光（詠唱の瞬間・術者位置から広がる輪）。progress 0→1。 */
@@ -865,4 +970,132 @@ export function drawDamageNumber(
     ctx.fillText('＋', x - text.length * size * 0.4, y)
   }
   ctx.restore()
+}
+
+/** 光の結界（回復のオーラ）を描くための1枚（#73）。 */
+export interface LightRing {
+  ring: ZPoint[]
+  owner: 'ally' | 'enemy'
+}
+
+/**
+ * 光の結界の内側に「癒やしの場」を描く（#73）。
+ * 闇幕（drawDarkVeil）と対になる表現で、**囲まれている＝毎ターン回復している**ことを目で分かるようにする。
+ * - 内側に暖色のグラデーションを敷き、光の粒がゆっくり上へ昇る
+ * - 縁は流れる破線＋「癒やしの輪」の見出し
+ * - **2 枚が重なった範囲は効果も 2 重**（engine は内側優先で最大2つ・turn.ts §5.5）なので、
+ *   重なりだけを一段明るく塗り、「二重回復」を出す
+ */
+export function drawLightAura(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  rings: LightRing[],
+  phase: number,
+): void {
+  if (rings.length === 0) return
+  const path = (r: LightRing) => {
+    ctx.beginPath()
+    r.ring.forEach((p, i) => {
+      const P = toScreen(p.pos, vp)
+      if (i === 0) ctx.moveTo(P.x, P.y)
+      else ctx.lineTo(P.x, P.y)
+    })
+    ctx.closePath()
+  }
+  const box = (r: LightRing) => {
+    let x0 = Infinity
+    let y0 = Infinity
+    let x1 = -Infinity
+    let y1 = -Infinity
+    for (const p of r.ring) {
+      const P = toScreen(p.pos, vp)
+      if (P.x < x0) x0 = P.x
+      if (P.y < y0) y0 = P.y
+      if (P.x > x1) x1 = P.x
+      if (P.y > y1) y1 = P.y
+    }
+    return { x0, y0, x1, y1, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 }
+  }
+
+  for (const r of rings) {
+    const b = box(r)
+    const rad = Math.max(8, Math.max(b.x1 - b.x0, b.y1 - b.y0) / 2)
+    ctx.save()
+    path(r)
+    ctx.clip()
+    // 内側の暖かい下地（中心ほど淡く、縁に向かって金色が乗る）
+    const g = ctx.createRadialGradient(b.cx, b.cy, 0, b.cx, b.cy, rad)
+    g.addColorStop(0, 'rgba(244,198,90,0.05)')
+    g.addColorStop(0.72, 'rgba(244,198,90,0.10)')
+    g.addColorStop(1, 'rgba(255,226,150,0.20)')
+    ctx.fillStyle = g
+    ctx.fillRect(b.x0 - 4, b.y0 - 4, b.x1 - b.x0 + 8, b.y1 - b.y0 + 8)
+    // 昇る光の粒（位置は index 由来で安定。phase でゆっくり上へ流れる）
+    ctx.globalCompositeOperation = 'lighter'
+    const N = 18
+    const h = b.y1 - b.y0 + 8
+    for (let i = 0; i < N; i++) {
+      const u = (i * 0.6180339887) % 1
+      const x = b.x0 + u * (b.x1 - b.x0)
+      const y = b.y1 - (((phase * 22 + i * 37) % h) )
+      const a = 0.5 + Math.sin(phase * 1.6 + i) * 0.3
+      const rr = 1.2 + ((i % 3) * 0.5)
+      ctx.fillStyle = `rgba(255,236,176,${Math.max(0, a * 0.55).toFixed(3)})`
+      ctx.beginPath()
+      ctx.arc(x, y, rr, 0, Math.PI * 2)
+      ctx.fill()
+    }
+    ctx.globalCompositeOperation = 'source-over'
+    ctx.restore()
+    // 縁：流れる破線＋見出し
+    ctx.save()
+    path(r)
+    ctx.strokeStyle = 'rgba(255,214,120,.62)'
+    ctx.lineWidth = 1.5
+    ctx.setLineDash([6, 4])
+    ctx.lineDashOffset = phase * 6
+    ctx.stroke()
+    ctx.setLineDash([])
+    ctx.textAlign = 'center'
+    ctx.font = FONT(10, true)
+    const lb = r.owner === 'enemy' ? '敵の癒やしの輪' : '癒やしの輪 — 毎ターン回復'
+    ctx.strokeStyle = '#120c04'
+    ctx.lineWidth = 3.5
+    ctx.strokeText(lb, b.cx, b.y0 - 6)
+    ctx.fillStyle = '#ffd98a'
+    ctx.fillText(lb, b.cx, b.y0 - 6)
+    ctx.restore()
+  }
+
+  // 重なり＝効果も2重（engine は内側優先で最大2つ）。重なりだけを明るく塗って知らせる
+  for (let i = 0; i < rings.length; i++) {
+    for (let j = i + 1; j < rings.length; j++) {
+      if (rings[i].owner !== rings[j].owner) continue
+      ctx.save()
+      path(rings[i])
+      ctx.clip()
+      path(rings[j])
+      ctx.clip()
+      ctx.globalCompositeOperation = 'lighter'
+      ctx.fillStyle = `rgba(255,226,150,${(0.10 + Math.sin(phase * 2) * 0.03).toFixed(3)})`
+      ctx.fillRect(0, 0, vp.width, vp.height)
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.restore()
+      const a = box(rings[i])
+      const b = box(rings[j])
+      if (Math.hypot(a.cx - b.cx, a.cy - b.cy) < (a.x1 - a.x0) / 2 + (b.x1 - b.x0) / 2) {
+        ctx.save()
+        ctx.textAlign = 'center'
+        ctx.font = FONT(11, true)
+        ctx.strokeStyle = '#120c04'
+        ctx.lineWidth = 3.5
+        const mx = (a.cx + b.cx) / 2
+        const my = (a.cy + b.cy) / 2
+        ctx.strokeText('二重回復', mx, my + 4)
+        ctx.fillStyle = '#ffe9ad'
+        ctx.fillText('二重回復', mx, my + 4)
+        ctx.restore()
+      }
+    }
+  }
 }

@@ -1,12 +1,12 @@
 // 軌道型（ループ）魔法：周回リングによる掃射（攻撃）と迎撃（防御・#4）。純粋関数。
 // リングは閉じた点列＋各点の z（属性）。攻撃＝リングに触れた敵へダメージ、防御＝敵弾がリング境界を横切れば迎撃。
-import type { Attribute, Obstacle, Trajectory, Vec2 } from './types'
-import { COMBAT } from '../data/constants'
+import type { Attribute, FlightSample, Obstacle, Trajectory, Vec2 } from './types'
+import { COMBAT, FIELD, SAMPLING } from '../data/constants'
 import { sampleTrajectory, validFinitePrefix, dist } from './coords'
 import { zfieldAt, attributeOf, strengthOf, computeDamage } from './attribute'
 import { isSolidAt } from './obstacle'
-import { firstCrossing } from './parry'
-import { simulatePath } from './physics'
+import { firstCrossing, lastFiniteTime, posAtTime, type RadiusAt } from './parry'
+import { flightTimes, simulatePath } from './physics'
 
 /** リング上の1点（位置＋属性 z＋その点でのリング速度・#60） */
 export interface RingPoint {
@@ -144,7 +144,7 @@ export interface OrbitHit {
 export function orbitSweep(
   ring: RingPoint[],
   targets: OrbitTarget[],
-  thickness = 0.7,
+  thickness = COMBAT.orbitSweepReach,
 ): OrbitHit[] {
   const hits: OrbitHit[] = []
   if (ring.length === 0) return hits
@@ -202,7 +202,11 @@ export function orbitWallBreak(ring: RingPoint[], obstacles: Obstacle[]): OrbitW
   return null
 }
 
-/** 敵弾パスがリング境界を最初に横切る点を返す（横切らなければ crossed=false）。 */
+/**
+ * 敵弾パスがリング境界を最初に横切る点を返す（横切らなければ crossed=false）。
+ * **幾何のみ**（時刻を見ない）。経路が結界を突っ切るかどうかの粗い判定にだけ使う
+ * （敵AIの候補の絞り込み・プレビュー表示）。本番の迎撃・相殺は ringContact（時間刻み）で解く。
+ */
 export function ringInterception(ring: RingPoint[], enemyPath: Vec2[]): RingInterception {
   if (ring.length < 2) return { crossed: false }
   const ringPath = ring.map((r) => r.pos)
@@ -210,4 +214,136 @@ export function ringInterception(ring: RingPoint[], enemyPath: Vec2[]): RingInte
   if (!cross) return { crossed: false }
   const rp = ring[Math.min(cross.indexB, ring.length - 1)]
   return { crossed: true, pos: cross.pos, ringZ: rp.z, ringSpeed: rp.speed, enemyIndex: cross.indexA }
+}
+
+/**
+ * リングの走査用インデックス（外接矩形＋粗いふるい）。リング配列ごとに1回だけ作って使い回す。
+ * 敵AIは同じ結界に対して何百通りもの候補軌道を検証するため、ここを作り直すと重い。
+ */
+interface RingIndex {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+  /** 粗い走査の間引き幅 */
+  stride: number
+  /** 間引き点と実点の最大ズレ（粗い最小距離からこの分だけ甘く見る） */
+  slack: number
+}
+const ringIndexCache = new WeakMap<RingPoint[], RingIndex>()
+
+function ringIndexOf(ring: RingPoint[]): RingIndex {
+  const cached = ringIndexCache.get(ring)
+  if (cached) return cached
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+  for (const rp of ring) {
+    if (rp.pos.x < minX) minX = rp.pos.x
+    if (rp.pos.x > maxX) maxX = rp.pos.x
+    if (rp.pos.y < minY) minY = rp.pos.y
+    if (rp.pos.y > maxY) maxY = rp.pos.y
+  }
+  const stride = Math.max(1, Math.floor(ring.length / 48))
+  let slack = 0
+  if (stride > 1) {
+    for (let i = 0; i < ring.length; i++) {
+      const anchor = ring[i - (i % stride)]
+      const d = Math.hypot(ring[i].pos.x - anchor.pos.x, ring[i].pos.y - anchor.pos.y)
+      if (d > slack) slack = d
+    }
+  }
+  const idx: RingIndex = { minX, maxX, minY, maxY, stride, slack }
+  ringIndexCache.set(ring, idx)
+  return idx
+}
+
+/** 弾が結界の帯に触れた1点（時刻つき・#72） */
+export interface RingContact {
+  /** 接触点（弾とリング点の中点） */
+  pos: Vec2
+  /** 接触したリング点の z（迎撃の相性判定に使う） */
+  ringZ: number
+  /** 接触点でのリング速度（#60：平均でなくその点の速度で相殺する） */
+  ringSpeed: number
+  /** 弾側の弧長（減衰イベントを置く位置） */
+  arcLen: number
+  /** 弾側の速度（相殺の威力に使う） */
+  speed: number
+  /** 接触したゲーム時刻（ターン開始＝0）。イベントの時系列順の解決と演出の同期に使う */
+  time: number
+}
+
+/**
+ * 弾が結界（リング）の帯に触れる最初の**時刻**を求める（#72）。
+ * 幾何交差（ringInterception）と違い、弾を FIELD.dt 刻みで進めて
+ * 「弾の半径＋帯の半厚み」以内へ入った瞬間を接触とする。これにより
+ *   - 迎撃・相殺・霧散をパリィや障害物と**同じ時間軸で並べられる**（因果の逆転が起きない）
+ *   - 判定の当たりが画面に描かれる弾の大きさ・帯の太さと一致する
+ * リングは静止した閉曲線なので、動くのは弾だけ（リング点の speed は威力にのみ効く）。
+ */
+export function ringContact(
+  ring: RingPoint[],
+  samples: FlightSample[],
+  radiusAt: RadiusAt,
+  bandHalf: number = COMBAT.orbitBandHalf,
+): RingContact | null {
+  if (ring.length < 3 || samples.length < 2) return null
+  const times = flightTimes(samples)
+  const tEnd = lastFiniteTime(times)
+  const b = ringIndexOf(ring)
+  const idx = { i: 0 }
+  let scanned: Vec2 | null = null
+  // 失速しかけた弾は tEnd が極端に伸びる。空回りしないよう歩数に安全弁を置く（判定は位置で決まる）
+  for (let tau = 0, step = 0; tau <= tEnd + 1e-9 && step < SAMPLING.maxFrames; tau += FIELD.dt, step++) {
+    const st = posAtTime(samples, times, tau, idx)
+    const reach = radiusAt(st.pos, st.speed) + bandHalf
+    // 外接矩形の外なら距離計算を省く（リング点は数百あるので効く）
+    if (
+      st.pos.x < b.minX - reach ||
+      st.pos.x > b.maxX + reach ||
+      st.pos.y < b.minY - reach ||
+      st.pos.y > b.maxY + reach
+    )
+      continue
+    // 前回走査した位置からほとんど動いていなければ、同じ判定を繰り返さない
+    if (scanned && Math.hypot(st.pos.x - scanned.x, st.pos.y - scanned.y) < reach * 0.2) continue
+    scanned = st.pos
+    const reach2 = reach * reach
+    // 粗いふるい：stride 間隔だけ見て、slack を足しても届かないなら全走査しない
+    if (b.stride > 1) {
+      let coarse = Infinity
+      for (let i = 0; i < ring.length; i += b.stride) {
+        const dx = ring[i].pos.x - st.pos.x
+        const dy = ring[i].pos.y - st.pos.y
+        const d2 = dx * dx + dy * dy
+        if (d2 < coarse) coarse = d2
+      }
+      if (Math.sqrt(coarse) - b.slack > reach) continue
+    }
+    let best = -1
+    let bestD2 = Infinity
+    for (let i = 0; i < ring.length; i++) {
+      const dx = ring[i].pos.x - st.pos.x
+      const dy = ring[i].pos.y - st.pos.y
+      const d2 = dx * dx + dy * dy
+      if (d2 < bestD2) {
+        bestD2 = d2
+        best = i
+      }
+    }
+    if (best >= 0 && bestD2 <= reach2) {
+      const rp = ring[best]
+      return {
+        pos: { x: (st.pos.x + rp.pos.x) / 2, y: (st.pos.y + rp.pos.y) / 2 },
+        ringZ: rp.z,
+        ringSpeed: rp.speed ?? 0,
+        arcLen: st.arcLen,
+        speed: st.speed,
+        time: tau,
+      }
+    }
+  }
+  return null
 }

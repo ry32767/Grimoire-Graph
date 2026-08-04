@@ -15,6 +15,8 @@ import { findRoute, type RouteMode } from './routeSearch'
 import { fitRouteToFamilies } from './routeFit'
 import { fitComplexityFor } from './fitComplexity'
 import { evaluateEnemyShot, compareRank } from './evaluate'
+import { foreseeInterception, type PredictedShot } from './foresight'
+import { zfieldAt } from '../attribute'
 import type { EnemyPlan } from '../enemyAI'
 
 /**
@@ -70,6 +72,8 @@ type Cover = { kind: 'point'; pos: Vec2 } | { kind: 'material' }
  * aimOverride を渡すとその位置を狙う（ボス断末魔の分散ターゲティング・#45）。
  * standingRings（持続結界）があれば極をリング迎撃範囲の手前に置く（#48）。
  * instability は暴発 AoE の下振れ（04b §4b.3）：下振れしても巻き込める候補を優先する（§12.6）。
+ * predicted は読み（#75）：前ターンと同じ味方弾が飛んでくると仮定し、極に着く前に撃ち落とされる
+ * 経路を避ける（避けられない場合でも予告 misfirePos は出す＝読みが外れても予告と結果はズレない）。
  */
 export function planRuptorShot(
   enemy: Enemy,
@@ -80,6 +84,7 @@ export function planRuptorShot(
   fieldR?: number,
   instability = 0,
   teammates: { id: string; pos: Vec2; hp: number }[] = [],
+  predicted: PredictedShot[] = [],
 ): EnemyPlan | null {
   const alive = allies.filter((a) => a.hp > 0)
   if (alive.length === 0) return null
@@ -162,12 +167,19 @@ export function planRuptorShot(
     const matesInAoE = misfire
       ? teammates.filter((m) => m.id !== enemy.id && m.hp > 0 && dist(ev.endPos, m.pos) <= selfDanger).length
       : 0
+    // 読み（#75）：前ターンと同じ味方弾が飛んでくると仮定したとき、極（暴発点）に達する前に
+    // 撃ち落とされる経路か。撃ち落とされれば暴発そのものが起きない＝被覆の良し悪し以前の問題
+    // なので、被覆キーより上（自爆・味方巻き込み回避の直下）で避ける。
+    const icp =
+      predicted.length > 0 ? foreseeInterception(ev.flight.samples, (p) => zfieldAt(traj, p), predicted) : null
+    const shotDown = icp !== null && icp.speedRatio <= 0
     const rank = [
       misfire ? 0 : 1,
       // ユニット狙い（点被覆）を壁削り狙い（素材被覆）より常に優先する（§14.2 の採用順）
       misfire && cover.kind === 'point' ? 0 : 1,
       selfInAoE ? 1 : 0, // 自爆回避は被覆より優先（#65：自爆しない場所を選ぶ）
       matesInAoE,
+      shotDown ? 1 : 0, // 読み（#75）：撃ち落とされる経路は避ける（暴発が起きない）
       inGuaranteed ? 0 : 1, // 下振れ込みで巻き込める（本命・§12.6）
       inExpected ? 0 : 1, // 期待半径でなら巻き込める（次点）
       hitBeforePole ? 1 : 0,

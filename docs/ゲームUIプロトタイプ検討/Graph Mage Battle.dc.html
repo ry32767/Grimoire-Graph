@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics="">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link href="https://fonts.googleapis.com/css2?family=DotGothic16&amp;family=Zen+Kaku+Gothic+New:wght@400;500;700;900&amp;display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+#root{height:100%}
+body{background:#06060c;color:#e9e9f4;font-family:'Zen Kaku Gothic New',system-ui,sans-serif;-webkit-font-smoothing:antialiased;overflow:hidden;
+ --gold:#f4c65a;--gold2:#ffe6a0;--goldd:#6b4e14;--vio:#957dff;--vio2:#c3b6ff;--viod:#342765;--neu:#aab3c6;
+ --bg:#06060c;--panel:#0d0d18;--panel2:#11111f;--edge:#26263c;--edge2:#3a3a58;--dim:#7c7f94;--dot:'DotGothic16',monospace}
+a,a:hover{color:var(--gold);text-decoration:none}
+button{font-family:inherit;cursor:pointer;color:inherit}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#2a2a42;border-radius:0}
+::-webkit-scrollbar-track{background:transparent}
+@keyframes gm-pulse{0%,100%{opacity:.45}50%{opacity:1}}
+@keyframes gm-blink{0%,100%{opacity:1}50%{opacity:.25}}
+@keyframes gm-scan{0%{background-position:0 0}100%{background-position:0 6px}}
+@keyframes gm-rise{0%{transform:translateY(6px);opacity:0}100%{transform:translateY(0);opacity:1}}
+</style>
+</helmet>
+
+<div style="height:100%;width:100%;background:radial-gradient(120% 90% at 50% -10%,#141126 0%,#06060c 55%);display:flex;flex-direction:column;position:relative;font-size:14px">
+
+  <!-- ===== TOP RAIL : progression + phase steps ===== -->
+  <div style="flex:none;display:flex;align-items:stretch;gap:1px;background:#000;border-bottom:2px solid var(--edge)">
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 14px;background:linear-gradient(180deg,#15111f,#0b0b14)">
+      <div style="width:10px;height:10px;background:var(--gold);box-shadow:2px 2px 0 var(--goldd)"></div>
+      <div>
+        <div style="font-family:var(--dot);font-size:13px;letter-spacing:1px;color:var(--gold2);line-height:1">{{ stageName }}</div>
+        <div style="font-size:10px;color:var(--dim);letter-spacing:.5px;margin-top:3px">GRIMOIRE&nbsp;GRAPH &nbsp;/&nbsp; 古代式の魔導書</div>
+      </div>
+    </div>
+
+    <!-- room pips -->
+    <div style="flex:1;display:flex;align-items:center;justify-content:center;gap:7px;padding:0 10px;min-width:0;overflow:hidden">
+      <sc-for list="{{ rooms }}" as="rm" hint-placeholder-count="7">
+        <div title="{{ rm.title }}" style="display:flex;flex-direction:column;align-items:center;gap:4px;opacity:{{ rm.op }}">
+          <div style="width:{{ rm.sz }};height:{{ rm.sz }};background:{{ rm.bg }};box-shadow:{{ rm.sh }};transform:rotate(45deg)"></div>
+          <div style="font-family:var(--dot);font-size:9px;color:{{ rm.tc }}">{{ rm.n }}</div>
+        </div>
+      </sc-for>
+    </div>
+
+    <!-- phase steps -->
+    <div style="display:flex;align-items:center;gap:0;padding:0 8px;background:linear-gradient(180deg,#15111f,#0b0b14)">
+      <sc-for list="{{ steps }}" as="st" hint-placeholder-count="3">
+        <div style="display:flex;align-items:center">
+          <div style="display:flex;align-items:center;gap:7px;padding:6px 11px;background:{{ st.bg }};border:1.5px solid {{ st.bd }}">
+            <div style="width:17px;height:17px;display:grid;place-items:center;font-family:var(--dot);font-size:11px;background:{{ st.nb }};color:{{ st.nc }}">{{ st.k }}</div>
+            <div style="font-size:11.5px;font-weight:700;color:{{ st.tc }};white-space:nowrap">{{ st.label }}</div>
+          </div>
+          <div style="width:14px;height:2px;background:{{ st.arrow }}"></div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- ===== BODY : board + composer ===== -->
+  <div style="{{ bodyStyle }}">
+
+    <!-- ---- BOARD ---- -->
+    <div style="{{ boardWrapStyle }}">
+      <canvas id="gm-board" style="position:absolute;inset:0;width:100%;height:100%;touch-action:none;display:block"></canvas>
+
+      <!-- top-left menu -->
+      <div style="position:absolute;top:12px;left:12px;display:flex;gap:8px;z-index:3">
+        <button onClick="{{ toggleMenu }}" style="font-family:var(--dot);font-size:11px;letter-spacing:1px;color:var(--gold2);background:#0c0c16d9;border:1.5px solid var(--edge2);padding:7px 11px;box-shadow:2px 2px 0 #000">≡ メニュー</button>
+        <div style="font-family:var(--dot);font-size:11px;color:var(--dim);background:#0c0c16d9;border:1.5px solid var(--edge);padding:7px 11px;display:flex;align-items:center;gap:6px">ターン {{ turn }} <span style="color:var(--edge2)">·</span> 作成フェーズ</div>
+      </div>
+
+      <!-- legend (assist) -->
+      <div style="{{ legendStyle }}">
+        <div style="font-family:var(--dot);font-size:10px;color:var(--dim);letter-spacing:1px;margin-bottom:7px">地形（z場）＝属性</div>
+        <div style="display:flex;flex-direction:column;gap:6px;font-size:11px">
+          <div style="display:flex;align-items:center;gap:8px"><span style="width:22px;height:9px;background:linear-gradient(90deg,#4a3a10,var(--gold));box-shadow:0 0 6px var(--gold)"></span>光の山＝攻めると強い</div>
+          <div style="display:flex;align-items:center;gap:8px"><span style="width:22px;height:9px;background:linear-gradient(90deg,#241a52,var(--vio));box-shadow:0 0 6px var(--vio)"></span>闇の谷＝反対極に有効</div>
+          <div style="display:flex;align-items:center;gap:8px"><span style="width:22px;height:9px;background:#3a3f4d"></span>中立の平地＝最速で走る</div>
+        </div>
+      </div>
+
+      <!-- prediction banner -->
+      <div style="{{ predWrapStyle }}">
+        <div style="font-family:var(--dot);font-size:10px;letter-spacing:2px;color:var(--dim);margin-bottom:4px">この一手の見込み ▸ {{ activeName }}</div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="width:34px;height:34px;flex:none;display:grid;place-items:center;background:{{ predIcoBg }};box-shadow:2px 2px 0 #000">
+            <span style="font-family:var(--dot);font-size:19px;color:{{ predIcoFg }};line-height:1">{{ predIco }}</span>
+          </div>
+          <div style="min-width:0">
+            <div style="font-family:var(--dot);font-size:16px;color:{{ predColor }};line-height:1.15">{{ predTitle }}</div>
+            <div style="font-size:11px;color:var(--dim);margin-top:3px">{{ predSub }}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- zoom -->
+      <div style="position:absolute;bottom:14px;right:14px;display:flex;flex-direction:column;gap:6px;z-index:3">
+        <button onClick="{{ zoomIn }}" style="width:34px;height:34px;font-family:var(--dot);font-size:16px;background:#0c0c16d9;border:1.5px solid var(--edge2);color:var(--gold2);box-shadow:2px 2px 0 #000">+</button>
+        <button onClick="{{ zoomOut }}" style="width:34px;height:34px;font-family:var(--dot);font-size:16px;background:#0c0c16d9;border:1.5px solid var(--edge2);color:var(--gold2);box-shadow:2px 2px 0 #000">−</button>
+      </div>
+
+      <!-- ally HP dock -->
+      <div style="position:absolute;left:0;right:0;bottom:0;display:flex;gap:1px;z-index:3;pointer-events:auto">
+        <sc-for list="{{ allyCards }}" as="a" hint-placeholder-count="3">
+          <button onClick="{{ a.select }}" style="flex:1;min-width:0;text-align:left;background:{{ a.bg }};border:0;border-top:2px solid {{ a.top }};padding:8px 11px 9px;display:flex;flex-direction:column;gap:6px;transition:background .12s">
+            <div style="display:flex;align-items:center;gap:7px">
+              <span style="width:11px;height:11px;flex:none;background:{{ a.dot }};box-shadow:1px 1px 0 #000;transform:rotate(45deg)"></span>
+              <span style="font-family:var(--dot);font-size:12px;color:{{ a.name }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ a.label }}</span>
+              <span style="font-size:10px;color:{{ a.chk }};margin-left:auto;font-family:var(--dot)">{{ a.mark }}</span>
+            </div>
+            <div style="height:8px;background:#000;border:1px solid var(--edge);position:relative;overflow:hidden">
+              <div style="position:absolute;inset:0;width:{{ a.hpw }};background:{{ a.hpc }};box-shadow:0 0 6px {{ a.hpc }}"></div>
+            </div>
+            <div style="font-size:9.5px;color:var(--dim);font-family:var(--dot);letter-spacing:.5px">{{ a.hptext }}</div>
+          </button>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- ---- COMPOSER ---- -->
+    <div style="{{ composerStyle }}">
+      <div style="padding:14px 15px 60px;display:flex;flex-direction:column;gap:15px">
+
+        <!-- header -->
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="width:15px;height:15px;background:{{ activeDot }};box-shadow:2px 2px 0 #000;transform:rotate(45deg)"></div>
+          <div style="flex:none;font-family:var(--dot);font-size:16px;color:{{ activeNameColor }};line-height:1;white-space:nowrap">{{ activeName }}</div>
+          <div style="margin-left:auto;flex:none;font-family:var(--dot);font-size:10px;letter-spacing:1px;color:var(--gold2);border:1.5px solid var(--goldd);padding:4px 8px;background:#1a1405;white-space:nowrap">{{ castTypeLabel }}</div>
+        </div>
+
+        <!-- STEP ① trajectory -->
+        <div style="border:1.5px solid var(--edge);background:var(--panel)">
+          <div style="display:flex;align-items:center;gap:9px;padding:9px 11px;background:linear-gradient(180deg,#161227,#0e0e1a);border-bottom:1.5px solid var(--edge)">
+            <div style="width:19px;height:19px;flex:none;display:grid;place-items:center;font-family:var(--dot);font-size:12px;background:var(--gold);color:#1a1405;box-shadow:1px 1px 0 #000">①</div>
+            <div style="font-weight:700;font-size:13px;white-space:nowrap">弾の<span style="color:var(--gold2)">道</span>をえがく</div>
+            <div style="margin-left:auto;flex:none;font-size:10px;color:var(--dim);white-space:nowrap">＝軌道</div>
+          </div>
+          <div style="padding:11px">
+            <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px">
+              <sc-for list="{{ shapeBtns }}" as="s" hint-placeholder-count="5">
+                <button onClick="{{ s.click }}" style="background:{{ s.bg }};border:1.5px solid {{ s.bd }};padding:7px 2px 6px;display:flex;flex-direction:column;align-items:center;gap:4px;box-shadow:{{ s.sh }}">
+                  <span style="font-family:var(--dot);font-size:19px;color:{{ s.fg }};line-height:1;height:20px">{{ s.glyph }}</span>
+                  <span style="font-size:10px;color:{{ s.tc }};font-weight:700">{{ s.label }}</span>
+                </button>
+              </sc-for>
+            </div>
+            <div style="margin-top:10px;display:flex;align-items:center;gap:9px;padding:9px 10px;background:#0a0a13;border:1px dashed var(--edge2)">
+              <span style="font-family:var(--dot);font-size:15px;color:var(--gold);transform:rotate({{ aimDeg }}deg);display:inline-block;transition:transform .1s">➜</span>
+              <div style="font-size:11px;line-height:1.35"><b style="color:var(--gold2)">盤面をドラッグ</b>して発射方向を決める<br><span style="color:var(--dim)">向き {{ aimReadout }}</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- STEP ② z-field terrain -->
+        <div style="border:1.5px solid var(--edge);background:var(--panel)">
+          <div style="display:flex;align-items:center;gap:9px;padding:9px 11px;background:linear-gradient(180deg,#161227,#0e0e1a);border-bottom:1.5px solid var(--edge)">
+            <div style="width:19px;height:19px;flex:none;display:grid;place-items:center;font-family:var(--dot);font-size:12px;background:var(--vio);color:#0e0a24;box-shadow:1px 1px 0 #000">②</div>
+            <div style="font-weight:700;font-size:13px;white-space:nowrap">通る<span style="color:var(--vio2)">地形</span>をえらぶ</div>
+            <div style="margin-left:auto;flex:none;font-size:10px;color:var(--dim);white-space:nowrap">＝z場</div>
+          </div>
+          <div style="padding:11px">
+            <!-- live 3D terrain mesh -->
+            <div style="position:relative;height:150px;background:radial-gradient(120% 120% at 50% 20%,#100d22,#07070e);border:1px solid var(--edge2);overflow:hidden">
+              <canvas id="gm-mesh" style="position:absolute;inset:0;width:100%;height:100%;display:block"></canvas>
+              <div style="position:absolute;top:6px;left:8px;font-family:var(--dot);font-size:9px;letter-spacing:1px;color:var(--dim)">地形プレビュー · 3D</div>
+              <div style="position:absolute;top:6px;right:8px;font-family:var(--dot);font-size:9px;color:var(--gold2)">▲光 <span style="color:var(--vio2)">▼闇</span></div>
+            </div>
+
+            <!-- attribute toggle -->
+            <div style="margin-top:11px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">
+              <sc-for list="{{ signBtns }}" as="g" hint-placeholder-count="3">
+                <button onClick="{{ g.click }}" style="background:{{ g.bg }};border:1.5px solid {{ g.bd }};padding:8px 2px;display:flex;flex-direction:column;align-items:center;gap:3px;box-shadow:{{ g.sh }}">
+                  <span style="font-family:var(--dot);font-size:13px;color:{{ g.fg }}">{{ g.glyph }}</span>
+                  <span style="font-size:10.5px;font-weight:700;color:{{ g.tc }}">{{ g.label }}</span>
+                </button>
+              </sc-for>
+            </div>
+
+            <!-- strength -->
+            <div style="margin-top:12px">
+              <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px">
+                <span style="font-size:11px;color:var(--dim)">強さ |z|</span>
+                <span style="font-family:var(--dot);font-size:15px;color:{{ activeNameColor }}">{{ zMagText }}</span>
+                <span style="margin-left:auto;font-size:10px;color:var(--dim)">効果 {{ strengthText }}</span>
+              </div>
+              <!-- strength mountain meter -->
+              <div style="position:relative;height:26px;background:#0a0a13;border:1px solid var(--edge2);overflow:hidden">
+                <div style="position:absolute;inset:0;background:linear-gradient(90deg,#1a1a28 0%,#2a2416 45%,#3a3410 50%,#2a2416 55%,#1a1a28 100%)"></div>
+                <div style="position:absolute;top:0;bottom:0;left:50%;width:2px;background:var(--gold);opacity:.6"></div>
+                <div style="position:absolute;top:1px;left:50%;transform:translateX(-50%);font-family:var(--dot);font-size:8px;color:var(--gold2)">最強</div>
+                <div style="position:absolute;top:0;bottom:0;left:{{ zMagPct }};width:3px;background:{{ activeNameColor }};box-shadow:0 0 8px {{ activeNameColor }}"></div>
+              </div>
+              <input type="range" min="0" max="8" step="0.5" value="{{ zMagVal }}" onInput="{{ setMag }}" style="width:100%;margin-top:8px;accent-color:{{ activeNameColor }}">
+            </div>
+
+            <!-- field shape -->
+            <div style="margin-top:8px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px">
+              <sc-for list="{{ zShapeBtns }}" as="z" hint-placeholder-count="4">
+                <button onClick="{{ z.click }}" style="background:{{ z.bg }};border:1.5px solid {{ z.bd }};padding:7px 2px;display:flex;flex-direction:column;align-items:center;gap:3px">
+                  <span style="font-family:var(--dot);font-size:14px;color:{{ z.fg }}">{{ z.glyph }}</span>
+                  <span style="font-size:9.5px;color:{{ z.tc }}">{{ z.label }}</span>
+                </button>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+
+        <!-- おまかせ -->
+        <button onClick="{{ recommend }}" style="width:100%;padding:11px;background:linear-gradient(180deg,#1e1830,#12101f);border:1.5px solid var(--edge2);box-shadow:3px 3px 0 #000;display:flex;align-items:center;justify-content:center;gap:9px">
+          <span style="font-family:var(--dot);font-size:14px;color:var(--gold)">✦</span>
+          <span style="font-weight:700;font-size:13px;color:var(--gold2)">おまかせ</span>
+          <span style="font-size:10px;color:var(--dim)">— 当たる術式を自動で提案</span>
+        </button>
+      </div>
+
+      <!-- footer -->
+      <div style="position:sticky;bottom:0;left:0;right:0;display:flex;gap:1px;background:#000;border-top:2px solid var(--edge2)">
+        <button onClick="{{ fireAll }}" style="flex:1;padding:15px;background:linear-gradient(180deg,#3a2f0c,#241d06);border:0;display:flex;align-items:center;justify-content:center;gap:9px">
+          <span style="font-family:var(--dot);font-size:16px;letter-spacing:2px;color:var(--gold2)">全員 発射</span>
+          <span style="font-size:11px;color:var(--gold)">▸▸</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== firing / result overlay ===== -->
+  <sc-if value="{{ showResult }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ dismissResult }}" style="position:absolute;inset:0;z-index:20;display:grid;place-items:center;background:#04040acc;animation:gm-rise .25s ease">
+      <div style="text-align:center">
+        <div style="font-family:var(--dot);font-size:12px;letter-spacing:3px;color:var(--dim)">TURN {{ turn }} 解決</div>
+        <div style="font-family:var(--dot);font-size:30px;color:var(--gold2);margin:12px 0 6px;text-shadow:3px 3px 0 #000">{{ resultTitle }}</div>
+        <div style="font-size:13px;color:var(--neu);max-width:360px;margin:0 auto;line-height:1.5">{{ resultSub }}</div>
+        <button style="margin-top:22px;font-family:var(--dot);font-size:12px;letter-spacing:1px;color:var(--gold2);background:#161122;border:1.5px solid var(--edge2);padding:10px 22px;box-shadow:3px 3px 0 #000">つづける ▸</button>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1200,&quot;height&quot;:780},&quot;terrainViz&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;both&quot;,&quot;flat&quot;,&quot;mesh&quot;],&quot;default&quot;:&quot;both&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;表示&quot;,&quot;label&quot;:&quot;z場の見せ方&quot;},&quot;assist&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;full&quot;,&quot;minimal&quot;],&quot;default&quot;:&quot;minimal&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;表示&quot;,&quot;label&quot;:&quot;補助表示&quot;}}">
+class Component extends DCLogic {
+  // canvas elements captured via function refs (lifecycle-independent)
+
+  // physics constants (02-calculations.md)
+  C = { EPS:0.35, ZPEAK:5, SMAX:5, ZREF:2.5, AMAX:13, ADECEL:8, V0:10, VMAX:24, R:20, HITR:1.8 };
+
+  state = {
+    narrow:false, activeAlly:0, turn:1, zoom:1,
+    enemyHp:90, enemyMax:90,
+    dragging:false,
+    anim:null, showResult:false, resultTitle:'', resultSub:'',
+    touched:[false,false,false],
+    allies:[
+      { id:'mira', name:'灯火のミラ', el:'light', hp:135, max:135, pos:{x:-8,y:-12},
+        cfg:{ shape:'line', angle:1.249, zSign:1, zMag:2.5, zShape:'const' } },
+      { id:'ren', name:'宵闇のレン', el:'dark', hp:135, max:135, pos:{x:0,y:-13.5},
+        cfg:{ shape:'arc', angle:1.5708, zSign:-1, zMag:5, zShape:'const' } },
+      { id:'sou', name:'均衡のソウ', el:'neutral', hp:150, max:150, pos:{x:8,y:-12},
+        cfg:{ shape:'line', angle:1.89, zSign:0, zMag:2.5, zShape:'const' } },
+    ],
+    enemy:{ name:'石像の番人', el:'dark', pos:{x:0,y:12} },
+  };
+
+  // ---------- math ----------
+  strengthOf(z){ const a=Math.abs(z); const s=this.C.SMAX*(1-Math.abs(a-this.C.ZPEAK)/this.C.ZPEAK); return Math.max(0,s); }
+  attrOf(z){ if(Math.abs(z)<this.C.EPS) return 'neutral'; return z>0?'light':'dark'; }
+  accelOf(z){ return Math.max(-this.C.ADECEL, this.C.AMAX*(1-Math.abs(z)/this.C.ZREF)); }
+  affinity(a,b){ if(a==='neutral'||b==='neutral') return 1.0; return a===b?0.5:1.5; }
+
+  zAt(cfg, dx, dy){
+    const R=this.C.R, s=cfg.zSign, m=cfg.zMag;
+    switch(cfg.zShape){
+      case 'gradY': return m*(dy/R)*(s||1);              // 上ほど光 / 下ほど闇（符号で反転）
+      case 'gradX': return m*(dx/R)*(s||1);              // 右ほど光 / 左ほど闇
+      case 'radial': return s*m*Math.max(0,1-Math.hypot(dx,dy)/R); // 中心に山（光=金の丘 / 闇=紫の窪み）
+      default: return s*m;                                // 一定
+    }
+  }
+  shapeFn(cfg){
+    switch(cfg.shape){
+      case 'arc': return x=> 0.055*x*x;
+      case 'wave': return x=> 5*Math.sin(0.45*x);
+      case 'exp': return x=> 0.5*(Math.exp(0.26*x)-1);
+      case 'abs': return x=> Math.abs(x-9)-9;
+      case 'ring': return null;
+      default: return x=> 0; // line
+    }
+  }
+
+  // build predicted flight for a projectile
+  computePath(ally){
+    const cfg=ally.cfg, o=ally.pos, R=this.C.R;
+    if(cfg.shape==='ring'){ return { ring:true, radius:9, o }; }
+    const g=this.shapeFn(cfg), g0=g(0), ca=Math.cos(cfg.angle), sa=Math.sin(cfg.angle);
+    const pts=[]; let A=0, prev=null, out=false, misfire=null, vanish=null;
+    let hit=null;
+    for(let x=0;x<=44;x+=0.16){
+      const ly=g(x)-g0;
+      const wx=o.x + x*ca - ly*sa;
+      const wy=o.y + x*sa + ly*ca;
+      if(!isFinite(wx)||!isFinite(wy)){ misfire=prev?{x:prev.x,y:prev.y}:{x:o.x,y:o.y}; break; }
+      const dx=wx-o.x, dy=wy-o.y;
+      let z=this.zAt(cfg,dx,dy);
+      if(!isFinite(z)){ misfire=prev?{x:prev.x,y:prev.y}:{x:o.x,y:o.y}; break; }
+      if(prev){ const ds=Math.hypot(wx-prev.x,wy-prev.y); A += this.accelOf(z)*ds; }
+      const sp=Math.min(this.C.VMAX, Math.sqrt(Math.max(0, this.C.V0*this.C.V0 + 2*A)));
+      const attr=this.attrOf(z);
+      const p={x:wx,y:wy,z,sp,attr};
+      pts.push(p); prev=p;
+      // hit test vs enemy
+      if(!hit){ const e=this.state.enemy.pos; if(Math.hypot(wx-e.x,wy-e.y) < this.C.HITR+0.6 && sp>0){ const st=this.strengthOf(z); hit={ sp, z, attr, strength:st, dmg:Math.round(sp*st*this.affinity(attr,this.state.enemy.el)), x:wx,y:wy }; } }
+      if(sp<=0){ vanish={x:wx,y:wy}; break; }
+      if(Math.hypot(wx,wy) > R+1){ out=true; break; }
+    }
+    return { ring:false, pts, misfire, vanish, hit, out, o };
+  }
+
+  prediction(ally){
+    const f=this.computePath(ally);
+    if(f.ring) return { ico:'◯', title:'結界を展開', color:'var(--neu)', sub:'閉じた軌道＝防御の周回結界。敵弾を迎撃する。', bg:'#1a1a28', fg:'#cfd6e6' };
+    if(f.misfire) return { ico:'✕', title:'暴発！', color:'#ff8a6b', sub:'関数が破綻した点で光闇 最大AoE。狙って当てれば最大火力、足元なら自爆。', bg:'#2a0e08', fg:'#ff8a6b' };
+    if(f.hit){ const al=f.hit.attr==='light'?'光':f.hit.attr==='dark'?'闇':'中立'; const aff=this.affinity(f.hit.attr,this.state.enemy.el); const aftx=aff>1?'反対極 ×1.5':aff<1?'同極 ×0.5':'中立 ×1.0';
+      return { ico:'◎', title:'命中 '+f.hit.dmg+' ダメージ', color:'var(--gold2)', sub:'速さ'+f.hit.sp.toFixed(1)+' × '+al+'強度'+f.hit.strength.toFixed(1)+' × '+aftx, bg:'#26200a', fg:'var(--gold2)' }; }
+    if(f.vanish) return { ico:'…', title:'失速して霧散', color:'var(--vio2)', sub:'強い属性を帯びるほど減速する。中立の平地で加速をためて、当てる直前に強く帯びさせよう。', bg:'#171430', fg:'var(--vio2)' };
+    return { ico:'→', title:'外れ（盤面外）', color:'var(--dim)', sub:'方向を変えるか、道の形を変えて敵へ通そう。', bg:'#12121f', fg:'var(--dim)' };
+  }
+
+  // ---------- lifecycle ----------
+  componentDidMount(){ this._ensureLoop(); }
+  _ensureLoop(){
+    if(!this._onResize){ this._onResize=()=>{ const n=window.innerWidth<900; if(n!==this.state.narrow) this.setState({narrow:n}); }; this._onResize(); window.addEventListener('resize',this._onResize); }
+    if(this._loopStarted) return; this._loopStarted=true;
+    const tick=()=>{ try{ this._draw(); }catch(e){ this._err=String(e&&e.stack||e); } };
+    tick();
+    this._timer=setInterval(tick, 33);
+  }
+  componentWillUnmount(){ if(this._timer) clearInterval(this._timer); if(this._onResize) window.removeEventListener('resize',this._onResize); const c=this._board; if(c&&this._pd){ c.removeEventListener('pointerdown',this._pd); window.removeEventListener('pointermove',this._pm); window.removeEventListener('pointerup',this._pu);} }
+
+  _view(cv){ const R=this.C.R/this.state.zoom; const w=cv.clientWidth,h=cv.clientHeight; const s=Math.min(w,h)/2/R; return {w,h,s,cx:w/2,cy:h/2}; }
+  _toMath(cv,px,py){ const v=this._view(cv); return { x:(px-v.cx)/v.s, y:(v.cy-py)/v.s }; }
+  _toScr(v,p){ return { x:v.cx+p.x*v.s, y:v.cy-p.y*v.s }; }
+
+  _bindPointer(){
+    const c=this._board; if(!c||this._pbound) return; this._pbound=true;
+    this._pd=(e)=>{ this.setState({dragging:true}); this._aim(e); c.setPointerCapture&&c.setPointerCapture(e.pointerId); };
+    this._pm=(e)=>{ if(this.state.dragging) this._aim(e); };
+    this._pu=()=>{ if(this.state.dragging) this.setState({dragging:false}); };
+    c.addEventListener('pointerdown',this._pd);
+    window.addEventListener('pointermove',this._pm);
+    window.addEventListener('pointerup',this._pu);
+  }
+  _aim(e){
+    const c=this._board; if(!c) return; const r=c.getBoundingClientRect();
+    const m=this._toMath(c, e.clientX-r.left, e.clientY-r.top);
+    const a=this.state.allies[this.state.activeAlly];
+    let ang=Math.atan2(m.y-a.pos.y, m.x-a.pos.x); if(ang<0) ang+=Math.PI*2;
+    const allies=this.state.allies.map((x,i)=> i===this.state.activeAlly?{...x,cfg:{...x.cfg,angle:ang}}:x);
+    this.setState({allies});
+  }
+
+  // ---------- drawing ----------
+  colFor(attr,a){ a=a==null?1:a; return attr==='light'?`rgba(244,198,90,${a})`:attr==='dark'?`rgba(149,125,255,${a})`:`rgba(150,160,180,${a})`; }
+
+  _syncSize(cv){ const dpr=Math.min(2,window.devicePixelRatio||1); const w=Math.round(cv.clientWidth*dpr),h=Math.round(cv.clientHeight*dpr); if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h;} return dpr; }
+
+  _draw(){ this._drawBoard(); this._drawMesh(); }
+
+  _drawBoard(){
+    const cv=document.getElementById('gm-board'); if(!cv||!cv.clientWidth) return;
+    if(cv!==this._board){ this._board=cv; this._pbound=false; this._bindPointer(); }
+    const dpr=this._syncSize(cv);
+    const ctx=cv.getContext('2d'); ctx.save(); ctx.scale(dpr,dpr);
+    const v=this._view(cv); const R=this.C.R; ctx.clearRect(0,0,v.w,v.h);
+    const viz=this.props.terrainViz ?? 'both'; const assist=(this.props.assist ?? 'full')!=='minimal';
+    const a=this.state.allies[this.state.activeAlly];
+
+    // z-field top-down tint (from active ally's field)
+    if(viz==='both'||viz==='flat'){
+      const N=42, step=(2*R)/N;
+      for(let i=0;i<N;i++) for(let j=0;j<N;j++){
+        const mx=-R+ (i+0.5)*step, my=-R+(j+0.5)*step;
+        if(Math.hypot(mx,my)>R) continue;
+        const z=this.zAt(a.cfg, mx-a.pos.x, my-a.pos.y);
+        if(!isFinite(z)) continue;
+        const st=this.strengthOf(z), attr=this.attrOf(z);
+        if(attr==='neutral') continue;
+        const al=Math.min(0.16, 0.02+st/5*0.15);
+        const s0=this._toScr(v,{x:mx-step/2,y:my+step/2});
+        ctx.fillStyle=this.colFor(attr, al);
+        ctx.fillRect(s0.x, s0.y, step*v.s+1, step*v.s+1);
+      }
+      // z=0 contour hint (neutral boundary) for gradients
+      if(a.cfg.zShape!=='const' && a.cfg.zSign!==0){
+        ctx.strokeStyle='rgba(150,160,180,.5)'; ctx.setLineDash([5,5]); ctx.lineWidth=1.5; ctx.beginPath();
+        if(a.cfg.zShape==='gradY'){ const p1=this._toScr(v,{x:-R,y:a.pos.y}),p2=this._toScr(v,{x:R,y:a.pos.y}); ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);}
+        else if(a.cfg.zShape==='gradX'){ const p1=this._toScr(v,{x:a.pos.x,y:-R}),p2=this._toScr(v,{x:a.pos.x,y:R}); ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);}
+        ctx.stroke(); ctx.setLineDash([]);
+      }
+    }
+
+    // dot grid
+    ctx.fillStyle='rgba(120,130,160,.16)';
+    for(let gx=-R;gx<=R;gx+=4) for(let gy=-R;gy<=R;gy+=4){ if(Math.hypot(gx,gy)>R) continue; const p=this._toScr(v,{x:gx,y:gy}); ctx.fillRect(p.x-1,p.y-1,2,2); }
+
+    // field boundary
+    const c0=this._toScr(v,{x:0,y:0});
+    ctx.strokeStyle='rgba(90,95,130,.55)'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(c0.x,c0.y,R*v.s,0,Math.PI*2); ctx.stroke();
+    ctx.strokeStyle='rgba(40,42,64,.9)'; ctx.lineWidth=8; ctx.beginPath(); ctx.arc(c0.x,c0.y,R*v.s+6,0,Math.PI*2); ctx.stroke();
+
+    // predicted paths for touched/active
+    this.state.allies.forEach((al,idx)=>{
+      const show = idx===this.state.activeAlly;
+      if(!show) return;
+      const f=this.computePath(al);
+      if(f.ring){ const c=this._toScr(v,al.pos); ctx.strokeStyle=this.colFor('neutral',.8); ctx.lineWidth=2; ctx.setLineDash([6,5]); ctx.beginPath(); ctx.arc(c.x,c.y,f.radius*v.s,0,Math.PI*2); ctx.stroke(); ctx.setLineDash([]); return; }
+      const pts=f.pts||[]; if(pts.length<2) return;
+      for(let i=1;i<pts.length;i++){ const p0=this._toScr(v,pts[i-1]),p1=this._toScr(v,pts[i]);
+        const spN=Math.max(0,Math.min(1, pts[i].sp/this.C.VMAX));
+        ctx.strokeStyle=this.colFor(pts[i].attr, 0.28+spN*0.68);
+        ctx.lineWidth=1.5+spN*3.5; ctx.lineCap='round';
+        ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.stroke();
+      }
+      // speed beads
+      for(let i=6;i<pts.length;i+=9){ const p=this._toScr(v,pts[i]); ctx.fillStyle=this.colFor(pts[i].attr,.95); ctx.fillRect(p.x-2,p.y-2,4,4); }
+      // markers
+      if(f.hit){ const p=this._toScr(v,f.hit); ctx.strokeStyle='var(--gold2)'; ctx.strokeStyle='rgba(255,230,160,.95)'; ctx.lineWidth=2.5; ctx.beginPath(); ctx.arc(p.x,p.y,10,0,Math.PI*2); ctx.stroke(); ctx.beginPath(); ctx.arc(p.x,p.y,4,0,Math.PI*2); ctx.fillStyle='rgba(255,230,160,.95)'; ctx.fill(); }
+      if(f.misfire){ const p=this._toScr(v,f.misfire); const t=Date.now()/300; const rr=13+Math.sin(t)*3; ctx.strokeStyle='rgba(255,110,80,.9)'; ctx.lineWidth=2.5; ctx.beginPath(); ctx.arc(p.x,p.y,rr,0,Math.PI*2); ctx.stroke(); ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(p.x-6,p.y-6);ctx.lineTo(p.x+6,p.y+6);ctx.moveTo(p.x+6,p.y-6);ctx.lineTo(p.x-6,p.y+6); ctx.stroke(); }
+      if(f.vanish){ const p=this._toScr(v,f.vanish); ctx.strokeStyle='rgba(149,125,255,.7)'; ctx.setLineDash([3,3]); ctx.lineWidth=2; ctx.beginPath(); ctx.arc(p.x,p.y,8,0,Math.PI*2); ctx.stroke(); ctx.setLineDash([]); }
+    });
+
+    // firing animation beads
+    if(this.state.anim){ const an=this.state.anim; const t=(Date.now()-an.t0)/an.dur; an.paths.forEach(pp=>{ const pts=pp.pts||[]; if(!pts.length) return; const idx=Math.min(pts.length-1, Math.floor(t*pts.length)); for(let i=0;i<idx;i++){ const p0=this._toScr(v,pts[i]),p1=this._toScr(v,pts[i+1]||pts[i]); const spN=Math.max(0,Math.min(1,pts[i].sp/this.C.VMAX)); ctx.strokeStyle=this.colFor(pts[i].attr,.5+spN*.5); ctx.lineWidth=2+spN*3; ctx.beginPath();ctx.moveTo(p0.x,p0.y);ctx.lineTo(p1.x,p1.y);ctx.stroke(); } const cur=pts[idx]; if(cur){ const p=this._toScr(v,cur); ctx.fillStyle=this.colFor(cur.attr,1); ctx.shadowColor=this.colFor(cur.attr,1); ctx.shadowBlur=12; ctx.beginPath();ctx.arc(p.x,p.y,5,0,Math.PI*2);ctx.fill(); ctx.shadowBlur=0; } }); }
+
+    // aim arrow (active)
+    { const c=this._toScr(v,a.pos); const L=42; const ang=a.cfg.angle; const ex=c.x+Math.cos(ang)*L, ey=c.y-Math.sin(ang)*L;
+      ctx.strokeStyle='rgba(244,198,90,.9)'; ctx.lineWidth=2.5; ctx.beginPath(); ctx.moveTo(c.x,c.y); ctx.lineTo(ex,ey); ctx.stroke();
+      ctx.fillStyle='rgba(244,198,90,.95)'; ctx.beginPath(); const ah=8; ctx.moveTo(ex,ey); ctx.lineTo(ex-Math.cos(ang-0.5)*ah, ey+Math.sin(ang-0.5)*ah); ctx.lineTo(ex-Math.cos(ang+0.5)*ah, ey+Math.sin(ang+0.5)*ah); ctx.closePath(); ctx.fill();
+    }
+
+    // units
+    this._drawEnemy(ctx,v);
+    this.state.allies.forEach((al,i)=> this._drawAlly(ctx,v,al,i===this.state.activeAlly));
+
+    ctx.restore();
+  }
+
+  _pix(ctx,x,y,s,rows,color){ ctx.fillStyle=color; for(let r=0;r<rows.length;r++){ const row=rows[r]; for(let c=0;c<row.length;c++){ if(row[c]!==' ') ctx.fillRect(Math.round(x+c*s),Math.round(y+r*s),Math.ceil(s),Math.ceil(s)); } } }
+
+  _drawAlly(ctx,v,al,active){
+    const p=this._toScr(v,al.pos); const s=Math.max(2.2, 3.0*v.s/9);
+    const body=al.el==='light'?'#e9d38a':al.el==='dark'?'#9a86e8':'#aeb6c6';
+    const rows=['  XX  ',' XXXX ','XX XX X','XXXXXXX',' XXXXX',' X  X '];
+    const gw=rows[0].length*s, gh=rows.length*s;
+    if(active){ ctx.strokeStyle='rgba(244,198,90,.9)'; ctx.setLineDash([4,3]); ctx.lineWidth=1.8; ctx.beginPath(); ctx.arc(p.x,p.y,gw*0.85,0,Math.PI*2); ctx.stroke(); ctx.setLineDash([]); }
+    this._pix(ctx, p.x-gw/2, p.y-gh/2, s, rows, body);
+    // element gem
+    ctx.fillStyle=this.colFor(al.el,1); ctx.fillRect(p.x-s, p.y-s*0.5, s*2, s*2);
+    // name
+    ctx.fillStyle=active?'rgba(255,230,160,.95)':'rgba(180,186,200,.7)'; ctx.font='10px "DotGothic16",monospace'; ctx.textAlign='center'; ctx.fillText(al.name, p.x, p.y+gh/2+13);
+  }
+  _drawEnemy(ctx,v){
+    const e=this.state.enemy; const p=this._toScr(v,e.pos); const s=Math.max(2.6, 3.6*v.s/9);
+    const rows=['XXXXXXX','X     X','X O O X','X     X','X XXX X','XXXXXXX',' X   X '];
+    const gw=rows[0].length*s, gh=rows.length*s;
+    this._pix(ctx,p.x-gw/2,p.y-gh/2,s,rows,'#6a6f88');
+    // eyes glow
+    ctx.fillStyle=this.colFor(e.el,1); ctx.fillRect(p.x-gw/2+2*s,p.y-gh/2+2*s,s,s); ctx.fillRect(p.x-gw/2+4*s,p.y-gh/2+2*s,s,s);
+    // hp bar
+    const bw=gw*1.2, bh=6; const hp=this.state.enemyHp/this.state.enemyMax;
+    ctx.fillStyle='#000'; ctx.fillRect(p.x-bw/2,p.y-gh/2-15,bw,bh); ctx.strokeStyle='rgba(90,95,130,.7)';ctx.lineWidth=1;ctx.strokeRect(p.x-bw/2,p.y-gh/2-15,bw,bh);
+    ctx.fillStyle=this.colFor(e.el,.95); ctx.fillRect(p.x-bw/2+1,p.y-gh/2-14,(bw-2)*hp,bh-2);
+    ctx.fillStyle='rgba(200,206,222,.85)'; ctx.font='10px "DotGothic16",monospace'; ctx.textAlign='center'; ctx.fillText(e.name+' '+this.state.enemyHp+'/'+this.state.enemyMax, p.x, p.y-gh/2-20);
+  }
+
+  _drawMesh(){
+    const cv=document.getElementById('gm-mesh'); if(!cv||!cv.clientWidth) return; const dpr=this._syncSize(cv);
+    const ctx=cv.getContext('2d'); ctx.save(); ctx.scale(dpr,dpr);
+    const w=cv.clientWidth,h=cv.clientHeight; ctx.clearRect(0,0,w,h);
+    const a=this.state.allies[this.state.activeAlly]; const cfg=a.cfg;
+    const N=18, R=this.C.R; const cx=w/2, cy=h*0.60;
+    const msx=(w*0.40)/R, msy=msx*0.44, mh=6.6;
+    const proj=(dx,dy,z)=>({ x:cx+(dx-dy)*msx, y:cy+(dx+dy)*msy - z*mh });
+    // sample grid in ally-local coords
+    const zs=[]; for(let i=0;i<=N;i++){ zs[i]=[]; for(let j=0;j<=N;j++){ const dx=-R+ (2*R)*i/N, dy=-R+(2*R)*j/N; let z=this.zAt(cfg,dx,dy); if(!isFinite(z)) z=0; zs[i][j]={dx,dy,z}; } }
+    // ground reference plane (z=0) — faint neutral grid so height reads
+    ctx.strokeStyle='rgba(150,160,180,.13)'; ctx.lineWidth=1;
+    for(let i=0;i<=N;i+=2){ const t=-R+2*R*i/N; const A=proj(t,-R,0),B=proj(t,R,0),C=proj(-R,t,0),D=proj(R,t,0); ctx.beginPath();ctx.moveTo(A.x,A.y);ctx.lineTo(B.x,B.y);ctx.moveTo(C.x,C.y);ctx.lineTo(D.x,D.y);ctx.stroke(); }
+    // draw from back to front
+    ctx.lineWidth=1;
+    for(let i=0;i<N;i++) for(let j=0;j<N;j++){
+      const a0=zs[i][j],a1=zs[i+1][j],a2=zs[i][j+1];
+      const P=proj(a0.dx,a0.dy,a0.z),P1=proj(a1.dx,a1.dy,a1.z),P2=proj(a2.dx,a2.dy,a2.z);
+      const attr=this.attrOf(a0.z), st=this.strengthOf(a0.z);
+      const al=0.18+st/5*0.6;
+      ctx.strokeStyle=this.colFor(attr, Math.min(0.95,al));
+      ctx.beginPath(); ctx.moveTo(P.x,P.y); ctx.lineTo(P1.x,P1.y); ctx.moveTo(P.x,P.y); ctx.lineTo(P2.x,P2.y); ctx.stroke();
+    }
+    // draw trajectory over the terrain
+    const f=this.computePath(a);
+    if(!f.ring && f.pts && f.pts.length>1){
+      ctx.lineWidth=2.4; ctx.lineCap='round';
+      for(let i=1;i<f.pts.length;i++){ const q0=f.pts[i-1],q1=f.pts[i]; const P0=proj(q0.x-a.pos.x,q0.y-a.pos.y,q0.z),P1=proj(q1.x-a.pos.x,q1.y-a.pos.y,q1.z); const spN=Math.max(0,Math.min(1,q1.sp/this.C.VMAX)); ctx.strokeStyle=this.colFor(q1.attr,0.5+spN*0.5); ctx.beginPath();ctx.moveTo(P0.x,P0.y);ctx.lineTo(P1.x,P1.y);ctx.stroke(); }
+      if(f.misfire){ const P=proj(f.misfire.x-a.pos.x,f.misfire.y-a.pos.y, 6); ctx.strokeStyle='rgba(255,110,80,.95)';ctx.lineWidth=2.5;ctx.beginPath();ctx.moveTo(P.x-5,P.y-5);ctx.lineTo(P.x+5,P.y+5);ctx.moveTo(P.x+5,P.y-5);ctx.lineTo(P.x-5,P.y+5);ctx.stroke(); }
+    }
+    ctx.restore();
+  }
+
+  // ---------- handlers ----------
+  _setCfg(patch){ const i=this.state.activeAlly; const allies=this.state.allies.map((x,k)=> k===i?{...x,cfg:{...x.cfg,...patch}}:x); const touched=this.state.touched.slice(); touched[i]=true; this.setState({allies,touched}); }
+
+  renderVals(){
+    this._ensureLoop();
+    const S=this.state; const a=S.allies[S.activeAlly]; const cfg=a.cfg;
+    const nameColor = a.el==='light'?'var(--gold2)':a.el==='dark'?'var(--vio2)':'var(--neu)';
+    const elDot = this.colFor(a.el,1);
+    const pred=this.prediction(a);
+    const isRing = cfg.shape==='ring';
+    const castType = isRing? '軌道型（結界）' : '発射型（火球）';
+
+    // rooms
+    const roomNames=['門','通路','踊り場','螺旋','広間','封印帯','大広間'];
+    const cur=S.turn>7?7:1; // stage 1 in this demo
+    const rooms=roomNames.map((nm,i)=>{ const n=i+1; const done=n<1; const isCur=n===1;
+      return { n, title:'第'+n+'の間 · '+nm, sz:isCur?'13px':'9px', bg:isCur?'var(--gold)':done?'#3a3a58':'#1a1a2a', sh:isCur?'2px 2px 0 var(--goldd)':'none', tc:isCur?'var(--gold2)':'var(--dim)', op:isCur?1:0.55 }; });
+
+    // steps
+    const stepDefs=[{k:'①',label:'道'},{k:'②',label:'地形'},{k:'▸',label:'発射'}];
+    const steps=stepDefs.map((s,i)=>{ const active=i<2; return { k:s.k, label:s.label,
+      bg:active?'#1a1428':'#0c0c16', bd:active?'var(--edge2)':'var(--edge)',
+      nb:i===0?'var(--gold)':i===1?'var(--vio)':'#2a2a42', nc:i<2?'#0e0a1e':'var(--dim)',
+      tc:active?'#e9e9f4':'var(--dim)', arrow:i<2?'var(--edge2)':'transparent' }; });
+
+    // ally cards
+    const allyCards=S.allies.map((x,i)=>{ const act=i===S.activeAlly; const nc=x.el==='light'?'var(--gold2)':x.el==='dark'?'var(--vio2)':'var(--neu)';
+      return { label:x.name, name:act?nc:'var(--dim)', dot:this.colFor(x.el,1), bg:act?'linear-gradient(180deg,#171226,#0c0c16)':'#0a0a12', top:act?nc:'transparent',
+        hpw:(100*x.hp/x.max)+'%', hpc:this.colFor(x.el,.9), hptext:'HP '+x.hp+'/'+x.max, mark:S.touched[i]?'✓ 設定済':'', chk:'var(--gold)',
+        select:()=>this.setState({activeAlly:i}) }; });
+
+    // shape buttons
+    const shapes=[{k:'line',g:'／',l:'直線'},{k:'arc',g:'⌒',l:'放物'},{k:'wave',g:'∿',l:'波'},{k:'abs',g:'∨',l:'折れ'},{k:'ring',g:'◯',l:'結界'}];
+    const shapeBtns=shapes.map(s=>{ const on=cfg.shape===s.k; return { glyph:s.g, label:s.l, click:()=>this._setCfg({shape:s.k}),
+      bg:on?'#241d06':'#0c0c16', bd:on?'var(--gold)':'var(--edge2)', fg:on?'var(--gold2)':'var(--dim)', tc:on?'var(--gold2)':'#9aa0b4', sh:on?'2px 2px 0 var(--goldd)':'none' }; });
+
+    // sign buttons
+    const signs=[{v:1,g:'▲',l:'光'},{v:0,g:'▬',l:'中立'},{v:-1,g:'▼',l:'闇'}];
+    const signBtns=signs.map(s=>{ const on=cfg.zSign===s.v; const col=s.v>0?'var(--gold)':s.v<0?'var(--vio)':'var(--neu)'; const col2=s.v>0?'var(--gold2)':s.v<0?'var(--vio2)':'var(--neu)';
+      return { glyph:s.g, label:s.l, click:()=>this._setCfg({zSign:s.v}), bg:on?(s.v>0?'#241d06':s.v<0?'#171233':'#1a1a26'):'#0c0c16', bd:on?col:'var(--edge2)', fg:on?col2:'var(--dim)', tc:on?col2:'#9aa0b4', sh:on?'2px 2px 0 #000':'none' }; });
+
+    // z-shape buttons
+    const zsh=[{k:'const',g:'▦',l:'一定'},{k:'gradY',g:'⇅',l:'縦勾配'},{k:'gradX',g:'⇄',l:'横勾配'},{k:'radial',g:'◎',l:'放射'}];
+    const zShapeBtns=zsh.map(z=>{ const on=cfg.zShape===z.k; return { glyph:z.g,label:z.l, click:()=>this._setCfg({zShape:z.k}), bg:on?'#171233':'#0c0c16', bd:on?'var(--vio)':'var(--edge2)', fg:on?'var(--vio2)':'var(--dim)', tc:on?'var(--vio2)':'#9aa0b4' }; });
+
+    // strength readout at representative point
+    const repZ = cfg.zSign*cfg.zMag;
+    const st = this.strengthOf(cfg.zShape==='const'?repZ:cfg.zSign*cfg.zMag);
+    const strengthText = st>=4.5?'最大級': st>=3?'強': st>=1.5?'中':'弱';
+
+    const narrow=S.narrow;
+    const bodyStyle = narrow
+      ? 'flex:1;min-height:0;display:flex;flex-direction:column'
+      : 'flex:1;min-height:0;display:grid;grid-template-columns:1fr 372px';
+    const boardWrapStyle = 'position:relative;min-width:0;background:#05050b;'+(narrow?'flex:1 1 auto;min-height:44vh;border-bottom:2px solid var(--edge)':'border-right:2px solid var(--edge)');
+    const composerStyle = 'position:relative;background:var(--panel2);display:flex;flex-direction:column;overflow-y:auto;'+(narrow?'flex:0 0 auto;max-height:56vh':'');
+
+    const legendStyle='position:absolute;'+(narrow?'top:56px;right:12px;':'top:12px;right:12px;')+'z-index:3;background:#0a0a12e0;border:1.5px solid var(--edge);padding:10px 12px;'+((this.props.assist??'full')==='minimal'?'display:none':'');
+    const predWrapStyle='position:absolute;'+(narrow?'left:12px;bottom:64px;right:12px;':'left:12px;bottom:88px;max-width:340px;')+'z-index:3;background:#08080ee8;border:1.5px solid '+pred.color+';border-left:4px solid '+pred.color+';padding:10px 13px;box-shadow:3px 3px 0 #000';
+
+    return {
+      // rail
+      stageName:'第一の間 ー 門', rooms, steps, turn:S.turn,
+      // board hud
+      allyCards, aimDeg: -(a.cfg.angle*180/Math.PI)+0, aimReadout:Math.round(a.cfg.angle*180/Math.PI)+'°',
+      legendStyle,
+      predWrapStyle, predIco:pred.ico, predIcoBg:pred.bg, predIcoFg:pred.fg, predTitle:pred.title, predSub:pred.sub, predColor:pred.color,
+      // composer
+      activeName:a.name, activeNameColor:nameColor, activeDot:elDot, castTypeLabel:castType,
+      shapeBtns, signBtns, zShapeBtns,
+      zMagText:'|z| = '+cfg.zMag.toFixed(1), zMagVal:cfg.zMag, zMagPct:(cfg.zMag/8*100)+'%', strengthText,
+      setMag:(e)=>this._setCfg({zMag:parseFloat(e.target.value)}),
+      recommend:()=>this._recommend(),
+      fireAll:()=>this._fireAll(),
+      zoomIn:()=>this.setState({zoom:Math.min(2,S.zoom+0.25)}),
+      zoomOut:()=>this.setState({zoom:Math.max(0.6,S.zoom-0.25)}),
+      toggleMenu:()=>{}, dismissResult:()=>this.setState({showResult:false}),
+      showResult:S.showResult, resultTitle:S.resultTitle, resultSub:S.resultSub,
+      // layout
+      bodyStyle, boardWrapStyle, composerStyle,
+    };
+  }
+
+  _recommend(){
+    // pick opposite polarity vs enemy, aim at enemy, straight line
+    const i=this.state.activeAlly; const a=this.state.allies[i]; const e=this.state.enemy;
+    const sign = e.el==='dark'?1 : e.el==='light'?-1 : 1;
+    let ang=Math.atan2(e.pos.y-a.pos.y, e.pos.x-a.pos.x); if(ang<0)ang+=Math.PI*2;
+    this._setCfg({ shape:'line', angle:ang, zSign:sign, zMag:5, zShape:'const' });
+  }
+
+  _fireAll(){
+    const paths=this.state.allies.map(al=>this.computePath(al));
+    let dmg=0; paths.forEach(f=>{ if(f.hit) dmg+=f.hit.dmg; });
+    const anim={ t0:Date.now(), dur:1100, paths };
+    this.setState({anim});
+    setTimeout(()=>{
+      const hp=Math.max(0, this.state.enemyHp-dmg);
+      let title, sub;
+      if(dmg<=0){ title='外れ…'; sub='どの弾も敵へ届かなかった。地形（z場）と道を調整して、反対極を当てよう。'; }
+      else if(hp<=0){ title='撃破！'; sub='石像の番人は光の粒となって崩れた。次の間へ進める。'; }
+      else { title=dmg+' ダメージ'; sub='残りHP '+hp+'/'+this.state.enemyMax+'。反対極（×1.5）で当てるとさらに削れる。'; }
+      this.setState({ anim:null, enemyHp:hp, turn:this.state.turn+1, touched:[false,false,false], showResult:true, resultTitle:title, resultSub:sub });
+    }, 1150);
+  }
+}
+</script>
+</body>
+</html>

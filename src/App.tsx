@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Ally, AllyCast, BattleState, CarveBurst, Stage, Vec2, ZPoint } from './game/types'
 import { createBattleState, prepareTurn, resolveAllyCasts } from './game/battle'
 import { planEnemyShots, enemyFlight } from './game/enemyAI'
+import { predictAllyShots } from './game/enemyPlanning/foresight'
 import { zfieldAt } from './game/attribute'
 import { ringAverageAttr } from './game/orbit'
 import { recommendCast } from './game/recommend'
@@ -359,6 +360,10 @@ export default function App() {
           (battle.orbits ?? []).filter((o) => o.owner === 'player').map((o) => o.ring),
           battle.enemies,
           battle.rField,
+          0,
+          [],
+          // 予告ゴーストは本番（resolveTurn）と同じ読み（#75）で建てる＝予告と結果をズラさない
+          { predicted: predictAllyShots(battle.lastAllyCasts, battle.allies) },
         ).map((plan) => ({
           path: enemyFlight(plan.trajectory, e.castInitialSpeed).path,
           misfire: plan.misfirePos ?? null,
@@ -678,7 +683,15 @@ export default function App() {
     const orbits: AnimOrbit[] = []
     for (const s of resolution.allyShots) {
       if (s.kind === 'orbit') {
-        orbits.push({ ring: s.path, hitEnemyIds: s.sweptEnemyIds, carves: s.carves, broken: s.broken, speed: s.ringSpeed })
+        orbits.push({
+          ring: s.path,
+          hitEnemyIds: s.sweptEnemyIds,
+          carves: s.carves,
+          broken: s.broken,
+          speed: s.ringSpeed,
+          breakT: s.breakTime, // 霧散のゲーム時刻（#72）
+          owner: 'player',
+        })
       } else if (s.flight) {
         bullets.push({
           samples: s.flight.samples.map((x, i) => ({
@@ -707,18 +720,23 @@ export default function App() {
         carves: breakCarve(er.ring, er.breakPos),
         broken: er.broken,
         speed: er.ringSpeed,
+        breakT: er.breakTime,
+        owner: 'enemy',
       })
     }
     // 持続周回（#39）：前ターンから残っている結界も回転表示。今ターン相殺で消えたら霧散させる
     const prevOrbits = battle.orbits ?? []
     for (const po of prevOrbits) {
       const survived = resolution.orbits.some((o) => o.id === po.id)
+      const brk = resolution.orbitBreaks[po.id]
       orbits.push({
         ring: po.ring,
         hitEnemyIds: [],
-        carves: breakCarve(po.ring, resolution.orbitBreaks[po.id]),
+        carves: breakCarve(po.ring, brk?.pos),
         broken: !survived,
         speed: po.ringSpeed,
+        breakT: brk?.t ?? null,
+        owner: po.owner,
       })
     }
     for (const es of resolution.enemyShots) {

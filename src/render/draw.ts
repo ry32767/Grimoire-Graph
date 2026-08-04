@@ -3,6 +3,7 @@ import type { Ally, Attribute, Enemy, EnemySpecies, Obstacle, ObstacleKind, Vec2
 import { FIELD } from '../data/constants'
 import { toScreen, scaleOf, type Viewport } from '../game/coords'
 import { attributeOf, strengthOf } from '../game/attribute'
+import { bulletRadius, powerFraction } from '../game/collision'
 import { COLORS } from './theme'
 import { getWallTexture } from './textures'
 import {
@@ -73,6 +74,11 @@ export interface SceneParams {
   bossView?: BossView
   /** 撃破演出が始まった敵ID（#46）：生存スプライトを隠し、消滅アニメへ譲る。 */
   hideEnemyIds?: Set<string>
+  /**
+   * 闇の結界に隠されている単位（#73）。ぼかし（闇幕）に加えて**分身**を散らし、
+   * 「座標の取得が rmse だけぶれる」ことを目で分かるようにする。
+   */
+  conceal?: ConcealView[]
 }
 
 /** 被弾の揺れ量（px）。強度と位相・IDシードで上下左右に細かく震える（#20）。 */
@@ -414,7 +420,7 @@ function drawGolem(
  * ゴーレムの目の発光色（05c §4）：現在張っている結界の属性色。
  * guardZSign（交互張りが今ターン設定した極性）を優先し、無ければ自身の防御属性から導出する。
  */
-function golemEyeColor(e: Pick<Enemy, 'guardZSign' | 'element'>): string {
+export function golemEyeColor(e: Pick<Enemy, 'guardZSign' | 'element'>): string {
   if (e.guardZSign === 1) return GUARD_LIGHT
   if (e.guardZSign === -1) return GUARD_DARK
   return e.element === 'light' ? GUARD_LIGHT : GUARD_DARK
@@ -794,6 +800,89 @@ export interface BossView {
 }
 
 /** 敵の描画（種族別スプライト＋得意関数記号＋名前・#46）。ボスは多段外見（#51）。 */
+/**
+ * 闇の結界に隠されている 1 体（#73）。
+ * 1 重＝真の位置のまわり半径 rmse に**分身**が散り、どれが本物か読めない。
+ * 2 重＝分身も出さない（闇幕が全てを覆って中は完全に見えない）。
+ */
+export interface ConcealView {
+  id: string
+  pos: Vec2
+  side: 'ally' | 'enemy'
+  /** 重なっている闇結界の枚数 */
+  layers: number
+  /** 座標の取り違え幅（ユニット）＝ engine の concealRmse と同じ量 */
+  rmse: number
+  /** 表示半径（ヒットボックス相当・ユニット） */
+  radius: number
+  /** 敵の分身を本体そっくりに描くための外見（味方は未指定） */
+  look?: { species: EnemySpecies; tier: 1 | 2 | 3; element: Attribute; eye: string }
+}
+
+/** id から安定した角度を作る（分身の位置がフレームごとに跳ねないように）。 */
+function seedAngle(id: string): number {
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 997
+  return (h / 997) * Math.PI * 2
+}
+
+/** 分身の枚数（1 重のとき）。多すぎると盤面が読めなくなるので 3 体。 */
+const DECOY_COUNT = 3
+
+/**
+ * 闇の結界の「座標がぶれる」を見せる（#73）。
+ * 真の位置を中心に半径 rmse の破線円を描き、その円周上へ**本体と同じ姿の分身**を散らす。
+ * 分身の位置は id 由来で安定し、ゆっくり揺れるだけ（毎フレーム乱数で跳ねない）。
+ * 2 重（完全隠蔽）は分身も出さない＝闇幕だけが残り、中は何も見えない。
+ */
+export function drawConcealDecoys(
+  ctx: CanvasRenderingContext2D,
+  views: ConcealView[],
+  vp: Viewport,
+  phase = 0,
+): void {
+  const s = scaleOf(vp)
+  for (const v of views) {
+    if (v.layers >= 2 || v.rmse <= 0) continue // 完全隠蔽は幕だけ／ブレ幅ゼロなら描かない
+    const c = toScreen(v.pos, vp)
+    const rr = v.rmse * s
+    ctx.save()
+    // ブレ幅そのものを示す破線円
+    ctx.strokeStyle = 'rgba(168,138,240,0.6)'
+    ctx.lineWidth = 1.4
+    ctx.setLineDash([4, 5])
+    ctx.beginPath()
+    ctx.arc(c.x, c.y, rr, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.setLineDash([])
+    // 分身：円周上に等間隔（開始角は id 由来で安定）＋ゆっくり揺れる
+    const base = seedAngle(v.id)
+    for (let i = 0; i < DECOY_COUNT; i++) {
+      const a = base + (i * Math.PI * 2) / DECOY_COUNT + Math.sin(phase * 0.6 + i * 1.7) * 0.12
+      const dx = c.x + Math.cos(a) * rr
+      const dy = c.y - Math.sin(a) * rr
+      ctx.globalAlpha = 0.62 + Math.sin(phase * 0.9 + i) * 0.1
+      const r = v.radius * s
+      if (v.look) {
+        drawSpeciesSprite(ctx, dx, dy, r * 0.95, v.look.species, v.look.tier, v.look.element, v.look.eye, phase)
+      } else {
+        // 術者スプライトは drawCasters と同じ 1 ドット幅（scaleOf×0.16）で描く
+        drawPixelSprite(ctx, dx, dy, MAGE_ROWS, MAGE_PAL, Math.max(2, s * 0.16))
+      }
+      // 分身であることが分かる薄紫の輪郭
+      ctx.globalAlpha = 0.7
+      ctx.strokeStyle = 'rgba(190,166,255,0.9)'
+      ctx.lineWidth = 1
+      ctx.setLineDash([3, 3])
+      ctx.beginPath()
+      ctx.arc(dx, dy, r * 1.1, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.setLineDash([])
+    }
+    ctx.restore()
+  }
+}
+
 export function drawEnemies(
   ctx: CanvasRenderingContext2D,
   enemies: Enemy[],
@@ -1357,6 +1446,11 @@ export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
   drawEnemies(ctx, p.enemies, p.vp, p.flash, p.shakePhase, p.bossView, p.hideEnemyIds)
   drawCasters(ctx, p.allies, p.vp, p.activeAllyId, p.flash, p.shakePhase)
 
+  // 闇の結界に隠された単位の分身（#73）。この後に重なる闇幕でまとめてぼやける
+  if (p.conceal && p.conceal.length > 0) {
+    drawConcealDecoys(ctx, p.conceal, p.vp, p.trailPhase ?? p.shakePhase ?? 0)
+  }
+
   // 関数エラーで暴発する点を赤い✕で可視化（最前面・#30）。
   // instability が進んでいると、半径のブレ帯（min–max のぼやけた二重リング）を重ねる（04b §4b.3）
   if (p.misfirePoints) {
@@ -1535,11 +1629,9 @@ export function bulletColorOf(z: number): string {
 /**
  * 威力（=速度×強度）を 0..1 に正規化する。魔法の見た目サイズに使う（#21）。
  * 最大威力（最強属性 sMax × 終端速度 maxFlightSpeed）で 1。発射型の弾・軌道型の粒で共通に使う。
+ * **当たり判定と同じ定義**（game/collision.powerFraction）を再輸出する＝見た目と判定がズレない（#72）。
  */
-export function powerSizeFrac(speed: number, z: number): number {
-  const p = strengthOf(z) * Math.max(0, speed)
-  return Math.min(1, p / (FIELD.sMax * FIELD.maxFlightSpeed))
-}
+export const powerSizeFrac = powerFraction
 
 /**
  * 飛行中の弾（多層グロー＋脈動コア＋回転スパーク・#11/#21）。
@@ -1557,20 +1649,22 @@ export function drawBullet(
   const color = bulletColorOf(z)
   const strength = strengthOf(z) // 0..sMax
   const sFrac = Math.min(1, strength / FIELD.sMax) // 0..1
-  // 弾の大きさは威力（=速度×強度）で決まる（#21/#45）。速度0や弱属性なら小さく、最大威力で最大。
-  // 以前は強属性に下駄（sFrac×0.4）を履かせ基準サイズも大きかったため、常に大玉に見えていた。
-  const powerFrac = powerSizeFrac(speed, z)
-  const sizeFrac = Math.max(0.06, powerFrac) // 最低限見える大きさだけ確保し、あとは威力に比例
   const pulse = 1 + Math.sin(phase * 1.7) * 0.25
-  // 威力が大きいほど大きく・強いほど棘が多い（#21：形が z で変わる）
-  const glowR = (4 + sizeFrac * 22) * pulse
+  // 強いほど棘が多い（#21：形が z で変わる）
   const spikes = 4 + Math.round(sFrac * 4)
-  const coreR = (1.3 + sizeFrac * 4.2) * pulse
+  // **本体（属性色の円）が当たり判定の半径そのもの**（#72：見えている大きさ＝ぶつかる大きさ）。
+  // 威力（速度×強度）で大きさが決まるので、本体の直径がそのまま「この魔法の重さ」を語る。
+  // 脈動は当たり判定を動かさない見た目だけの揺らぎなので、平均が判定半径になるよう ±0 で振らせる。
+  const bodyR = bulletRadius(speed, z) * scaleOf(vp) * pulse
+  // 白い芯は「そこに核がある」ことを示すだけの小さなハイライト。
+  // 本体（属性色＝威力）を覆い隠さないよう、本体の 1/3 以下に抑える。
+  const coreR = Math.max(1, bodyR * 0.3)
+  const glowR = bodyR * 1.7 + 3 // グローは本体を包む輪（軌跡を主役にするため控えめ・#74）
   ctx.save()
   const glow = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, glowR)
   glow.addColorStop(0, color)
   glow.addColorStop(1, 'rgba(0,0,0,0)')
-  ctx.globalAlpha = 0.5 + sFrac * 0.25
+  ctx.globalAlpha = 0.34 + sFrac * 0.2
   ctx.fillStyle = glow
   ctx.beginPath()
   ctx.arc(c.x, c.y, glowR, 0, Math.PI * 2)
@@ -1589,7 +1683,18 @@ export function drawBullet(
     ctx.lineTo(c.x + Math.cos(a) * len, c.y + Math.sin(a) * len)
     ctx.stroke()
   }
-  // コア
+  // 本体：属性色の円＝当たり判定そのもの。縁を一段明るくして輪郭を立てる
+  ctx.fillStyle = color
+  ctx.beginPath()
+  ctx.arc(c.x, c.y, bodyR, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.shadowBlur = 0
+  ctx.strokeStyle = 'rgba(255,248,225,0.75)'
+  ctx.lineWidth = 1.2
+  ctx.beginPath()
+  ctx.arc(c.x, c.y, bodyR, 0, Math.PI * 2)
+  ctx.stroke()
+  // 白い芯（小さなハイライト）
   ctx.fillStyle = '#fff8e1'
   ctx.beginPath()
   ctx.arc(c.x, c.y, coreR, 0, Math.PI * 2)

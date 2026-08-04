@@ -428,4 +428,9 @@ export interface BattleState {
    * pending=次ターンで発動 → cast=発動中 → done=解決済み（勝敗判定へ進める）。
    */
   finale?: 'pending' | 'cast' | 'done'
+  /**
+   * 一つ前のターンに味方が撃った術式（#75）。敵AIが「次も同じ手で撃ってくる」と読んで
+   * 相殺されない経路を選ぶために使う。ステージ開始時は未設定＝読み無し。
+   */
+  lastAllyCasts?: AllyCast[]
 }

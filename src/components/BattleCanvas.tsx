@@ -11,19 +11,16 @@ import type {
   Vec2,
   ZPoint,
 } from '../game/types'
-import { FIELD } from '../data/constants'
 import { toScreen, toMath, type Viewport } from '../game/coords'
 import {
   drawScene,
   drawBullet,
-  drawTrail,
   drawMisfire,
   drawFallingDebris,
   drawCarveBurst,
   drawClashSpark,
   drawOrbitDissipation,
   drawBulletDissipation,
-  bulletColorOf,
   drawEnemyDeath,
   drawBossCollapse,
   powerSizeFrac,
@@ -34,21 +31,27 @@ import {
   drawAimArrow,
   drawDamageNumber,
   drawDarkVeil,
+  drawLightAura,
   drawEnemyHpBars,
   drawFlightPath,
   drawImpactShockwave,
   drawLaunchFlash,
   drawOrbitRing,
   drawParryBurst,
+  drawPowerSmoke,
   drawSpeedSparks,
   type DarkRing,
+  type LightRing,
   type PreviewPoint,
   type RingPhaseStore,
 } from '../render/board'
 import { seedRingPhases } from '../render/ringPhase'
-import { firstApproachTime, gameTimeAtArcLen } from '../render/effectTiming'
-import { ringAverageAttr } from '../game/orbit'
+import { gameTimeAtArcLen } from '../render/effectTiming'
+import { ringAverageAttr, ringEncloses, ringRadius, type RingPoint } from '../game/orbit'
 import { COLORS } from '../render/theme'
+import { COMBAT, FIELD, GAME } from '../data/constants'
+import { speciesOf, tierOf } from '../render/species'
+import { golemEyeColor, type ConcealView } from '../render/draw'
 
 /** 盤面キャンバスの既定サイズ（実測前の1フレームだけ使う保険値）。 */
 const FALLBACK_SIZE = { w: 640, h: 480 }
@@ -107,14 +110,20 @@ export interface AnimOrbit {
   broken?: boolean
   /** リングの代表速度（#21：威力＝速度×強度で粒の大きさを変える） */
   speed?: number
+  /**
+   * 霧散した**ゲーム時刻**（秒・#72）。エンジン（resolveTurn）が返す実際の接触時刻で、
+   * 演出はこの時刻ちょうどから散り始める。null のときだけ従来の既定タイミングへ落とす。
+   */
+  breakT?: number | null
+  /** 所有者（#61/#72）。粒の流れる向き・闇幕の扱いに使う */
+  owner?: 'player' | 'enemy'
 }
 
 /** 被弾フラッシュの減衰時間（ms）。一瞬赤く光って揺れて戻る（#20） */
 const FLASH_MS = 420
 
-/** パリィ／結界の衝突火花の持続（ms）と、弾がその点に到達したと見なす距離（数学ユニット・#20） */
+/** パリィ／結界の衝突火花の持続（ms・#20）。発火時刻はエンジンの衝突時刻をそのまま使う（#72） */
 const CLASH_MS = 460
-const CLASH_DIST = 1.6
 /** 相殺（パリィ）演出の持続（ms・v3）。二重の衝撃波と破片が広がりきるまで */
 const PARRY_MS = 900
 
@@ -138,8 +147,8 @@ export interface EnemyDeath {
 export interface ResolveAnimation {
   bullets: AnimBullet[]
   orbits: AnimOrbit[]
-  /** 弾・結界の衝突点と威力（#20/#38：パリィ/迎撃の火花。power で大きさが変わる） */
-  clashes?: { pos: Vec2; power: number }[]
+  /** 弾・結界の衝突点・威力・**ゲーム時刻**（#20/#38/#72：パリィ/迎撃の火花） */
+  clashes?: { pos: Vec2; power: number; t: number }[]
   /** ダメージ／回復の数値表示（#42） */
   popups?: DamagePopup[]
   /** このターン撃破された敵の消滅演出（05c §6.5・#46） */
@@ -250,15 +259,25 @@ export interface PlaybackControl {
 const MS_PER_GAMESEC = 360
 const MIN_MS = 700
 const MAX_MS = 2300
-const MIN_SPEED = 0.5
 
-/** 弾サンプルから「各点までの到達ゲーム時間」を積分する（速度の逆数を弧長で積分）。 */
+/**
+ * 弾サンプルから「各点までの到達ゲーム時間」を積分する（#72）。
+ * **エンジンの physics.flightTimes と同一の定義**（Σ ds/v の台形積分）を使う＝
+ * resolveTurn が返すイベント時刻（パリィ・結界の霧散・暴発）と同じ時間軸に乗る。
+ * 失速（v≈0）した先へは進めないので、その点で時刻を止める（サンプルもそこで終わっている）。
+ */
 function buildTimeline(samples: AnimSample[]): { tCum: number[]; total: number } {
   const tCum = [0]
+  let stalled = false
   for (let i = 1; i < samples.length; i++) {
     const ds = samples[i].arcLen - samples[i - 1].arcLen
-    const v = Math.max(MIN_SPEED, (samples[i].speed + samples[i - 1].speed) / 2)
-    tCum.push(tCum[i - 1] + ds / v)
+    const v = (samples[i].speed + samples[i - 1].speed) / 2
+    if (stalled || v <= 1e-9) {
+      stalled = true
+      tCum.push(tCum[i - 1])
+    } else {
+      tCum.push(tCum[i - 1] + ds / v)
+    }
   }
   return { tCum, total: tCum[tCum.length - 1] || 0 }
 }
@@ -361,6 +380,45 @@ export default function BattleCanvas(props: Props) {
     ? props.enemies.find((e) => e.id === props.aimEnemyId) ?? null
     : props.enemies.find((e) => e.hp > 0) ?? null
 
+  // 闇の結界に隠されている単位（#73）。ぼかし（闇幕）＋分身で「座標がぶれる」ことを見せる。
+  //  - 敵：こちらの視界が敵の闇結界に阻まれる（RMSE ＝ リング半径/2・engine と同じ式）
+  //  - 味方：敵から見えにくくなっている（engine が付けた concealed / concealRmse をそのまま使う）
+  const standing = props.standingOrbits ?? []
+  const darkStanding = standing.filter((o) => o.ring.length >= 3 && ringAverageAttr(o.ring) === 'dark')
+  const concealViews: ConcealView[] = []
+  for (const e of props.enemies) {
+    if (e.hp <= 0) continue
+    const inside = darkStanding
+      .filter((o) => o.owner === 'enemy' && ringEncloses(o.ring as RingPoint[], e.pos))
+      .map((o) => ringRadius(o.ring as RingPoint[]))
+      .sort((a, b) => a - b)
+      .slice(0, COMBAT.orbitConcealFull)
+    if (inside.length === 0) continue
+    concealViews.push({
+      id: e.id,
+      pos: e.pos,
+      side: 'enemy',
+      layers: inside.length,
+      rmse: inside.reduce((sum, r) => sum + r / 2, 0),
+      radius: e.hitboxRadius,
+      look: { species: speciesOf(e), tier: tierOf(e.level), element: e.element, eye: golemEyeColor(e) },
+    })
+  }
+  for (const a of props.allies) {
+    if (a.hp <= 0 || !a.concealed || a.concealed <= 0) continue
+    concealViews.push({
+      id: a.id,
+      pos: a.pos,
+      side: 'ally',
+      layers: a.concealed,
+      rmse: a.concealRmse ?? 0,
+      radius: GAME.allyHitbox,
+    })
+  }
+  const lightStanding: LightRing[] = standing
+    .filter((o) => o.ring.length >= 3 && ringAverageAttr(o.ring) === 'light')
+    .map((o) => ({ ring: o.ring, owner: o.owner === 'enemy' ? 'enemy' : 'ally' }))
+
   const staticParams: SceneParams = {
     vp,
     allies: props.allies,
@@ -381,6 +439,7 @@ export default function BattleCanvas(props: Props) {
     rayAxis: activeAlly && props.aimAngle !== undefined ? { pos: activeAlly.pos, angle: props.aimAngle } : null,
     previewPath,
     previewFull: props.previewFull,
+    conceal: concealViews,
   }
 
   useEffect(() => {
@@ -392,11 +451,12 @@ export default function BattleCanvas(props: Props) {
 
     if (!props.animation) {
       // 作成フェーズ：持続周回があれば粒を回し続ける（#39）。無ければ1回だけ描画（z場プレビュー含む・#37）。
-      const standing = props.standingOrbits ?? []
       const drawComposeFrame = (trailPhase: number) => {
         lastTrailRef.current = trailPhase
         prepare(ctx)
         drawScene(ctx, { ...staticParams, trailPhase, trails: trailsRef.current })
+        // 光の結界：内側に癒やしの場（昇る光の粒）。重なりは「二重回復」（#73）
+        drawLightAura(ctx, vp, lightStanding, trailPhase)
         // 結界（周回）：帯の太さ・明るさが区間ごとの速度を語り、粒がその場の速度で流れる（v3）
         for (const o of standing) {
           drawOrbitRing(ctx, vp, o.ring, o.owner === 'enemy' ? 'enemy' : 'ally', ringStoreRef.current)
@@ -446,7 +506,13 @@ export default function BattleCanvas(props: Props) {
       .map((b) => b.samples.map((sm) => ({ pos: sm.pos, z: sm.z })))
     // 各弾の時間軸を構築。最も時間のかかる弾でアニメーション窓を決める（速い弾は先に着く＝#7）
     const timelines = anim.bullets.map((b) => buildTimeline(b.samples))
-    const maxTotal = Math.max(0.001, ...timelines.map((t) => t.total))
+    // エンジンが返すイベント時刻（相殺・結界の霧散）も時間窓に含める＝弾が居ないターンでも
+    // 演出が窓の外へはみ出さない（#72）
+    const eventTimes: number[] = [
+      ...(anim.clashes ?? []).map((c) => c.t),
+      ...anim.orbits.map((o) => o.breakT ?? 0),
+    ].filter((t) => Number.isFinite(t))
+    const maxTotal = Math.max(0.001, ...timelines.map((t) => t.total), ...eventTimes)
     // 軌道型がある時は周回が見えるよう窓を長めに確保（#24）
     const hasOrbit = anim.orbits.length > 0
     const floorMs = hasOrbit ? 1600 : MIN_MS
@@ -478,9 +544,10 @@ export default function BattleCanvas(props: Props) {
     const tailMs = deathTail
     const realMs = flightMs + tailMs
 
-    /** ゲーム時刻（Σds/v）→ アニメの実時間 ms。 */
+    /** ゲーム秒（エンジンのイベント時刻）→ アニメの実時間 ms（#72）。 */
     const msOfGameTime = (t: number): number =>
-      maxTotal > 0 ? Math.max(0, Math.min(flightMs, (t / maxTotal) * flightMs)) : 0
+      Math.max(0, Math.min(flightMs, (t / maxTotal) * flightMs))
+
     /**
      * 弾 i がその弧長へ届く実時間 ms（#70）。演出の開始時刻を「経過時刻から引ける値」にするための要。
      * これまでは到達したフレームの現在時刻をラッチしていたため、見返しで時刻を飛ばすと
@@ -490,15 +557,6 @@ export default function BattleCanvas(props: Props) {
       const b = anim.bullets[i]
       if (!b || b.samples.length === 0) return 0
       return msOfGameTime(gameTimeAtArcLen(b.samples, timelines[i].tCum, arcLen))
-    }
-    /** 点 pos へ弾が最初に近づく実時間 ms（#70）。どの弾も届かなければ null。 */
-    const msAtApproach = (pos: Vec2): number | null => {
-      let best = Number.POSITIVE_INFINITY
-      for (let i = 0; i < anim.bullets.length; i++) {
-        const t = firstApproachTime(anim.bullets[i].samples, timelines[i].tCum, pos, CLASH_DIST)
-        if (t !== null && t < best) best = t
-      }
-      return Number.isFinite(best) ? msOfGameTime(best) : null
     }
 
     // 被弾フラッシュ：対象IDごとに「反応を開始した実時刻」を記録し、以後減衰させる（#20）
@@ -685,6 +743,8 @@ export default function BattleCanvas(props: Props) {
 
       // 闇の周回は内側を暗くぼかす（#39：プレイヤー視点の視認性低下）。霧散した周回は幕を外す
       const liveDarkRings: DarkRing[] = []
+      // 光の周回は内側に癒やしの場を出す（#73）。霧散した周回は外す
+      const liveLightRings: LightRing[] = []
 
       // 軌道型リング：ゆっくり周回（#24）。壁/魔法に負けた周回は接触の瞬間から霧散（#34）
       for (let oi = 0; oi < anim.orbits.length; oi++) {
@@ -693,14 +753,17 @@ export default function BattleCanvas(props: Props) {
         const len = ring.length
         if (len < 2) continue
 
-        // 霧散する周回：弾が接触点へ到達した瞬間（接触弾が無ければ既定時刻）から散り始める
+        // 霧散する周回：**エンジンが返した破壊時刻**ちょうどから散り始める（#72）。
+        // 旧実装は「どれかの弾が破壊点へ近づいたか」で推定し、近づかない場合は飛行の40%で
+        // 強制発火していたため、パリィで弾が消えた／暴発で壊れた結界が実際より早く散っていた。
         if (o.broken) {
           if (dissipateStartByIdx[oi] === undefined) {
-            const cp = o.carves[0]?.pos
-            const at = cp ? msAtApproach(cp) : null
-            // 接触弾が無い（壁等）ときは既定時刻へ落とす
-            const start = at ?? 0.4 * flightMs
-            if (elapsed >= start) dissipateStartByIdx[oi] = start
+            const bt = o.breakT
+            if (bt !== null && bt !== undefined && Number.isFinite(bt)) {
+              if (elapsed >= msOfGameTime(bt)) dissipateStartByIdx[oi] = msOfGameTime(bt)
+            } else if (e >= 0.4) {
+              dissipateStartByIdx[oi] = 0.4 * flightMs // 時刻が取れない結界（術者の死亡等）の保険
+            }
           }
           const dStart = dissipateStartByIdx[oi]
           if (dStart !== undefined) {
@@ -717,10 +780,15 @@ export default function BattleCanvas(props: Props) {
 
         // 通常の周回（存続中／霧散前）：帯＋その場の速度で流れる粒（v3 の _drawRing）。
         // 粒の位相は経過時刻から組み立てる（フレーム数で進めると見返しで巻き戻らない・#69）
-        seedRingPhases(ringStoreRef.current, ring, 'ally', elapsed)
-        drawOrbitRing(ctx, vp, ring, 'ally', ringStoreRef.current)
-        if (ringAverageAttr(ring) === 'dark') liveDarkRings.push({ ring, owner: 'ally' })
+        const role = o.owner === 'enemy' ? 'enemy' : 'ally'
+        seedRingPhases(ringStoreRef.current, ring, role, elapsed)
+        drawOrbitRing(ctx, vp, ring, role, ringStoreRef.current)
+        const avg = ringAverageAttr(ring)
+        if (avg === 'dark') liveDarkRings.push({ ring, owner: role })
+        else if (avg === 'light') liveLightRings.push({ ring, owner: role })
       }
+      // 光結界の癒やしの場（存続している光のリングだけ・#73）
+      drawLightAura(ctx, vp, liveLightRings, trailPhase)
       // 闇結界の視認阻害（存続している闇のリングだけ）
       drawDarkVeil(ctx, vp, liveDarkRings, trailPhase)
 
@@ -744,13 +812,9 @@ export default function BattleCanvas(props: Props) {
         if (elapsed < 260 && pts.length > 0) drawLaunchFlash(ctx, vp, pts[0].pos, z, elapsed / 260)
         if (!exploding && !vanishing) {
           const frac = powerSizeFrac(b.samples[idx]?.speed ?? 0, z)
+          // 威力はドット絵の煙で語る（#74）。太さ一定の「玉の尻尾」は軌跡を殺すのでやめた
+          drawPowerSmoke(ctx, vp, pts, idx, trailPhase, frac)
           drawSpeedSparks(ctx, vp, pts, idx, phase, frac)
-          drawTrail(
-            ctx,
-            b.samples.slice(Math.max(0, idx - 26), idx + 1).map((s) => s.pos),
-            bulletColorOf(z),
-            vp,
-          )
           drawBullet(ctx, pos, z, vp, phase, b.samples[idx]?.speed ?? 0)
         }
         if (vanishing) {
@@ -793,9 +857,11 @@ export default function BattleCanvas(props: Props) {
       if (anim.clashes && anim.clashes.length > 0) {
         anim.clashes.forEach((clash, ci) => {
           const pos = clash.pos
+          // 発火は**エンジンが返した衝突時刻**（#72）。旧実装の「弾が近づいたら」推定では、
+          // 相殺で消えた弾の火花や、弾の経路上に無い暴発 AoE の火花が正しく出なかった。
           if (clashStartByIdx[ci] === undefined) {
-            const at = msAtApproach(pos)
-            if (at !== null && elapsed >= at) clashStartByIdx[ci] = at
+            const at = msOfGameTime(clash.t)
+            if (elapsed >= at) clashStartByIdx[ci] = at
           }
           const start0 = clashStartByIdx[ci]
           if (start0 === undefined) return

@@ -1,17 +1,43 @@
 // エンドロール（DC プロトタイプ v3 の _drawEndroll を移植）。
 // 「本物の敵AI同士が撃ち合う」自動対戦をクレジットの背景として流す。
-// 計画は本番と同じ planEnemyShots、飛行は enemyFlight → traverseObstacles、
-// 相殺は resolveParry、結界の迎撃は ringInterception。ロジックは一切書き換えない（読むだけ）。
-import type { Ally, Attribute, CarveBurst, Enemy, EnemyFamily, EnemyRole, Flight, Obstacle, Trajectory, Vec2 } from '../game/types'
+//
+// **計算は本番と完全に同一**（#72）：計画は planEnemyShots、解決は resolveTurn をそのまま呼ぶ。
+// 相殺・結界の迎撃・障害物の削り・暴発・ダメージ・状態異常はすべて本番の実装が返した結果を
+// 描くだけで、この層はロジックを一切持たない（かつては迎撃順・ダメージ式・相殺距離を
+// 独自に書き直していて、壁を貫く結界・因果の逆転した霧散が出ていた）。
+// 演出の時刻もエンジンが返すゲーム秒（flightTimes / clashes[].t / breakTime）をそのまま使う。
+import type {
+  ActiveOrbit,
+  Ally,
+  AllyCast,
+  Attribute,
+  CarveBurst,
+  Enemy,
+  EnemyFamily,
+  EnemyRole,
+  FlightSample,
+  Obstacle,
+  Trajectory,
+  Vec2,
+  ZPoint,
+} from '../game/types'
 import { FIELD, GAME } from '../data/constants'
 import { toScreen, type Viewport } from '../game/coords'
-import { planEnemyShots, enemyFlight } from '../game/enemyAI'
-import { traverseObstacles } from '../game/turn'
-import { flightTimes } from '../game/physics'
-import { attributeOf, strengthOf, affinityMultiplier, zfieldAt } from '../game/attribute'
-import { attachRingSpeeds, buildRing, ringInterception, type RingPoint } from '../game/orbit'
-import { resolveParry } from '../game/parry'
-import { drawObstacles, drawBullet, drawCarveBurst, drawMisfire, drawOrbitDissipation, drawDamageNumber, strokeZPath, drawParticle } from './draw'
+import { planEnemyShots } from '../game/enemyAI'
+import { resolveTurn, type ResolveResult } from '../game/turn'
+import { flightTimes, timeToArc } from '../game/physics'
+import { attributeOf, zfieldAt } from '../game/attribute'
+import {
+  drawObstacles,
+  drawBullet,
+  drawCarveBurst,
+  drawMisfire,
+  drawOrbitDissipation,
+  drawDamageNumber,
+  strokeZPath,
+  drawParticle,
+} from './draw'
+import { trailWidthPx } from './board'
 import { TOKENS } from './palette'
 
 const TAU = Math.PI * 2
@@ -22,48 +48,65 @@ const POS_B: Vec2 = { x: 15, y: 5 }
 /** 弾が飛ぶ見かけの秒数（実飛行秒 → 画面秒の倍率をここから決める） */
 const FLIGHT_SEC = 3.4
 const FIRE_AT = 0.45
+/** 結界が散り切るまでの画面秒 */
+const DISSIPATE_SEC = 0.76
 
 type Side = 'A' | 'B'
 
-interface Shot {
+/** 画面に描く1発（味方＝A側／敵＝B側どちらも同じ形で扱う）。 */
+interface Bolt {
   side: Side
-  traj: Trajectory
-  samples: Flight['samples']
+  samples: FlightSample[]
+  /** サンプルごとの z（色・弾の大きさ用） */
+  zs: number[]
+  /** 各サンプルへの到達ゲーム秒（physics.flightTimes） */
   times: number[]
   total: number
-  carves: (CarveBurst & { t?: number })[]
+  /** 壁を削った点（到達ゲーム秒つき） */
+  carves: (CarveBurst & { t: number })[]
   misfirePos: Vec2 | null
-  /** 発射時刻（画面秒）と時間倍率 */
-  at: number
-  k: number
-  dead?: boolean
-  hitDone?: boolean
+  /** 暴発したゲーム秒 */
+  misfireT: number
 }
 
-interface RingRec {
-  ring: RingPoint[]
-  lite: RingPoint[]
-  brokenAt: number | null
-  bornBout: number
+/** 画面に描く結界1枚。 */
+interface RingView {
+  ring: ZPoint[]
+  side: Side
+  /** 霧散したゲーム秒（エンジンの breakTime）。存続中は null */
+  breakT: number | null
+  /** この幕で新しく張られたか（フェードインさせる） */
+  fresh: boolean
+}
+
+/** ダメージ表示1件（時刻はエンジンの飛行時間から引く）。 */
+interface DamageView {
+  pos: Vec2
+  amount: number
+  kind: Attribute | 'misfire' | 'heal'
+  t: number
 }
 
 interface Bout {
-  shots: Shot[]
-  hits: { victim: Side; dmg: number; pos: Vec2; t: number; attr: Attribute; misfire?: boolean; done?: boolean }[]
-  clashes: { pos: Vec2; t: number; power: number }[]
-  blocks: { pos: Vec2; t: number; broke: boolean }[]
+  bolts: Bolt[]
+  rings: RingView[]
+  clashes: { pos: Vec2; power: number; t: number }[]
   blasts: { pos: Vec2; t: number; r: number }[]
+  damages: DamageView[]
+  obstacles: Obstacle[]
+  /** 画面秒 = FIRE_AT + ゲーム秒 × k */
+  k: number
   duration: number
+  /** 決着した画面秒 */
   ko?: number
   koSide?: Side
-  next?: { lvA: number; lvB: number; hpA: number; hpB: number; obstacles: Obstacle[] }
-  carvesKept?: boolean
+  /** 幕の終わりに反映する状態 */
+  after: { hpA: number; hpB: number; obstacles: Obstacle[]; orbits: ActiveOrbit[] }
 }
 
 /** 1 フレームに 1 手だけ進めるための計画ジョブ。 */
 interface PlanJob {
   side: Side
-  guard: boolean
   role: EnemyRole
 }
 
@@ -74,13 +117,15 @@ export interface EndrollState {
   hpB: number
   bout: number
   obstacles: Obstacle[]
-  ringA: RingRec | null
-  ringB: RingRec | null
+  /** 持続している結界（両陣営・resolveTurn がそのまま持ち越す） */
+  orbits: ActiveOrbit[]
   round: Bout | null
   t0: number
   banner: 'lvup' | 'reset' | null
   /** 次の幕を先取りで計画するためのキュー */
-  pre: { jobs: PlanJob[]; i: number; shots: Shot[]; guards: { side: Side; traj: Trajectory }[] } | null
+  pre: { jobs: PlanJob[]; i: number; casts: AllyCast[]; roles: EnemyRole[] } | null
+  /** 一つ前の幕で A 側が撃った手（#75：B 側の読みに渡す。A 側の読みは planOne では持たない） */
+  lastCasts: AllyCast[]
 }
 
 const rnd = () => Math.random()
@@ -184,7 +229,7 @@ function makeMage(s: EndrollState, side: Side, bout: number): Enemy {
   const el: Attribute = side === 'A' ? 'light' : 'dark'
   const sg = side === 'A' ? 1 : -1
   return {
-    id: `m${side}`,
+    id: side === 'A' ? 'mA' : 'mB',
     name: side === 'A' ? 'LIGHT MAGE' : 'DARK MAGE',
     pos: side === 'A' ? POS_A : POS_B,
     hp: side === 'A' ? s.hpA : s.hpB,
@@ -210,58 +255,6 @@ function makeMage(s: EndrollState, side: Side, bout: number): Enemy {
   }
 }
 
-/** 発散寸前のサンプルは飛び飛びに跳ぶので、破綻した所で切る（見た目のワープ防止）。 */
-function tameCount(samples: Flight['samples']): number {
-  const MAXSEG = 1.6
-  for (let i = 1; i < samples.length; i++) {
-    const a = samples[i - 1].pos
-    const b = samples[i].pos
-    const seg = Math.hypot(b.x - a.x, b.y - a.y)
-    if (!Number.isFinite(seg) || !Number.isFinite(b.x) || !Number.isFinite(b.y) || seg > MAXSEG) {
-      return Math.max(2, i)
-    }
-  }
-  return samples.length
-}
-
-/** AI が返した軌道を本番と同じ手順で飛ばす（enemyFlight → traverseObstacles）。 */
-function shotFromPlan(s: EndrollState, side: Side, traj: Trajectory): Shot | null {
-  let flight: Flight
-  let carves: CarveBurst[] = []
-  try {
-    flight = enemyFlight(traj, FIELD.fixedSpeed).flight
-    if (s.obstacles.length) {
-      const tr = traverseObstacles(
-        traj,
-        FIELD.fixedSpeed,
-        flight,
-        s.obstacles.map((o) => ({ ...o, carves: [...o.carves] })),
-      )
-      flight = tr.flight
-      carves = tr.carves
-    }
-  } catch {
-    return null
-  }
-  const raw = flight.samples
-  const samples = raw.slice(0, tameCount(raw))
-  if (samples.length < 2) return null
-  const times = flightTimes(samples)
-  const total = times[times.length - 1]
-  const last = samples[samples.length - 1]
-  return {
-    side,
-    traj,
-    samples,
-    times,
-    total: Number.isFinite(total) && total > 0 ? total : 1,
-    carves,
-    misfirePos: flight.end === 'invalid' ? { x: last.pos.x, y: last.pos.y } : null,
-    at: FIRE_AT,
-    k: 1,
-  }
-}
-
 /** 味方（＝相手の術者）として AI に見せる 1 人ぶん。 */
 function asAlly(e: Enemy): Ally {
   return {
@@ -275,44 +268,34 @@ function asAlly(e: Enemy): Ally {
   } as Ally
 }
 
-/** 次の幕ぶんの「一手」リスト（弾 1 発ずつ・結界 1 枚ずつ）。 */
+/** 次の幕ぶんの「一手」リスト（A 側は1発ずつ計画、B 側は resolveTurn 内でまとめて計画される）。 */
 function makeJobs(s: EndrollState, bout: number): PlanJob[] {
-  const out: PlanJob[] = []
-  for (const side of ['A', 'B'] as Side[]) {
-    const lv = side === 'A' ? s.lvA : s.lvB
-    const pool = rolePool(side, lv, bout)
-    if (pool.includes('guardian')) out.push({ side, guard: true, role: 'guardian' })
-    for (const role of pool.filter((r) => r !== 'guardian')) out.push({ side, guard: false, role })
-  }
-  return out
+  return rolePool('A', s.lvA, bout).map((role) => ({ side: 'A' as const, role }))
 }
 
-/** 一手だけ計画する（本番の敵AIを castCount:1 で呼ぶ）。false を返したら同じジョブを次フレームへ持ち越す。 */
+/**
+ * A 側の一手だけ計画する（本番の敵AIを castCount:1 で呼び、結果を「味方の発射」として使う）。
+ * false を返したら同じジョブを次フレームへ持ち越す。
+ */
 function planOne(
   s: EndrollState,
   job: PlanJob,
   bout: number,
-  bucket: { shots: Shot[]; guards: { side: Side; traj: Trajectory }[] },
+  bucket: { casts: AllyCast[] },
 ): boolean {
-  const me = makeMage(s, job.side, bout)
-  const foe = makeMage(s, job.side === 'A' ? 'B' : 'A', bout)
-  const allies = [asAlly(foe)]
-  const foeRing = job.side === 'A' ? s.ringB : s.ringA
-  const rings = foeRing && foeRing.brokenAt === null ? [foeRing.lite] : []
+  const me = makeMage(s, 'A', bout)
+  const foe = makeMage(s, 'B', bout)
+  // 敵AIから見える結界＝相手（B側）が張っている持続結界
+  const foeRings = s.orbits.filter((o) => o.owner === 'enemy').map((o) => o.ring)
   const one: Enemy = { ...me, role: job.role, castCount: 1, patternPool: [job.role] }
-  let plan
+  let traj: Trajectory | undefined
   try {
-    plan = planEnemyShots(one, allies, s.obstacles, rings, [], FIELD.rField, 0)[0]
+    traj = planEnemyShots(one, [asAlly(foe)], s.obstacles, foeRings, [], FIELD.rField, 0)[0]?.trajectory
   } catch {
-    plan = undefined
+    traj = undefined
   }
-  if (job.guard) {
-    if (plan?.trajectory) bucket.guards.push({ side: job.side, traj: plan.trajectory })
-    return true
-  }
-  const shot = plan ? shotFromPlan(s, job.side, plan.trajectory) : null
-  if (shot) {
-    bucket.shots.push(shot)
+  if (traj) {
+    bucket.casts.push({ allyId: 'mA', trajectory: traj, initialSpeed: FIELD.fixedSpeed })
     return true
   }
   // 暴発型などは手が見つからないことがある。次フレームに迂回型で撃ち直す
@@ -323,258 +306,184 @@ function planOne(
   return true
 }
 
-/** 結界の迎撃：本番と同じ ringInterception → resolveParry。同極はすり抜ける。 */
-function ringBlock(shot: Shot, rec: RingRec | null): { i: number; pos: Vec2; stop: boolean; breakRing: boolean } | null {
-  if (!rec || rec.ring.length < 3 || rec.brokenAt !== null) return null
-  let it
-  try {
-    it = ringInterception(rec.ring, shot.samples.map((q) => q.pos))
-  } catch {
-    return null
-  }
-  if (!it.crossed || !it.pos) return null
-  const hit = it.pos
-  let bi = 1
-  let bd = Number.POSITIVE_INFINITY
-  shot.samples.forEach((q, i) => {
-    if (i === 0) return
-    const d = Math.hypot(q.pos.x - hit.x, q.pos.y - hit.y)
-    if (d < bd) {
-      bd = d
-      bi = i
-    }
-  })
-  let ri = 0
-  let rd = Number.POSITIVE_INFINITY
-  rec.ring.forEach((q, i) => {
-    const d = Math.hypot(q.pos.x - hit.x, q.pos.y - hit.y)
-    if (d < rd) {
-      rd = d
-      ri = i
-    }
-  })
-  const q = shot.samples[bi]
-  const rp = rec.ring[ri]
-  const z = zfieldAt(shot.traj, q.pos)
-  const pr = resolveParry(
-    attributeOf(z),
-    q.speed,
-    q.speed * strengthOf(z),
-    attributeOf(rp.z),
-    rp.speed ?? 0,
-    (rp.speed ?? 0) * strengthOf(rp.z),
-  )
-  if (pr.passthrough) return null
-  return { i: bi, pos: { x: hit.x, y: hit.y }, stop: pr.vanishA, breakRing: pr.vanishB }
-}
-
-/** 弾どうしの相殺（同じ画面時刻に同じ場所で判定する）。 */
-function clashBetween(a: Shot, b: Shot): { pos: Vec2; t: number; power: number } | null {
-  const CD = 1.2
-  const ta = (i: number) => a.at + a.times[Math.min(i, a.times.length - 1)] * a.k
-  const tb = (j: number) => b.at + b.times[Math.min(j, b.times.length - 1)] * b.k
-  let j = 0
-  for (let i = 0; i < a.samples.length; i++) {
-    const t = ta(i)
-    while (j < b.samples.length - 1 && tb(j) < t) j++
-    const A = a.samples[i].pos
-    const B = b.samples[j].pos
-    if (Math.abs(tb(j) - t) < 0.08 && Math.hypot(A.x - B.x, A.y - B.y) <= CD) {
-      const sa = a.samples[i]
-      const sb = b.samples[j]
-      const za = zfieldAt(a.traj, sa.pos)
-      const zb = zfieldAt(b.traj, sb.pos)
-      const pr = resolveParry(
-        attributeOf(za),
-        sa.speed,
-        sa.speed * strengthOf(za),
-        attributeOf(zb),
-        sb.speed,
-        sb.speed * strengthOf(zb),
-      )
-      if (pr.passthrough) return null
-      if (pr.vanishA) {
-        a.samples = a.samples.slice(0, Math.max(2, i + 1))
-        a.dead = true
-      }
-      if (pr.vanishB) {
-        b.samples = b.samples.slice(0, Math.max(2, j + 1))
-        b.dead = true
-      }
-      for (const sh of [a, b]) {
-        sh.times = flightTimes(sh.samples)
-        const tt = sh.times[sh.times.length - 1]
-        if (Number.isFinite(tt) && tt > 0) sh.total = tt
-      }
-      return {
-        pos: { x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 },
-        t,
-        power: sa.speed * strengthOf(za) + sb.speed * strengthOf(zb),
-      }
+/** 発散寸前のサンプルは飛び飛びに跳ぶので、破綻した所で切る（見た目のワープ防止）。 */
+function tameCount(samples: FlightSample[]): number {
+  const MAXSEG = 1.6
+  for (let i = 1; i < samples.length; i++) {
+    const a = samples[i - 1].pos
+    const b = samples[i].pos
+    const seg = Math.hypot(b.x - a.x, b.y - a.y)
+    if (!Number.isFinite(seg) || !Number.isFinite(b.x) || !Number.isFinite(b.y) || seg > MAXSEG) {
+      return Math.max(2, i)
     }
   }
-  return null
+  return samples.length
 }
 
-/** 前の幕で削れたぶんを壁へ残す。 */
-function keepCarves(s: EndrollState): void {
-  const R = s.round
-  if (!R || R.carvesKept) return
-  for (const sh of R.shots) {
-    for (const c of sh.carves) {
-      const o = s.obstacles.find((q) => q.id === c.obstacleId)
-      if (o) o.carves.push({ x: c.pos.x, y: c.pos.y, r: c.r })
-    }
+/** 飛行＋z から描画用の1発を組む。時刻はすべて physics.flightTimes（本番と同じ定義）。 */
+function boltOf(
+  side: Side,
+  samples: FlightSample[],
+  zAt: (pos: Vec2, i: number) => number,
+  carves: CarveBurst[],
+  misfirePos: Vec2 | null,
+): Bolt | null {
+  const cut = samples.slice(0, tameCount(samples))
+  if (cut.length < 2) return null
+  const times = flightTimes(cut)
+  const endArc = cut[cut.length - 1].arcLen
+  let total = times[times.length - 1]
+  if (!Number.isFinite(total) || total <= 0) {
+    for (let i = times.length - 1; i >= 0; i--)
+      if (Number.isFinite(times[i])) {
+        total = times[i]
+        break
+      }
   }
-  R.carvesKept = true
+  if (!Number.isFinite(total) || total <= 0) total = 1
+  return {
+    side,
+    samples: cut,
+    zs: cut.map((sm, i) => zAt(sm.pos, i)),
+    times,
+    total,
+    carves: carves
+      .filter((c) => c.arcLen <= endArc + 1e-6)
+      .map((c) => ({ ...c, t: timeToArc(cut, c.arcLen) }))
+      .filter((c) => Number.isFinite(c.t)),
+    misfirePos,
+    misfireT: misfirePos ? total : 0,
+  }
 }
 
-/** 幕を組み立てる（結界の迎撃 → 命中 → 弾どうしの相殺 → 暴発 の順に解く）。 */
+/** 幕を組み立てる：本番の resolveTurn を1回呼び、返ってきた結果を描画データへ読み替える。 */
 function startBout(s: EndrollState, now: number): void {
   s.bout++
-  if (s.round && !s.round.carvesKept) keepCarves(s)
-  const bucket = s.pre ?? { shots: [], guards: [], jobs: [], i: 0 }
+  const bucket = s.pre ?? { casts: [], jobs: [], i: 0, roles: [] }
   // 先取りが間に合っていない手はここで補う
   const jobs = s.pre?.jobs ?? makeJobs(s, s.bout)
   for (let i = s.pre?.i ?? 0, guard = 0; i < jobs.length && guard < 24; guard++) {
     if (planOne(s, jobs[i], s.bout, bucket)) i++
   }
   s.pre = null
-  const shots = bucket.shots
 
-  // 新しい結界を確定（同時詠唱なので張ったその幕から効く）
-  for (const g of bucket.guards) {
-    let ring: RingPoint[] | null = null
-    try {
-      ring = attachRingSpeeds(buildRing(g.traj), FIELD.fixedSpeed)
-    } catch {
-      ring = null
-    }
-    if (ring && ring.length >= 3) {
-      const st = Math.max(1, Math.floor(ring.length / 24))
-      const rec: RingRec = { ring, lite: ring.filter((_, i) => i % st === 0), brokenAt: null, bornBout: s.bout }
-      if (g.side === 'A') s.ringA = rec
-      else s.ringB = rec
-    }
-  }
-
-  if (shots.length === 0) {
-    s.round = { shots: [], hits: [], clashes: [], blocks: [], blasts: [], duration: 1.6 }
+  const mageA = makeMage(s, 'A', s.bout)
+  const mageB = makeMage(s, 'B', s.bout)
+  const allyA: Ally = asAlly(mageA)
+  let res: ResolveResult
+  try {
+    res = resolveTurn({
+      allies: [allyA],
+      casts: bucket.casts,
+      enemies: [mageB],
+      castingEnemyIds: [mageB.id],
+      obstacles: s.obstacles,
+      mechanics: { obstacles: true, enemyFire: true },
+      activeOrbits: s.orbits,
+      lastAllyCasts: s.lastCasts, // B 側の読み（#75）：A が前の幕と同じ手を撃つと仮定させる
+    })
+  } catch {
+    s.round = null
     s.t0 = now
     return
   }
-  const k = FLIGHT_SEC / Math.max(0.25, ...shots.map((q) => q.total))
-  shots.forEach((sh, i) => {
-    sh.k = k
-    sh.at = FIRE_AT + (i % 3) * 0.05
+
+  s.lastCasts = bucket.casts // 次の幕で B 側が読む「A の前の手」（#75）
+
+  // --- 弾（A=味方の発射型／B=敵弾）---
+  const bolts: Bolt[] = []
+  for (const sh of res.allyShots) {
+    if (sh.kind !== 'projectile' || !sh.flight) continue
+    const b = boltOf('A', sh.flight.samples, (_p, i) => sh.path[i]?.z ?? 0, sh.carves, sh.misfirePos)
+    if (b) bolts.push(b)
+  }
+  for (const sh of res.enemyShots) {
+    const b = boltOf(
+      'B',
+      sh.flight.samples,
+      (p) => zfieldAt(sh.traj, p),
+      sh.carves,
+      sh.misfired ? sh.misfirePos : null,
+    )
+    if (b) bolts.push(b)
+  }
+
+  // --- 結界（今ターン張った新規＋前ターンからの持続）---
+  const rings: RingView[] = []
+  for (const sh of res.allyShots) {
+    if (sh.kind !== 'orbit' || sh.path.length < 3) continue
+    rings.push({ ring: sh.path, side: 'A', breakT: sh.breakTime, fresh: true })
+  }
+  for (const er of res.enemyRings) {
+    if (er.ring.length < 3) continue
+    rings.push({ ring: er.ring, side: 'B', breakT: er.breakTime, fresh: true })
+  }
+  for (const po of s.orbits) {
+    const survived = res.orbits.some((o) => o.id === po.id)
+    const brk = res.orbitBreaks[po.id]
+    // 同じ場所へ張り直したぶんは新規側で描く（二重表示の防止）
+    if (survived && rings.some((r) => r.ring === po.ring)) continue
+    rings.push({
+      ring: po.ring,
+      side: po.owner === 'player' ? 'A' : 'B',
+      breakT: survived ? null : (brk?.t ?? 0),
+      fresh: false,
+    })
+  }
+
+  // --- 暴発の爆発 ---
+  const blasts: Bout['blasts'] = bolts
+    .filter((b) => b.misfirePos)
+    .map((b) => ({ pos: b.misfirePos as Vec2, t: b.misfireT, r: FIELD.aoeRadius }))
+
+  // --- ダメージ表示：量はエンジンの popups、時刻は同じ対象への命中時刻から引く ---
+  const hitTimes: Record<string, number[]> = {}
+  const pushHit = (id: string, t: number) => {
+    if (!Number.isFinite(t)) return
+    ;(hitTimes[id] ??= []).push(t)
+  }
+  for (const sh of res.allyShots) {
+    if (!sh.flight) continue
+    for (const h of sh.hits) pushHit(h.targetId, timeToArc(sh.flight.samples, h.arcLen))
+  }
+  for (const sh of res.enemyShots) {
+    for (const h of sh.hits) pushHit(h.targetId, timeToArc(sh.flight.samples, h.arcLen))
+  }
+  for (const id in hitTimes) hitTimes[id].sort((a, b) => a - b)
+  const firstBlast = blasts.length ? Math.min(...blasts.map((b) => b.t)) : 0
+  const damages: DamageView[] = res.popups.map((p) => {
+    let t = 0
+    if (p.trigger === 'flash') t = hitTimes[p.targetId]?.shift() ?? 0
+    else if (p.trigger === 'misfire') t = firstBlast
+    return { pos: p.pos, amount: p.amount, kind: p.kind, t }
   })
-  const timeAt = (sh: Shot, arc: number) => {
-    let i = 0
-    while (i < sh.samples.length - 1 && sh.samples[i].arcLen < arc) i++
-    const t = sh.times[Math.min(i, sh.times.length - 1)]
-    return sh.at + (Number.isFinite(t) ? t : sh.total) * sh.k
-  }
-  const cut = (sh: Shot, i: number) => {
-    sh.samples = sh.samples.slice(0, Math.max(2, i + 1))
-    sh.times = flightTimes(sh.samples)
-    const t = sh.times[sh.times.length - 1]
-    if (Number.isFinite(t) && t > 0) sh.total = t
-  }
 
-  // 結界の迎撃
-  const blocks: Bout['blocks'] = []
-  for (const sh of shots) {
-    const rec = sh.side === 'A' ? s.ringB : s.ringA
-    const bl = ringBlock(sh, rec)
-    if (!bl) continue
-    const t = timeAt(sh, sh.samples[Math.min(bl.i, sh.samples.length - 1)].arcLen)
-    if (bl.stop) {
-      cut(sh, bl.i)
-      sh.misfirePos = null
-      sh.dead = true
-    }
-    if (bl.breakRing && rec && rec.brokenAt === null) rec.brokenAt = t
-    blocks.push({ pos: bl.pos, t, broke: bl.breakRing })
-  }
+  // --- 画面時間へのスケール ---
+  const spans = [
+    ...bolts.map((b) => b.total),
+    ...res.clashes.map((c) => c.t),
+    ...rings.map((r) => r.breakT ?? 0),
+    ...damages.map((d) => d.t),
+  ].filter((x) => Number.isFinite(x) && x > 0)
+  const k = FLIGHT_SEC / Math.max(0.25, ...spans)
+  const lastGame = spans.length ? Math.max(...spans) : 0
+  const last = FIRE_AT + lastGame * k
 
-  // 命中
-  const hits: Bout['hits'] = []
-  const blasts: Bout['blasts'] = []
-  for (const sh of shots) {
-    if (sh.dead) continue
-    const tgt = sh.side === 'A' ? POS_B : POS_A
-    const tel: Attribute = sh.side === 'A' ? 'dark' : 'light'
-    for (let i = 1; i < sh.samples.length; i++) {
-      const q = sh.samples[i]
-      if (q.speed > 0.6 && Math.hypot(q.pos.x - tgt.x, q.pos.y - tgt.y) <= GAME.enemyHitbox) {
-        const z = zfieldAt(sh.traj, q.pos)
-        const at = attributeOf(z)
-        const dmg = Math.max(3, Math.round(q.speed * strengthOf(z) * affinityMultiplier(at, tel)))
-        hits.push({
-          victim: sh.side === 'A' ? 'B' : 'A',
-          dmg,
-          pos: { x: tgt.x, y: tgt.y },
-          t: timeAt(sh, q.arcLen),
-          attr: at,
-        })
-        cut(sh, i)
-        sh.misfirePos = null
-        sh.hitDone = true
-        break
-      }
-    }
-  }
-
-  // 弾どうしの相殺
-  const clashes: Bout['clashes'] = []
-  for (const a of shots.filter((q) => q.side === 'A')) {
-    for (const b of shots.filter((q) => q.side === 'B')) {
-      if (a.dead || b.dead || a.hitDone || b.hitDone) continue
-      const c = clashBetween(a, b)
-      if (c) clashes.push(c)
-    }
-  }
-  // 削りは弾が届いた時刻へ同期させる
-  for (const sh of shots) {
-    const endArc = sh.samples[sh.samples.length - 1].arcLen + 1e-6
-    sh.carves = sh.carves.filter((c) => c.arcLen <= endArc)
-    for (const c of sh.carves) c.t = timeAt(sh, c.arcLen)
-  }
-  // 暴発（AoE に入っている術者は巻き込まれる）
-  for (const sh of shots) {
-    if (!sh.misfirePos) continue
-    const mp = sh.misfirePos
-    const t = timeAt(sh, sh.samples[sh.samples.length - 1].arcLen)
-    blasts.push({ pos: mp, t, r: FIELD.aoeRadius })
-    for (const [side, p] of [['A', POS_A] as const, ['B', POS_B] as const]) {
-      const d = Math.hypot(p.x - mp.x, p.y - mp.y)
-      if (d <= FIELD.aoeRadius) {
-        hits.push({
-          victim: side,
-          dmg: Math.round(8 + 20 * (1 - d / FIELD.aoeRadius)),
-          pos: { x: p.x, y: p.y },
-          t: t + 0.14,
-          attr: 'neutral',
-          misfire: true,
-        })
-      }
-    }
-  }
-
-  const fin = (x: number) => Number.isFinite(x)
-  const ends = shots.filter((q) => fin(q.at) && fin(q.total)).map((q) => q.at + q.total * q.k)
-  const H = hits.filter((q) => fin(q.t))
-  const C = clashes.filter((q) => fin(q.t))
-  const B = blocks.filter((q) => fin(q.t))
-  const BL = blasts.filter((q) => fin(q.t))
-  const last = Math.max(FIRE_AT + 0.8, ...ends, ...H.map((q) => q.t), ...C.map((q) => q.t), ...B.map((q) => q.t))
   s.round = {
-    shots,
-    hits: H,
-    clashes: C,
-    blocks: B,
-    blasts: BL,
-    duration: Math.min(14, (fin(last) ? last : FIRE_AT + 0.8) + 1.3),
+    bolts,
+    rings,
+    clashes: res.clashes.filter((c) => Number.isFinite(c.t)),
+    blasts,
+    damages,
+    obstacles: s.obstacles,
+    k,
+    duration: Math.min(14, last + 1.6),
+    after: {
+      hpA: res.allies[0]?.hp ?? s.hpA,
+      hpB: res.enemies[0]?.hp ?? s.hpB,
+      obstacles: res.obstacles,
+      orbits: res.orbits,
+    },
   }
   s.t0 = now
 }
@@ -588,12 +497,12 @@ export function createEndroll(now: number): EndrollState {
     hpB: START_HP,
     bout: 0,
     obstacles: [],
-    ringA: null,
-    ringB: null,
+    orbits: [],
     round: null,
     t0: now,
     banner: null,
     pre: null,
+    lastCasts: [],
   }
   s.obstacles = makeObstacles(1)
   startBout(s, now)
@@ -603,64 +512,65 @@ export function createEndroll(now: number): EndrollState {
 /** 幕を進める。やられた側だけが LVL を上げて全回復し、壁は別配置に組み直す。 */
 function tick(s: EndrollState, now: number): number {
   const R = s.round
-  if (!R) return 0
-  const lt = (now - s.t0) / 1000
-  for (const h of R.hits) {
-    if (h.done || lt < h.t) continue
-    h.done = true
-    if (h.victim === 'A') s.hpA = Math.max(0, s.hpA - h.dmg)
-    else s.hpB = Math.max(0, s.hpB - h.dmg)
+  if (!R) {
+    startBout(s, now)
+    return 0
   }
-  if (R.ko === undefined && (s.hpA <= 0 || s.hpB <= 0)) {
+  const lt = (now - s.t0) / 1000
+  // HP は「ダメージ表示が出た時刻」に合わせて減らす（見た目と数字を揃える）
+  let dmgA = 0
+  let dmgB = 0
+  for (const d of R.damages) {
+    if (lt < FIRE_AT + d.t * R.k) continue
+    const sign = d.kind === 'heal' ? -1 : 1
+    // 位置で被害者を判定する（A の術者位置に近い方が A の被弾）
+    if (Math.hypot(d.pos.x - POS_A.x, d.pos.y - POS_A.y) < Math.hypot(d.pos.x - POS_B.x, d.pos.y - POS_B.y))
+      dmgA += sign * d.amount
+    else dmgB += sign * d.amount
+  }
+  const hpA = Math.max(0, Math.min(START_HP, s.hpA - dmgA))
+  const hpB = Math.max(0, Math.min(START_HP, s.hpB - dmgB))
+  if (R.ko === undefined && (hpA <= 0 || hpB <= 0)) {
     R.ko = lt
-    R.koSide = s.hpA <= 0 ? 'A' : 'B'
-    R.duration = lt + 3.0
-    for (const h of R.hits) h.done = true // 決着後に届くダメージは無かったことにする
+    R.koSide = hpA <= 0 ? 'A' : 'B'
+    R.duration = Math.min(R.duration, lt + 3.0)
     const lv = R.koSide === 'A' ? s.lvA : s.lvB
     s.banner = lv >= MAX_LEVEL ? 'reset' : 'lvup'
-    const next = { lvA: s.lvA, lvB: s.lvB, hpA: s.hpA, hpB: s.hpB, obstacles: s.obstacles }
-    if (lv >= MAX_LEVEL) {
-      next.lvA = 1
-      next.lvB = 1
-      next.hpA = START_HP
-      next.hpB = START_HP
-    } else if (R.koSide === 'A') {
-      next.lvA = s.lvA + 1
-      next.hpA = START_HP
-    } else {
-      next.lvB = s.lvB + 1
-      next.hpB = START_HP
-    }
-    next.obstacles = makeObstacles(Math.max(next.lvA, next.lvB))
-    R.next = next
     s.pre = null
   }
   // 幕の尻尾で次の幕の計画を 1 フレーム 1 手ずつ進めておく（切り替わりで描画が止まらない）
-  if (lt > R.duration - 2.4) {
-    if (!R.next && !R.carvesKept) keepCarves(s)
-    if (!s.pre) s.pre = { jobs: makeJobs(s, s.bout + 1), i: 0, shots: [], guards: [] }
+  if (lt > R.duration - 2.4 && R.ko === undefined) {
+    if (!s.pre) s.pre = { jobs: makeJobs(s, s.bout + 1), i: 0, casts: [], roles: [] }
     else if (s.pre.i < s.pre.jobs.length) {
       if (planOne(s, s.pre.jobs[s.pre.i], s.bout + 1, s.pre)) s.pre.i++
     }
   }
   if (lt >= R.duration) {
+    // 幕の終わりにエンジンの最終状態を反映する（削れた壁・持続結界・HP）
+    s.obstacles = R.after.obstacles
+    s.orbits = R.after.orbits
+    s.hpA = R.after.hpA
+    s.hpB = R.after.hpB
     if (R.ko !== undefined) {
-      const nx = R.next
-      if (nx) {
-        s.lvA = nx.lvA
-        s.lvB = nx.lvB
-        s.hpA = nx.hpA
-        s.hpB = nx.hpB
-        s.obstacles = nx.obstacles
+      const lv = R.koSide === 'A' ? s.lvA : s.lvB
+      if (lv >= MAX_LEVEL) {
+        s.lvA = 1
+        s.lvB = 1
+        s.hpA = START_HP
+        s.hpB = START_HP
+      } else if (R.koSide === 'A') {
+        s.lvA += 1
+        s.hpA = START_HP
+      } else {
+        s.lvB += 1
+        s.hpB = START_HP
       }
-      s.ringA = null
-      s.ringB = null
+      s.obstacles = makeObstacles(Math.max(s.lvA, s.lvB))
+      s.orbits = [] // 決着で場の結界は消える
       s.banner = null
-      s.round = null
-    } else {
-      if (s.ringA && s.ringA.brokenAt !== null) s.ringA = null
-      if (s.ringB && s.ringB.brokenAt !== null) s.ringB = null
+      s.pre = null
     }
+    s.round = null
     startBout(s, now)
     return 0
   }
@@ -687,6 +597,8 @@ export function drawEndroll(
   const S = (p: Vec2) => toScreen(p, vp)
   const scale = Math.min(w, h) / 2 / UR
   const phase = (now / 1000) * 3
+  /** ゲーム秒 → 画面秒 */
+  const at = (t: number) => FIRE_AT + t * R.k
 
   // 方眼・場の境界
   ctx.lineWidth = 1
@@ -710,36 +622,39 @@ export function drawEndroll(
   ctx.arc(O.x, O.y, FIELD.rField * scale, 0, TAU)
   ctx.stroke()
 
-  // 結界
-  for (const [rec, owner] of [
-    [s.ringA, 'ally'],
-    [s.ringB, 'enemy'],
-  ] as [RingRec | null, string][]) {
-    if (!rec) continue
-    if (rec.brokenAt !== null && lt >= rec.brokenAt) {
-      const pr = (lt - rec.brokenAt) / 0.76
-      if (pr < 1) drawOrbitDissipation(ctx, rec.ring, Math.min(0.999, pr), vp)
-      continue
+  // 結界：霧散はエンジンが返した breakTime ちょうどから始まる（#72）
+  for (const rec of R.rings) {
+    if (rec.breakT !== null) {
+      const bt = at(rec.breakT)
+      if (lt >= bt) {
+        const pr = (lt - bt) / DISSIPATE_SEC
+        if (pr < 1) drawOrbitDissipation(ctx, rec.ring, Math.min(0.999, pr), vp)
+        continue
+      }
     }
     ctx.save()
-    if (rec.bornBout === s.bout) ctx.globalAlpha = Math.min(1, Math.max(0, (lt - 0.45) / 0.6))
+    if (rec.fresh) ctx.globalAlpha = Math.min(1, Math.max(0, (lt - 0.45) / 0.6))
     ctx.globalAlpha *= 0.34
     strokeZPath(ctx, rec.ring, vp)
     ctx.restore()
     for (let n = 0; n < 12; n++) {
-      const idx = Math.floor((n / 12 + (now / 3400) * (owner === 'ally' ? 1 : -1)) * rec.ring.length + rec.ring.length) % rec.ring.length
+      const dir = rec.side === 'A' ? 1 : -1
+      // 逆回り（dir=-1）では index が大きく負になる。JS の % は負を返すので必ず正へ畳む
+      // （従来は `+ ring.length` を1回足すだけで、now が大きいと負のまま＝**闇側だけ粒が出なかった**）
+      const raw = Math.floor((n / 12 + (now / 3400) * dir) * rec.ring.length)
+      const idx = ((raw % rec.ring.length) + rec.ring.length) % rec.ring.length
       const pt = rec.ring[idx]
       if (pt) drawParticle(ctx, pt.pos, col(attributeOf(pt.z), 1), vp, phase + n, 0.5)
     }
   }
 
   // 壁（弾が届いた削りだけ見せる）
-  if (s.obstacles.length) {
-    const view = s.obstacles.map((o) => {
+  if (R.obstacles.length) {
+    const view = R.obstacles.map((o) => {
       const holes: { x: number; y: number; r: number }[] = []
-      for (const sh of R.shots) {
-        for (const c of sh.carves) {
-          if (c.obstacleId === o.id && c.t !== undefined && lt >= c.t) holes.push({ x: c.pos.x, y: c.pos.y, r: c.r })
+      for (const b of R.bolts) {
+        for (const c of b.carves) {
+          if (c.obstacleId === o.id && lt >= at(c.t)) holes.push({ x: c.pos.x, y: c.pos.y, r: c.r })
         }
       }
       return holes.length ? { ...o, carves: [...o.carves, ...holes] } : o
@@ -748,27 +663,28 @@ export function drawEndroll(
   }
 
   // 弾
-  for (const sh of R.shots) {
-    const tr = (lt - sh.at) / sh.k
-    if (tr < 0) continue
-    const done = tr >= sh.total
+  for (const b of R.bolts) {
+    const tg = (lt - FIRE_AT) / R.k // 現在のゲーム秒
+    if (tg < 0) continue
+    const done = tg >= b.total
     let i = 1
-    while (i < sh.times.length - 1 && sh.times[i] < tr) i++
-    if (done) i = sh.samples.length - 1
-    const fade = done ? Math.max(0, 1 - (lt - sh.at - sh.total * sh.k) / 1.2) : 1
+    while (i < b.times.length - 1 && b.times[i] < tg) i++
+    if (done) i = b.samples.length - 1
+    const fade = done ? Math.max(0, 1 - (lt - at(b.total)) / 1.2) : 1
     if (fade <= 0) continue
     ctx.save()
     ctx.lineCap = 'round'
     ctx.globalCompositeOperation = 'lighter'
     const back = Math.min(i, 44)
     for (let n = 0; n < back; n++) {
-      const p = sh.samples[i - n]
-      const q = sh.samples[i - n - 1]
+      const p = b.samples[i - n]
+      const q = b.samples[i - n - 1]
       if (!q) break
-      const z = zfieldAt(sh.traj, p.pos)
-      const a = (1 - n / back) * (1 - n / back) * 0.5 * fade
-      ctx.strokeStyle = col(attributeOf(z), a)
-      ctx.lineWidth = 0.9 + (1 - n / back) * 2.0
+      const a = (1 - n / back) * (1 - n / back) * 0.6 * fade
+      const zn = b.zs[i - n] ?? 0
+      ctx.strokeStyle = col(attributeOf(zn), a)
+      // 太さ＝属性強度。本編（board.drawFlightPath）と同じ規則を共有する（#74）
+      ctx.lineWidth = trailWidthPx(zn, vp)
       const P = S(p.pos)
       const Q = S(q.pos)
       ctx.beginPath()
@@ -777,20 +693,16 @@ export function drawEndroll(
       ctx.stroke()
     }
     ctx.restore()
-    if (!done) {
-      const p = sh.samples[i]
-      drawBullet(ctx, p.pos, zfieldAt(sh.traj, p.pos), vp, phase, p.speed)
-    }
-    for (const c of sh.carves) {
-      if (c.t === undefined) continue
-      const dt = (lt - c.t) / 0.55
+    if (!done) drawBullet(ctx, b.samples[i].pos, b.zs[i] ?? 0, vp, phase, b.samples[i].speed)
+    for (const c of b.carves) {
+      const dt = (lt - at(c.t)) / 0.55
       if (dt >= 0 && dt < 1) drawCarveBurst(ctx, c.pos, c.r, c.attr, dt, vp)
     }
   }
 
-  // 相殺・迎撃・暴発
+  // 相殺・迎撃の火花（時刻はエンジンの clashes[].t）
   for (const cl of R.clashes) {
-    const dt = (lt - cl.t) / 0.95
+    const dt = (lt - at(cl.t)) / 0.95
     if (dt < 0 || dt >= 1) continue
     const P = S(cl.pos)
     const pw = Math.min(1, cl.power / 140)
@@ -818,38 +730,38 @@ export function drawEndroll(
     }
     ctx.restore()
   }
-  for (const bk of R.blocks) {
-    const dt = (lt - bk.t) / 0.7
-    if (dt < 0 || dt >= 1) continue
-    const P = S(bk.pos)
-    ctx.save()
-    ctx.globalCompositeOperation = 'lighter'
-    ctx.strokeStyle = `rgba(255,246,224,${((1 - dt) * (1 - dt) * 0.85).toFixed(3)})`
-    ctx.lineWidth = 2.6 * (1 - dt) + 0.5
-    ctx.beginPath()
-    ctx.arc(P.x, P.y, 6 + dt * (bk.broke ? 34 : 18), 0, TAU)
-    ctx.stroke()
-    ctx.restore()
-  }
+
+  // 暴発
   for (const bl of R.blasts) {
-    const q = (lt - bl.t) / 1.5
+    const q = (lt - at(bl.t)) / 1.5
     if (q < 0 || q >= 1) continue
     // 0.62 までは広がり、そこからは畳まれる（広がりっぱなしにしない）
-    const k = q < 0.62 ? 1 : Math.pow(Math.max(0, 1 - (q - 0.62) / 0.38), 0.9)
-    if (k <= 0.02) continue
+    const kk = q < 0.62 ? 1 : Math.pow(Math.max(0, 1 - (q - 0.62) / 0.38), 0.9)
+    if (kk <= 0.02) continue
     const P = S(bl.pos)
     ctx.save()
     ctx.translate(P.x, P.y)
-    ctx.scale(k, k)
+    ctx.scale(kk, kk)
     ctx.translate(-P.x, -P.y)
     drawMisfire(ctx, bl.pos, Math.min(0.999, q), vp, bl.r)
     ctx.restore()
   }
 
-  // 術者
+  // 術者（HP はダメージ表示と同じ時刻で減る）
+  let shownA = s.hpA
+  let shownB = s.hpB
+  for (const d of R.damages) {
+    if (lt < at(d.t)) continue
+    const sign = d.kind === 'heal' ? -1 : 1
+    if (Math.hypot(d.pos.x - POS_A.x, d.pos.y - POS_A.y) < Math.hypot(d.pos.x - POS_B.x, d.pos.y - POS_B.y))
+      shownA -= sign * d.amount
+    else shownB -= sign * d.amount
+  }
+  shownA = Math.max(0, Math.min(START_HP, shownA))
+  shownB = Math.max(0, Math.min(START_HP, shownB))
   for (const [p, attr, hp] of [
-    [POS_A, 'light', s.hpA],
-    [POS_B, 'dark', s.hpB],
+    [POS_A, 'light', shownA],
+    [POS_B, 'dark', shownB],
   ] as [Vec2, Attribute, number][]) {
     const P = S(p)
     if (hp <= 0) {
@@ -879,18 +791,18 @@ export function drawEndroll(
   }
 
   // ダメージ表示
-  for (const hi of R.hits) {
-    const dt = (lt - hi.t) * 1000
+  for (const d of R.damages) {
+    const dt = (lt - at(d.t)) * 1000
     if (dt < 0 || dt >= 1000) continue
     const pr = dt / 1000
-    const P = S(hi.pos)
-    const size = Math.round(15 + Math.min(15, hi.dmg / 11))
+    const P = S(d.pos)
+    const size = Math.round(15 + Math.min(15, d.amount / 11))
     drawDamageNumber(
       ctx,
       P.x,
       P.y - 14 - Math.pow(pr, 0.6) * 30,
-      String(hi.dmg),
-      hi.misfire ? '#ffffff' : col(hi.attr, 1),
+      String(Math.round(d.amount)),
+      d.kind === 'misfire' ? '#ffffff' : d.kind === 'heal' ? '#5ad16a' : col(d.kind, 1),
       size,
       Math.min(1, (1 - pr) * 2.6),
     )
@@ -932,8 +844,8 @@ export function drawEndroll(
     )
     ctx.restore()
   }
-  bar(24, s.hpA, TOKENS.light, 'LIGHT MAGE', s.lvA, false)
-  bar(w - 24 - barW, s.hpB, TOKENS.dark, 'DARK MAGE', s.lvB, true)
+  bar(24, shownA, TOKENS.light, 'LIGHT MAGE', s.lvA, false)
+  bar(w - 24 - barW, shownB, TOKENS.dark, 'DARK MAGE', s.lvB, true)
 
   // 決着の見出し
   if (R.ko !== undefined && s.banner) {

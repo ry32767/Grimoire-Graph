@@ -1,15 +1,16 @@
 // 候補軌道の本番物理検証（修正仕様書 §13）。純粋関数。
 // 簡略評価で最終採用しない：削りは本番と同一の carveAlong、密度は同一の OBSTACLE_STEP、
-// 結界は本番と同じ ringInterception＋相互相殺の減速で評価し、AI判定と本番解決のズレを無くす。
+// 結界は本番と同じ ringContact（時間刻み）＋相互相殺の減速で評価し、AI判定と本番解決のズレを無くす。
 // 各イベントは弧長つきで返す＝呼び出し側が「命中前 or 極到達前」だけを数えられる。
 import type { Flight, FlightSample, Obstacle, Trajectory, Vec2 } from '../types'
 import { sampleTrajectory, validPrefix, pathTermination } from '../coords'
-import { simulatePath, sampleAtLength, type LossEvent } from '../physics'
+import { simulatePath, type LossEvent } from '../physics'
 import { carveAlong, densifyGeom, OBSTACLE_STEP } from '../carve'
 import { isSolidAt } from '../obstacle'
 import { attributeOf, strengthOf, zfieldAt } from '../attribute'
-import { ringInterception, type RingPoint } from '../orbit'
-import { resolveParry } from '../parry'
+import { ringContact, type RingPoint } from '../orbit'
+import { resolveParry, type RadiusAt } from '../parry'
+import { bulletRadius } from '../collision'
 
 /** 候補軌道の評価結果。rank（辞書式順位）と成功条件の判定に使う。 */
 export interface ShotEvaluation {
@@ -169,29 +170,27 @@ export function evaluateEnemyShot(
     materialLenAfter = materialLength(dense, cloned, limitArc)
   }
 
-  // 結界（持続周回）の横断：本番（turn.ts）と同じ resolveParry で相殺する（判定のズレ防止）。
+  // 結界（持続周回）への接触：本番（turn.ts §3b）と**完全に同じ実装**を通す（判定のズレ防止・#72）。
+  // ringContact（時間刻み・弾の半径＋帯の半厚み）で接触時刻を求め、resolveParry で相殺する。
   // 反対極のみ・同極/中立は透過。結界威力が上回れば弾は消滅、弾が上回れば残威力で継続。
   const oppositeRingArcs: number[] = []
+  const radiusAt: RadiusAt = (pos, speed) => bulletRadius(speed, zAtPos(pos))
   for (const ring of standingRings) {
     if (ring.length < 3) continue
-    const inter = ringInterception(ring, path)
-    if (!inter.crossed || inter.enemyIndex === undefined || inter.ringZ === undefined) continue
-    const crossArc = cumLen[Math.min(inter.enemyIndex, cumLen.length - 1)]
-    const before = sampleAtLength(flight, crossArc)?.speed ?? 0
-    const vCross = inter.ringSpeed ?? 0
-    if (before <= 0 || vCross <= 0) continue
-    const bZ = zfieldAt(traj, inter.pos ?? path[Math.min(inter.enemyIndex, path.length - 1)])
+    const c = ringContact(ring, flight.samples, radiusAt)
+    if (!c || c.speed <= 0 || c.ringSpeed <= 0) continue
+    const bZ = zfieldAt(traj, c.pos)
     const parry = resolveParry(
-      attributeOf(inter.ringZ),
-      vCross,
-      vCross * strengthOf(inter.ringZ),
+      attributeOf(c.ringZ),
+      c.ringSpeed,
+      c.ringSpeed * strengthOf(c.ringZ),
       attributeOf(bZ),
-      before,
-      before * strengthOf(bZ),
+      c.speed,
+      c.speed * strengthOf(bZ),
     )
     if (parry.passthrough) continue
-    oppositeRingArcs.push(crossArc)
-    losses.push({ arcLen: crossArc, deltaV: before - parry.speedB })
+    oppositeRingArcs.push(c.arcLen)
+    losses.push({ arcLen: c.arcLen, deltaV: c.speed - parry.speedB })
     flight = resim(losses)
   }
   if (flight.end === 'vanished') stalled = true

@@ -29,9 +29,19 @@ import { fitRouteToFamilies } from './enemyPlanning/routeFit'
 import { fitComplexityFor } from './enemyPlanning/fitComplexity'
 import { evaluateEnemyShot, compareRank } from './enemyPlanning/evaluate'
 import { planRuptorShot, buildRuptorZField } from './enemyPlanning/ruptorPlanner'
+import { foreseeInterception, type PredictedShot } from './enemyPlanning/foresight'
 
 // 既存の公開 API（テスト・turn.ts が参照）は enemyPlanning/ へ移した実装を再輸出して維持する
 export { AVOIDER_FAMILIES, enemyFlight, planRuptorShot, buildRuptorZField }
+
+/**
+ * 敵AIに渡す追加情報（#75）。位置引数が既に多いので、以降の拡張はこのオブジェクトへ足す。
+ * predicted＝「一つ前のターンに味方が撃った魔法を、今ターンも撃ってくる」と読んだ飛来弾。
+ * 省略時は従来どおり（読み無し）の計画になる。
+ */
+export interface EnemyPlanOptions {
+  predicted?: PredictedShot[]
+}
 
 /** 敵チームの味方（守護型が囲む対象・05b §5.4）。Enemy をそのまま渡せる最小形。 */
 export interface TeamMate {
@@ -107,10 +117,11 @@ export function planEnemyShots(
   fieldR?: number,
   instability = 0,
   ownRings: RingPoint[][] = [],
+  opts: EnemyPlanOptions = {},
 ): EnemyPlan[] {
   const count = Math.max(1, enemy.castCount ?? 1)
   if (count === 1) {
-    const p = planEnemyShot(enemy, allies, obstacles, standingRings, teammates, fieldR, instability, ownRings)
+    const p = planEnemyShot(enemy, allies, obstacles, standingRings, teammates, fieldR, instability, ownRings, opts)
     return p ? [p] : []
   }
   const pool: EnemyRole[] =
@@ -131,7 +142,7 @@ export function planEnemyShots(
     }
     const remaining = alive.filter((a) => !taken.has(a.id))
     const pickFrom = remaining.length > 0 ? remaining : alive
-    const plan = planEnemyShot(variant, pickFrom, obstacles, standingRings, teammates, fieldR, instability, ownRings)
+    const plan = planEnemyShot(variant, pickFrom, obstacles, standingRings, teammates, fieldR, instability, ownRings, opts)
     if (!plan) continue
     if (plan.targetId) taken.add(plan.targetId)
     plans.push(plan)
@@ -174,12 +185,16 @@ export function planEnemyShot(
   fieldR?: number,
   instability = 0,
   ownRings: RingPoint[][] = [],
+  opts: EnemyPlanOptions = {},
 ): EnemyPlan | null {
   const alive = allies.filter((a) => a.hp > 0)
   if (alive.length === 0) return null
+  // 読み（#75）：前ターンと同じ魔法が飛んでくると仮定した予測弾。LVL に依らず全個体が使う
+  const predicted = opts.predicted ?? []
 
   // 防御ロール：自陣（自分＋近くの味方）を覆う周回結界を張る（#28/#71・05b §5.4）。
   // 素材に触れない外形が組めなければ null＝このターンは張らない（触れる結界は即霧散して無駄）
+  // ※守護型は「経路」でなく外形を組む役なので、読み（#75）は使わない
   if (enemy.role === 'guardian') {
     return planGuardianBarrier(enemy, { allies, obstacles, teammates, ownRings, fieldR })
   }
@@ -187,7 +202,7 @@ export function planEnemyShot(
   // 崩し手（#42）：狙った対象の近傍で暴発させる専用計画（enemyPlanning/ruptorPlanner）。
   // teammates（敵チーム）を渡し、自爆・味方巻き込みになる極を避けさせる（§12.7）
   if (enemy.role === 'ruptor') {
-    return planRuptorShot(enemy, allies, obstacles, undefined, standingRings, fieldR, instability, teammates)
+    return planRuptorShot(enemy, allies, obstacles, undefined, standingRings, fieldR, instability, teammates, predicted)
   }
 
   // 闇の周回で完全に隠れた味方は視認不可＝狙えない（#35）。全員隠れていれば見えないなりに撃つ。
@@ -211,7 +226,8 @@ export function planEnemyShot(
     obstacles.length > 0 ? buildPlanningEnv(obstacles, fieldR, ENEMY_ROUTE_PLANNING.wideClearance) : null
 
   // 採点結果（プロパティ経由＝クロージャ代入でも型の絞り込みが崩れない）
-  const sel = { best: null as { plan: EnemyPlan; rank: readonly number[] } | null }
+  // blocked＝読み（#75）で「狙いに届く前に撃ち落とされる」と判定された候補
+  const sel = { best: null as { plan: EnemyPlan; rank: readonly number[]; blocked: boolean } | null }
   // 掘削候補（#64・#69・#70）：どの候補も命中しない＝壁が厚いとき、牽制でお茶を濁さず
   // **障害物に当ててでも相手へ向かう**一手を布石に選ぶ（#70 で火力型から全ロールへ拡張）。
   // 何を「良い掘削」とするか（#69：明らかに非効率な削り方の根絶／#70：相手へ最短で届く経路）：
@@ -268,7 +284,14 @@ export function planEnemyShot(
     // ダメージ）。火力型はランプ z の到達点＝代表 zVal（06b B.7「直進の火力弾」の設計を保つ：
     // 命中点 z で採点すると「横から回り込んで zPeak ちょうどで当てる」曲線を選んでしまう）
     const hz = breaker ? zVal : zfieldAt(traj, hit.pos)
-    const baseDmg = hit.speed * strengthOf(hz) * affinityMultiplier(attributeOf(hz), ally.element) * maneuver
+    // 読み（#75）：前ターンと同じ味方弾が飛んでくると仮定し、命中より手前で相殺される分だけ
+    // 期待ダメージを割り引く（威力＝速度×強度なので、残速度の比がそのまま倍率になる）。
+    // 完全に撃ち落とされる候補は survive=0＝期待ダメージ0 になり、通る経路に必ず負ける。
+    const icp =
+      predicted.length > 0 ? foreseeInterception(ev.flight.samples, (p) => zfieldAt(traj, p), predicted) : null
+    const survive = icp && icp.arcLen <= hit.arcLen ? icp.speedRatio : 1
+    const baseDmg =
+      hit.speed * strengthOf(hz) * affinityMultiplier(attributeOf(hz), ally.element) * maneuver * survive
     // とどめを刺せる相手を最優先、次に手負い（割合）・絶対低HPを優先
     const killBonus = baseDmg >= ally.hp ? 2.2 : 1
     const woundFocus = 1 + (1 - ally.hp / ally.maxHp) * 0.5
@@ -282,9 +305,10 @@ export function planEnemyShot(
       hit.arcLen,
     ] as const
     if (!sel.best || compareRank(rank, sel.best.rank) < 0) {
-      sel.best = { plan: { trajectory: traj, targetId: ally.id, expectedDamage: score }, rank }
+      sel.best = { plan: { trajectory: traj, targetId: ally.id, expectedDamage: score }, rank, blocked: survive <= 0 }
     }
-    return rank[0] === 0
+    // 撃ち落とされる直進は「クリーン命中」と認めない＝この後の迂回経路探索へ進ませる（#75）
+    return rank[0] === 0 && survive > 0
   }
 
   // 味方ごとの狙い（見かけ位置・z 候補）を組み、family 候補→（必要なら）クリーン経路候補を評価
@@ -374,8 +398,9 @@ export function planEnemyShot(
     }
   }
 
-  // クリーン命中がどの味方にも無いときだけ、直線トンネル（壁削り）の経路を追加で試す（§9.1）
-  if (!breaker && env && (!sel.best || sel.best.rank[0] > 0)) {
+  // クリーン命中がどの味方にも無いときだけ、直線トンネル（壁削り）の経路を追加で試す（§9.1）。
+  // 読み（#75）で撃ち落とされると分かっている候補しか無いときも、道を掘る手を探し直す
+  if (!breaker && env && (!sel.best || sel.best.rank[0] > 0 || sel.best.blocked)) {
     for (const { ally, aimPos, zCands } of aims) {
       const route = findRoute(env, enemy.pos, aimPos, 'wallTunnel')
       if (!route) continue

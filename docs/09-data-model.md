@@ -41,9 +41,12 @@
   bossPhases?: BossPhase[], // ボスの HP フェーズ定義（createBattleState でステージから複製・#45）
   bossPhase?: number,       // 現在のフェーズ（0=最初のアリーナ）
   rField?: number,          // 現在の場半径（#49・§5.5）。createBattleState が Stage.rField を取得・applyBossPhases が BossPhase.rField で縮小
-  finale?: 'pending'|'cast'|'done'  // 断末魔（ボスHP0後の暴発3連）の進行状態
+  finale?: 'pending'|'cast'|'done', // 断末魔（ボスHP0後の暴発3連）の進行状態
+  lastAllyCasts?: AllyCast[] // 一つ前のターンに味方が撃った術式（#75：敵の読み。ステージ開始時は未設定）
 }
 ```
+
+> **敵の読み（#75）**：`resolveAllyCasts` は解決前に `BattleState.lastAllyCasts` を `ResolveInput.lastAllyCasts` として渡し、解決後は**今ターンの casts** を次ターンぶんとして保存する。`resolveTurn` は `predictAllyShots(lastAllyCasts, allies)` で予測弾を建て、全敵の計画（`planEnemyShots(…, { predicted })`）へ配る。ステージを作り直す（`createBattleState`）と履歴は消える＝初手は読み無し。
 
 > **ラン全体の状態**（`instability`・初回崩壊済みフラグ・図鑑補足の既読など・04b）は `BattleState` ではなく `App.tsx` の React state が持つ（ステージをまたいで持ち越すため）。ゲームロジックへは `resolveTurn` の入力（`instability`/`misfireRoll`）として注入する。
 

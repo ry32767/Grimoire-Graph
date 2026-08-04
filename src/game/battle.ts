@@ -171,6 +171,7 @@ export function resolveAllyCasts(
     instability: opts?.instability,
     misfireRoll: opts?.misfireRoll,
     fieldR: state.rField,
+    lastAllyCasts: state.lastAllyCasts, // 敵の読み（#75）：前ターンと同じ手が来ると仮定させる
   })
 
   // 暴発デモ（#42／06 第4面）：壁狙いの崩し手は「最初の1発だけ」壁を狙い、
@@ -189,6 +190,8 @@ export function resolveAllyCasts(
     orbits: resolution.orbits,
     turn: state.turn + 1,
     phase: 'resolve',
+    // 今ターンの手を次ターンの敵の読みへ引き継ぐ（#75）
+    lastAllyCasts: casts,
   }
 
   const extraLog: LogEntry[] = []

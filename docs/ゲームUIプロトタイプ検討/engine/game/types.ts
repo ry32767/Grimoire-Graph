@@ -1,0 +1,431 @@
+// ゲーム全体で共有するドメイン型。ここは他モジュールに依存しない（循環回避）。
+
+/** 2D ベクトル（数学座標。原点 O=(0,0)＝術者） */
+export interface Vec2 {
+  x: number
+  y: number
+}
+
+/** 属性タイプ：命中位置の z 符号で決定（§3.2） */
+export type Attribute = 'light' | 'dark' | 'neutral'
+
+/** z（属性の高さ）つきの軌道点。描画の色分けに使う */
+export interface ZPoint {
+  pos: Vec2
+  z: number
+  /** その点でのリング速度（#60：結界の速度は平均でなく点ごと。迎撃・掃射・演出に使う） */
+  speed?: number
+}
+
+/** 発射方式：回転（y=g(x) をθ回転）／極座標（r=f(θ)） */
+export type FireMode = 'rotate' | 'polar'
+
+/**
+ * z 場（属性の高さ）＝位置の2変数関数 z=f(x,y)（#30/#21）。
+ * 軌道（経路）とは別物で、弾が通る各点の (x,y) で評価して属性・強度・加速度を決める。
+ * 符号で属性（+光/−闇）、|z| が V に近いほど強い（attribute.strengthOf）。未指定なら中立(0)。
+ */
+export type ZField = (x: number, y: number) => number
+
+/**
+ * 敵の得意関数の系統（#17：見た目で判別）。
+ * 直線/弧/波/渦＋昇り（指数）/捻れ（3〜5次・#43）＋折れ（絶対値・V字・#46）。
+ */
+export type EnemyFamily = 'line' | 'arc' | 'wave' | 'spiral' | 'exp' | 'poly34' | 'abs' | 'harmonic'
+
+/**
+ * 敵の種族（05c 図鑑・#46）。描画（スプライト・撃破演出）専用でロジックには影響させない。
+ * 原型=proto／鋼鬼=oni／亡霊魔術師=wraith／紅亡霊=redWraith／ゴーレム=golem。
+ */
+export type EnemySpecies = 'proto' | 'oni' | 'wraith' | 'redWraith' | 'golem'
+
+/**
+ * 敵の戦い方（#28/#42）。
+ * - attacker：味方へ最大ダメージを狙う（既定）。障害物は避けて通る（迂回型）。
+ * - breaker：壁を貫いてでも味方へ届かせる（障害物ペナルティを受けない・火力型）。
+ * - guardian：自陣を守る防御用の周回結界を張り、味方弾を迎撃する（守護型）。
+ * - ruptor：崩し手（暴発型）。z 場に極を仕込み、狙った対象の近傍で暴発を起こす。
+ */
+export type EnemyRole = 'attacker' | 'breaker' | 'guardian' | 'ruptor'
+
+/** 撃ち主 */
+export type Owner = 'player' | 'enemy'
+
+/**
+ * 回転方式の軌道：y=g(x) を angle[rad] 回転し、術者位置 origin から発射（#14）。
+ * 平面軌道は origin を始点に平行移動する（局所 y は g(x)-g(0)）。属性 z は g(x)（生値）。
+ */
+export interface RotateTrajectory {
+  mode: 'rotate'
+  g: (x: number) => number
+  angle: number
+  /** 発射元（術者位置）。未指定は原点 */
+  origin?: Vec2
+  /** 属性の z 場 z=f(x,y)（#30/#21）。未指定は中立(0)。経路上の位置で評価する */
+  z?: ZField
+  /**
+   * 場の半径（#49・06b §5.5）。この軌道を評価するときの inField 判定に使う。
+   * 面ごと・ボスフェーズごとに可変。未指定は FIELD.rField（既定 30）。
+   */
+  fieldR?: number
+}
+
+/** 極座標方式の軌道：r=f(θ)（術者位置 origin を極の中心に・全方向） */
+export interface PolarTrajectory {
+  mode: 'polar'
+  f: (theta: number) => number
+  /** 極の中心（術者位置）。未指定は原点 */
+  origin?: Vec2
+  /** 属性の z 場 z=f(x,y)（#30/#21）。未指定は中立(0）。経路上の位置で評価する */
+  z?: ZField
+  /**
+   * 場の半径（#49・06b §5.5）。この軌道を評価するときの inField 判定に使う。
+   * 面ごと・ボスフェーズごとに可変。未指定は FIELD.rField（既定 30）。
+   */
+  fieldR?: number
+}
+
+/** 軌道（発射方式の判別共用体） */
+export type Trajectory = RotateTrajectory | PolarTrajectory
+
+/** 発射する術式（プレイヤー／敵共通の入力パラメータ） */
+export interface Spell {
+  owner: Owner
+  trajectory: Trajectory
+  initialSpeed: number
+}
+
+/** 物理シミュレーション結果の1点 */
+export interface FlightSample {
+  /** 数学座標の位置 */
+  pos: Vec2
+  /** その時点の速度（飛行中に変化、0 で消滅） */
+  speed: number
+  /** 原点からの軌道弧長 */
+  arcLen: number
+  /** 軌道パラメータ（回転=x / 極座標=θ） */
+  param: number
+}
+
+/** 飛行の終了理由 */
+export type FlightEnd =
+  | 'vanished' // 速度 0 で消滅
+  | 'outOfField' // 場外へ到達
+  | 'invalid' // 未定義/発散/非実数
+  | 'maxParam' // 軌道を進み切った（場内で完結）
+
+/** 飛行シミュレーションの結果 */
+export interface Flight {
+  samples: FlightSample[]
+  end: FlightEnd
+  endPos: Vec2
+  endSpeed: number
+}
+
+/** 状態異常（§3.3）。持続は「ターン数」で管理 */
+export interface StatusEffect {
+  kind: 'flinch' | 'burn'
+  /** |z| 由来の大きさ */
+  magnitude: number
+  remainingTurns: number
+}
+
+/** 敵 */
+export interface Enemy {
+  id: string
+  name: string
+  pos: Vec2
+  hp: number
+  maxHp: number
+  /** 被ダメージ相性に使う防御属性 */
+  element: Attribute
+  hitboxRadius: number
+  statuses: StatusEffect[]
+  /** 得意関数の系統（#17：見た目で判別・AIが最適化する関数族） */
+  family: EnemyFamily
+  /**
+   * 得意関数を複数持つ場合の追加系統（#28：1～2個）。AI は family＋これらを全部試して最良を選ぶ。
+   * 中盤以降の敵は複数を組み合わせて戦う。未指定なら family の1つだけ。
+   */
+  families?: EnemyFamily[]
+  /** 戦い方（#28）。未指定は attacker。 */
+  role?: EnemyRole
+  /** このターン敵が先出しする術式（軌道・初速）。AI が決める（互換のため保持） */
+  castTrajectory: Trajectory
+  castInitialSpeed: number
+  /** 敵弾の代表 z（符号=属性、UI/AI の基準）。実際の属性は castZField を位置で評価して決める */
+  castZ: number
+  /** 敵弾の z 場 z=f(x,y)（#28）。未指定なら定数 castZ の場として扱う */
+  castZField?: ZField
+  /**
+   * 崩し手（#42）の狙い先。'obstacles' は味方でなく障害物（壁）を狙って暴発させる
+   * （第4面の暴発デモ個体用：岩壁を吹き飛ばして見せる）。未指定は 'allies'。
+   * 壁狙いは**最初の1発だけ**：発射を解決したら battle 側で 'allies' へ切り替わる（05b §5.3）。
+   */
+  ruptorTarget?: 'allies' | 'obstacles'
+  /**
+   * 多重詠唱（#44・05b §5.5）：このターンに独立に計画して同時発射する弾数。未指定は 1。
+   * 各弾は patternPool からパターンを選び、既存の単一パターン計画関数を1回ずつ呼ぶだけ。
+   */
+  castCount?: number
+  /** 多重詠唱のパターン許可プール（#44）。弾ごとに順繰りに使う。未指定は自身の role */
+  patternPool?: EnemyRole[]
+  /**
+   * 発射頻度（06b §2）：この間隔（ターン）ごとに発射する。未指定は 1（毎ターン）。
+   * 暴発型は 2（低頻度）が既定の使い方。fireOffset で個体ごとにずらす。
+   */
+  fireEvery?: number
+  /** 発射頻度の位相（06b：複数の崩し手を少しずつずらして撃たせる）。未指定は 0 */
+  fireOffset?: number
+  /** ボス個体か（#45：HPフェーズ・断末魔の対象） */
+  boss?: boolean
+  /**
+   * 迂回型の高難度個体（05b §5.2）：狙う味方が結界（周回）に守られているとき、
+   * 結界の平均属性と同極の z に合わせてすり抜ける（同極は透過＝04-magic §4.6 の通常ルールを利用）。
+   */
+  slipThrough?: boolean
+  /**
+   * 守護型の交互張り（05b §5.4）：ターンごとに光⇔闇のオーラを張り替える。
+   * 実際の符号は guardZSign（prepareTurn がターン偶奇で設定）で決まる。
+   */
+  alternatingAura?: boolean
+  /** 守護型が今ターン張る結界の極性（+1=光/−1=闇）。alternatingAura 個体に prepareTurn が設定 */
+  guardZSign?: 1 | -1
+  /**
+   * 守護型の方向づけられた場（05b §5.4・#47・LVL4〜5解禁）：リングの z 場を
+   * z=zRef·cos(φ−φ_threat) 型の非一様場にし、脅威方向 φ_threat で強度を最大にする。
+   * 全周で |z|≤zRef を維持するため失速自滅しない。alternatingAura と併用可（最上位個体）。
+   */
+  directedAura?: boolean
+  /** 種族（05c 図鑑・#46）。描画専用でロジックには影響させない。 */
+  species?: EnemySpecies
+  /**
+   * LVL（1〜7・06b）。ティア演出（外見・強化度合いの表現）に加え、高難度の解禁ゲートに使う：
+   * LVL≥COMBAT.breakerDrillMinLevel(=5) の火力型は掘削用の弱い一定場を候補に持つ（05b §5.1）。
+   * 未指定（テスト・変異体）は最上位（7）扱い。
+   */
+  level?: number
+}
+
+/** 円（障害物の基本形・削り穴の両方に使う）。中心 (x,y)・半径 r。 */
+export interface Disc {
+  x: number
+  y: number
+  r: number
+}
+
+/** 軸並行の矩形（四角い壁の素材・#56）。左下 (x,y)・幅 w・高さ h（数学座標）。 */
+export interface Rect {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+/**
+ * 壁の耐久種別（#40）。削れやすさ（えぐり半径・速度損）が変わる。
+ * - normal：従来の属性付き壁（element=light/dark で相性が効く）。
+ * - fragile：無属性の壊れやすい壁（一撃で大きく削れる）。
+ * - tough：無属性の壊れにくい壁（最大火力でも貫通に複数発かかる目安）。
+ * - unbreakable：壊れない壁（素材は削れず、当たった魔法はその場で止まる）。
+ */
+export type ObstacleKind = 'normal' | 'fragile' | 'tough' | 'unbreakable'
+
+/**
+ * 障害物（§3.7・#1/#16・Graph War 風）。形は solids（重なった円の和＝連続したブロブ）で表す。
+ * 耐久値は持たず、魔法が当たった点を中心に円（carves）を引き算して物理的にえぐり取る
+ * （＝solids にありつつ どの carves にも入らない点が「素材」。穴は滑らかな円形に削れる）。
+ * kind で削れやすさが変わる（#40）。未指定は normal。
+ */
+export interface Obstacle {
+  id: string
+  element: Attribute
+  /** 基本形：重なった円の和（壁・柱の素材） */
+  solids: Disc[]
+  /** 四角い素材（#56）。solids と合わせて「素材」を構成する。円・矩形は混在可。 */
+  rects?: Rect[]
+  /** 魔法に削り取られた円（穴）。solids/rects から引く */
+  carves: Disc[]
+  /** 耐久種別（#40）。未指定は normal。 */
+  kind?: ObstacleKind
+}
+
+/** 障害物を削った1回分の演出データ（#11：削る瞬間のパーティクル＆穴の開示）。 */
+export interface CarveBurst {
+  /** えぐった点（数学座標） */
+  pos: Vec2
+  /** えぐり半径 */
+  r: number
+  /** 弾がこの点に到達した弧長（アニメで開示タイミングを取る） */
+  arcLen: number
+  /** えぐった弾の属性（パーティクルの色） */
+  attr: Attribute
+  /** 削られた障害物ID（穴を正しい障害物に適用する） */
+  obstacleId: string
+}
+
+/** 味方術者（#15：自陣営3人）。各自が配置（発射元）を持つ */
+export interface Ally {
+  id: string
+  name: string
+  /** 配置＝術者位置＝発射元（#14） */
+  pos: Vec2
+  hp: number
+  maxHp: number
+  /** 被ダメージ相性に使う防御属性 */
+  element: Attribute
+  statuses: StatusEffect[]
+  /**
+   * 闇の周回で囲まれている重数（#35）。1 で敵の狙いがずれ、orbitConcealFull で視認不可。
+   * 各ターンの周回で再計算される。未指定は 0。
+   */
+  concealed?: number
+  /**
+   * 闇の周回による敵の狙いのブレ幅 RMSE（#39）。囲む円の半径に連動（1重=半径/2、2重=半径）。
+   * 敵はこの大きさだけ味方の見かけ位置をずらして狙う。未指定は 0。
+   */
+  concealRmse?: number
+}
+
+/** どのメカニクスを解禁しているか（段階的導入・機能17）。防御/パリィは軌道型に統合され常時 */
+export interface Mechanics {
+  obstacles: boolean
+  enemyFire: boolean
+}
+
+/**
+ * ボス戦の HP フェーズ（#45・06b §6 第7面）：HP 割合がしきいを下回ると床が崩れ、
+ * アリーナ（障害物）が入れ替わり、同時発射数が変わる。
+ */
+export interface BossPhase {
+  /** この HP 割合以下で移行（例 0.66） */
+  hpBelow: number
+  /** 移行後のボスの同時発射数（多重詠唱・#44） */
+  castCount: number
+  /** 崩落後のアリーナ（障害物を丸ごと差し替える） */
+  obstacles: Obstacle[]
+  /** 眷属を間引く（最下層＝ボス単独・#45） */
+  cullMinions?: boolean
+  /**
+   * 崩落後の場の半径（06b §5.5・#49）。床崩落でフィールドが縮む段階演出用。
+   * このフェーズへ移行すると BattleState.rField を上書きする。未指定はステージ既定 rField を据え置く。
+   */
+  rField?: number
+}
+
+/** ステージ定義（§5・機能14）。データは src/data/ に分離 */
+export interface Stage {
+  id: string
+  name: string
+  enemies: Enemy[]
+  obstacles: Obstacle[]
+  /** 導入テキスト（ステージ前） */
+  introText: string[]
+  /** クリアテキスト（ステージ後） */
+  clearText: string[]
+  mechanics: Mechanics
+  /** ボス戦か（#6） */
+  boss?: boolean
+  /** ボスの HP フェーズ（#45：床崩落・同時発射数の変化）。hpBelow 降順で定義する */
+  bossPhases?: BossPhase[]
+  /**
+   * 面ごとの場の半径（06b §5.5・#49）。高難度面ほど広く取り、複雑な壁配置や
+   * 高次関数（poly34）のうねりに余地を与える。createBattleState が BattleState.rField に取り込み、
+   * 描画・当たり判定・敵AI・味方プレビューが参照する。未指定は FIELD.rField を据え置く。
+   */
+  rField?: number
+  /**
+   * 面ごとの味方初期位置の上書き（#64・第4面）。パーティ定義（party.ts）の並び順に対応する。
+   * 未指定の面は既定位置（PARTY の pos）のまま。createBattleState が適用する。
+   */
+  allyPositions?: Vec2[]
+}
+
+/**
+ * 永続する周回結界（#39）。一度張った周回は破壊されるまでターンをまたいで残り、
+ * 毎ターン内側へ効果（光=回復／闇=隠蔽）を及ぼし、敵弾を迎撃する。反対属性の弾に相殺されると消える。
+ */
+export interface ActiveOrbit {
+  id: string
+  /** 張った術者ID */
+  ownerId: string
+  owner: Owner
+  /** リング点列（位置＋属性 z）。描画・囲み判定・迎撃に使う */
+  ring: ZPoint[]
+  /** 迎撃の相殺計算に使う代表速度（#21/#34） */
+  ringSpeed: number
+}
+
+/** ターンのフェーズ（敵公開→作成→解決・§4） */
+export type Phase = 'enemyReveal' | 'compose' | 'resolve'
+
+/**
+ * 浮かび上がるダメージ／回復の数値表示（#42）。
+ * 色は属性色（光=金/闇=紫/中立=淡）、暴発=白、回復=緑。大きさは量に依存。
+ */
+export interface DamagePopup {
+  /** 表示位置（数学座標・対象の位置） */
+  pos: Vec2
+  /** 量（ダメージ or 回復の絶対値） */
+  amount: number
+  /** 色の種別：属性色／暴発(misfire)=白／回復(heal)=緑 */
+  kind: Attribute | 'misfire' | 'heal'
+  /** 同期する対象ID（trigger='flash' のとき被弾フラッシュに合わせて出す） */
+  targetId: string
+  /** 出すタイミング：被弾フラッシュ／暴発の爆発／回復（固定） */
+  trigger: 'flash' | 'misfire' | 'heal'
+}
+
+/** 戦闘ログの1エントリ */
+export interface LogEntry {
+  kind:
+    | 'info'
+    | 'turn'
+    | 'playerHit'
+    | 'enemyHit'
+    | 'misfire'
+    | 'parry'
+    | 'shield'
+    | 'orbit'
+    | 'obstacle'
+    | 'status'
+    | 'miss'
+  text: string
+}
+
+/** 味方の発射（#4：関数を撃つだけ。ループなら防御も兼ねる）。trajectory は味方位置を origin に持つ */
+export interface AllyCast {
+  allyId: string
+  trajectory: Trajectory
+  initialSpeed: number
+}
+
+/** 戦闘状態（メモリ上のみ・永続化なし） */
+export interface BattleState {
+  stageIndex: number
+  allies: Ally[]
+  enemies: Enemy[]
+  obstacles: Obstacle[]
+  mechanics: Mechanics
+  turn: number
+  phase: Phase
+  log: LogEntry[]
+  outcome: 'ongoing' | 'cleared' | 'gameover'
+  /** 持続中の周回結界（#39：破壊されるまでターンをまたいで残る）。未指定は空。 */
+  orbits?: ActiveOrbit[]
+  /** ボスの HP フェーズ定義（#45：createBattleState でステージから複製） */
+  bossPhases?: BossPhase[]
+  /** 現在のフェーズ（0=最初のアリーナ。しきいを跨ぐと +1 して床が崩れる・#45） */
+  bossPhase?: number
+  /**
+   * 現在の場の半径（#49・06b §5.5）。createBattleState でステージから取得し、
+   * ボスフェーズ遷移で BossPhase.rField により縮小する。描画ビューポート・当たり判定・
+   * 敵AI・味方プレビューはこの値を使う。未指定相当は FIELD.rField。
+   */
+  rField?: number
+  /**
+   * 断末魔（#45）：ボス HP0 の直後に一度だけ、暴発型3連の「最後の一手」を挟む。
+   * pending=次ターンで発動 → cast=発動中 → done=解決済み（勝敗判定へ進める）。
+   */
+  finale?: 'pending' | 'cast' | 'done'
+}

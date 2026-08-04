@@ -417,6 +417,10 @@ describe('周回オーラ（#39：固定回復・重複・入れ子は内側優�
     const t = res.allies.find((x) => x.id === 't')!
     expect(t.hp).toBe(80) // 50 + 30（内側の光のみ。外側の光は入れ子で無視）
     expect(t.concealed).toBe(1) // 中の闇で1重
+    // 分身の散らばり（描画）と敵AIの狙いのブレ（perceivedPos）が同じ値を使うので、
+    // ここが 0 だと「隠蔽しているのに何も起きない」になる（#73）
+    expect(t.concealRmse).toBeGreaterThan(0)
+    expect(t.concealRmse).toBeCloseTo(7 / 2, 1) // 1重＝囲む円の半径/2
   })
 })
 

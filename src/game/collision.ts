@@ -2,6 +2,27 @@
 // 回転/極座標いずれの飛行サンプルでも一貫して動く。純粋関数。
 import type { FlightSample, Vec2 } from './types'
 import { dist } from './coords'
+import { strengthOf } from './attribute'
+import { COMBAT, FIELD } from '../data/constants'
+
+/**
+ * 威力（速度×強度）を 0..1 へ正規化した割合（#21/#72）。
+ * **描画の大きさ（draw.powerSizeFrac）と当たり半径（bulletRadius）が共有する唯一の定義**。
+ */
+export function powerFraction(speed: number, z: number): number {
+  const p = strengthOf(z) * Math.max(0, speed)
+  return Math.min(1, p / (FIELD.sMax * FIELD.maxFlightSpeed))
+}
+
+/**
+ * 弾の当たり半径（ユニット・#72）。威力に比例して bulletRadiusMin〜bulletRadiusMax。
+ * **画面に描かれる弾のコア半径と同じ値**（draw.drawBullet が この値 × scaleOf(vp) で描く）。
+ * 2弾の衝突は中心間距離 ≤ rA+rB、結界との接触は ≤ r+orbitBandHalf で判定する。
+ */
+export function bulletRadius(speed: number, z: number): number {
+  const { bulletRadiusMin: lo, bulletRadiusMax: hi } = COMBAT
+  return lo + (hi - lo) * powerFraction(speed, z)
+}
 
 /** 線分 a→b と中心 c・半径 r の円が最初に交わる媒介変数 t∈[0,1]。交わらなければ null。 */
 export function segmentCircleHit(a: Vec2, b: Vec2, c: Vec2, r: number): number | null {
