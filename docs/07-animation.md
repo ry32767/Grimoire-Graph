@@ -117,16 +117,18 @@ Canvas は**盤面コンテナ全面**（`.gm-board-inner` の実寸）を占め
 
 関数空間の方眼紙（盤面ではない）。**係数をいじる**／**点から作る**の 2 モード。点は格子点（整数）に吸着する。
 
-- **結界 `r=f(θ)` も普通のグラフとして描く**（#68）：横軸＝角度 θ（0〜2π・目盛りは `π/2` きざみ）、
-  縦軸＝半径 r。輪として描いていた頃は `rmax` で正規化していたため `r=6`→`r=9` で大きさが変わらず、
-  半径の注記も重なり、点も打てなかった。軌道・z とまったく同じ流儀（`PadAxis` を差し替えるだけ）に揃えた。
+- **結界 `r=f(θ)` は極座標の方眼紙**（#69）：同心円＝半径 r の目盛り（4 きざみ・数値つき）、
+  放射線＝角度 θ。直交の方眼と目盛りを重ねていたのが「文字が重なる／同心円の意図が分からない」の正体で、
+  極座標のときは直交の方眼を描かない。**尺度は固定**（`POLAR_R_RANGE`＝12 が枠の半分）なので、
+  `r=6`→`r=9` のように半径だけ変えても輪の大きさが必ず変わる（`rmax` 正規化をやめた・#67）。
+  枠より外へ出る結界は読みの行に「12 より外は枠外」と添える。
 - **点から作る**は「打った点に**いま書いている式の係数**を合わせる」（#67・[03 §3.3](03-functions.md)）。
   多項式に置き換えるのではなくスライダーが自動で動くので、選んだ術式（sin・指数・1/x…）の形は保たれる。
   **式が変数を使っていないとき**（`y=0` `z=4` `r=6` のような定数式。係数は検出されるが動かしても形にならない）と
   数値リテラルが1つも無いときだけ、従来どおり 1〜3 次の最小二乗多項式（破線プレビュー）へ落ちる（`templateUsesVar`）。
 - 反映は必ず**上書き**（元の式に足さない）。多項式へ落ちたときの変数は y なら `x`、z・結界なら `t`。
-- 横軸の吸着幅は軸ごと（距離＝1・角度＝`π/8`）。**吸着後の値はそのままラジアン**なので、
-  フィットの標本 `{u:θ, v:r}` と式の変数が一致する。
+- 点の吸着は方眼紙ごと：直交は格子点（1 きざみ）、極座標は **θ が `π/8`・r が 1** きざみ。
+  極座標で拾った点はそのまま `{u:θ, v:r}` になり、式の変数（`t`＝θ）と一致する。
 - y↔r・y↔z を切り替えたら、前の座標の意味で打った点（作図台・盤面の通過点）は捨てる。
 
 ---
@@ -169,11 +171,17 @@ Canvas は**盤面コンテナ全面**（`.gm-board-inner` の実寸）を占め
 
 ```ts
 ds   = arcLen[i] − arcLen[i-1]
-v    = max(MIN_SPEED(0.5), (speed[i] + speed[i-1]) / 2)
-t[i] = t[i-1] + ds / v
-maxTotal = 全弾タイムラインの最大
+v    = (speed[i] + speed[i-1]) / 2                    // physics.flightTimes と同一の定義（#72）
+t[i] = t[i-1] + ds / v                                // 失速（v≈0）した先は進めないので時刻を止める
+maxTotal = max(全弾タイムライン, エンジンが返す全イベント時刻)
 flightMs = min(MAX_MS, max(floorMs, maxTotal × MS_PER_GAMESEC(360)))
+msOfGameTime(t) = clamp(0, flightMs, (t / maxTotal) × flightMs)   // ゲーム秒 → 実時間 ms
 ```
+
+**アニメの時間軸はエンジン（`physics.flightTimes`）と同じ定義**にしてある（#72）。
+これで `resolveTurn` が返すイベント時刻（相殺・結界の霧散・暴発）をそのまま実時間へ写せる。
+以前は `max(MIN_SPEED=0.5, v)` の床を入れていたため、エンジンが「到達しない」と判定した弾が
+画面では最後まで這って到達し、時間軸が本番とズレていた。
 
 毎フレーム：`elapsed = now − start`、`e = min(1, elapsed/flightMs)`、`tau = e × maxTotal`（ゲーム内時刻）で各弾位置を線形補間。速い弾は早く着き、遅い弾は長く飛ぶ。
 
@@ -185,8 +193,8 @@ flightMs = min(MAX_MS, max(floorMs, maxTotal × MS_PER_GAMESEC(360)))
 | 発射の閃光 | 解決開始 | 260ms | `board.drawLaunchFlash`（術者位置から広がる輪） |
 | 障害物えぐり | 弾が `carve.arcLen` を通過 | `CARVE_BURST_MS=480`（到達時刻から実時間） | `drawCarveBurst`（岩片飛散・赤橙） |
 | 命中フラッシュ | `arcLen ≥ impact.arcLen` | `FLASH_MS=420` | 赤フラッシュ＋画面揺れ＋`board.drawImpactShockwave`（白い衝撃波） |
-| 相殺（パリィ） | 2 弾が `CLASH_DIST=1.6` 以内 | `PARRY_MS=900`（火花は `CLASH_MS=460`） | `board.drawParryBurst`（二重衝撃波＋光闇の破片＋「相殺」）＋`drawClashSpark` |
-| 結界の霧散 | 壁/弾に負ける。**弾が破壊点（`AnimOrbit.carves[0]`）へ到達した瞬間**から散り始める（#64：`resolveTurn` が記録する `enemyRings[].breakPos`／`orbitBreaks` を App が同期点として渡す。同期点が無いときの保険は `e≥0.4`） | `DISSIPATE_MS=520` | `drawOrbitDissipation`（リング消失・粒拡散） |
+| 相殺（パリィ） | **エンジンの衝突時刻** `clashes[].t`（#72） | `PARRY_MS=900`（火花は `CLASH_MS=460`） | `board.drawParryBurst`（二重衝撃波＋光闇の破片＋「相殺」）＋`drawClashSpark` |
+| 結界の霧散 | **エンジンの破壊時刻**（`AnimOrbit.breakT`＝`allyShots[].breakTime`／`enemyRings[].breakTime`／`orbitBreaks[id].t`・#72）ちょうどから散り始める。壁・失速による自壊は時刻0。時刻が取れないとき（術者の死亡等）だけ `e≥0.4` の保険 | `DISSIPATE_MS=520` | `drawOrbitDissipation`（リング消失・粒拡散） |
 | 弾の霧散 | 速度 0 | `DISSIPATE_MS=520` | `drawBulletDissipation`（コア収縮・粒拡散） |
 | 暴発 | `misfirePos` 到達 | `MISFIRE_TAIL_MS=1000` | `drawMisfire`（収縮→大爆発の 2 段） |
 | 撃破（雑魚・種族別） | 致命弾のフラッシュ開始（取れなければ `e≥0.9`） | `DEATH_MS=900` | `drawEnemyDeath`（種族ごとの消滅・05c §6.5） |
@@ -277,7 +285,7 @@ intensity = 1 − (elapsed − flashStart)/FLASH_MS    // 1→0 に減衰
 | 4b | 前ターンの残像 | `drawTurnTrails`（属性色 α0.10） |
 | 5 | プレビュー軌道（作成フェーズ） | `drawPreviewRibbon`。**アクティブ術者のみ・弧長 3.4 まで**の帯＋法線ヒゲ |
 | 5b | 暴発点マーカー（編集時・#30） | 関数（軌道 or z 場）がエラーで暴発する点に**赤い ✕**（`drawMisfireMarker`・`#ff4b4b`）。ブレ帯（`drawMisfireBand`）と、異変 lv≥3 では**揺らぐ三重の破線輪**（`rgba(255,125,94,…)`）を重ねる |
-| 6 | 結界（周回リング） | `drawOrbitRing`：**帯そのものが速度を語る**（区間ごとに α `0.14+f×0.72`・線幅 `1+f×2.6+st/5×1.2`、`f=speed/maxFlightSpeed`）＋**その場の速度で流れる粒**（6〜16 粒・`lighter` 合成・速いほど長い尾・放射グラデ＋白いコア）。上端に **`v平均（min〜max）・|z|・威力`** の読み。全周が停止したら「失速（自滅）」 |
+| 6 | 結界（周回リング） | `drawOrbitRing`：**帯の太さ＝当たり判定の厚み**（`2×orbitBandHalf(=0.35)` ユニット×`scaleOf(vp)`・#72）で、速度は明るさが語る（区間ごとに α `0.14+f×0.72`、`f=speed/maxFlightSpeed`）＋**その場の速度で流れる粒**（6〜16 粒・`lighter` 合成・速いほど長い尾・放射グラデ＋白いコア）。上端に **`v平均（min〜max）・|z|・威力`** の読み。全周が停止したら「失速（自滅）」 |
 | 7 | 敵 | オーラ→暗い下地→属性枠→ロール印（guardian=二重破線/breaker=棘）→**種族別スプライト**（`drawSpeciesSprite`：oni/wraith/redWraith/golem/proto を species×tier で手続き描画。ボスは `drawBossSprite`・#46/#51）→系統 glyph→名前ラベル→被弾フラッシュ。撃破時は生存スプライトを隠し消滅アニメ（`drawEnemyDeath`/`drawBossCollapse`）へ譲る |
 | 8 | 味方術者 | オーラ→アクティブ強調リング（破線）→ドット絵スプライト→名前→被弾フラッシュ |
 | 9 | 飛翔中の魔法 | **通ってきた道**（属性色・古いほど薄い α `0.10+age×0.30`）＋**一定間隔の燐光**（10 点おき・`lighter`・ゆっくり明滅）＝`drawFlightPath`／**発射の閃光**（`drawLaunchFlash`：術者位置から 260ms で広がる輪）／**速度に応じた火花**（`drawSpeedSparks`）／短い尾 `drawTrail` ／弾本体 `drawBullet` |
@@ -302,16 +310,17 @@ intensity = 1 − (elapsed − flashStart)/FLASH_MS    // 1→0 に減衰
 
 ```ts
 bulletColorOf(z):  光→#f4c430 / 闇→#7b5cc4 / 中立→#d9d4ea
-powerSizeFrac(speed, z) = min(1, strengthOf(z)×max(0,speed) / (sMax×maxFlightSpeed))
-                        = min(1, 威力 / (5×24))           // 威力 = 速度 × 属性強度
-sizeFrac = max(0.06, powerSizeFrac)                   // 最低限見える小ささだけ確保し、あとは威力に比例
+powerSizeFrac(speed, z) = game/collision.powerFraction の再輸出（定義はひとつだけ・#72）
+                        = min(1, strengthOf(z)×max(0,speed) / (sMax×maxFlightSpeed))
 pulse = 1 + sin(phase×1.7)×0.25                       // 0.75〜1.25 で脈動
-glowR = (4 + sizeFrac×22) × pulse,  coreR = (1.3 + sizeFrac×4.2) × pulse
+coreR = bulletRadius(speed, z) × scaleOf(vp) × pulse  // **当たり判定の半径そのもの**（#72）
+glowR = coreR × 2.4 + 4                               // グローはコアを包む演出の輪
 ```
 
-弾の大きさは**威力（=その点の速度×属性強度）にそのまま比例**する（#45）。速度0や弱属性なら小さく、最大威力で最大。
-以前は強属性へ下駄（`sFrac×0.4`）を履かせ基準サイズも大きかったため、威力が低くても常に大玉に見えていた。
-スパイクの本数だけは属性強度 `sFrac` 由来（強属性ほど棘が多い）。
+**コアの半径＝当たり判定の半径**（`game/collision.bulletRadius`＝`0.85〜1.5` ユニット・#72）。
+見えている大きさがそのままぶつかる大きさになるので、「当たったように見えたのに素通りした」が起きない。
+脈動 `pulse` は当たり判定を動かさない見た目だけの揺らぎ（平均が判定半径）。
+大きさは**威力（=その点の速度×属性強度）に比例**する（#45）。スパイクの本数だけは属性強度 `sFrac` 由来（強属性ほど棘が多い）。
 
 ### 波トレイル定数
 
@@ -399,12 +408,19 @@ Web Audio で**合成**する効果音＋簡易 BGM（音源ファイル不要�
 
 解決済みのターンを選び、経路・命中・結界の削れを**スクラブしながら**見返せる。ゲーム進行には影響しない。
 
-- 直近 **8 ターン**ぶんのアニメーションを、**解決前の盤面ごと**保持する（[09 §9.6](09-data-model.md)）。
+- 見返せるのは**直近 1 ターン**だけ（`REPLAY_KEEP`・#69）。アニメーションを**解決前の盤面ごと**保持する
+  （[09 §9.6](09-data-model.md)）。選択肢が1つなのでターン選択ボタンは出さない。
 - `BattleCanvas` に `playback: {paused, seekMs, seekToken, rate}` と `replay` を渡すと、
   内部の時計を外から止める／飛ばす／速さ（×1・×0.5・×0.25）を変えられる。
 - 見返し中は終端で `onAnimationDone` を呼ばない（その位置に留まる）。
 - **巻き戻し対策**：`seekToken` が変わったフレームだけ演出のラッチを全消しし、
   その時点で既に過ぎている演出は「はるか過去」の時刻でラッチして無音のまま通過させる。
+- **絵はすべて経過時刻の関数にする（#69）**：壁の穴の開き具合は弾の弧長から毎フレーム組み直し、
+  被弾・火花・霧散・破片・撃破はシークでラッチを捨てる。**結界リングの流れる粒**だけは
+  `board.ts` 側がフレーム数で進む持ち越し状態だったので、`render/ringPhase.ts` の
+  `seedRingPhases` で経過時刻から位相を組み立てて描画直前に上書きする。
+  これで同じ再生位置なら**どんな順に行き来しても同じ絵**になる（実測：往復しても差分 0px）。
+  再生速度（×0.5／×0.25）でも粒の流れがちゃんと遅くなる。
 
 ## 7.6 手引きの図版（`render/tutorialFigures.ts`・`Guide`）
 
@@ -416,8 +432,13 @@ Web Audio で**合成**する効果音＋簡易 BGM（音源ファイル不要�
 
 エンディングの後に流れるクレジット背景。**本物の敵AI同士（LIGHT MAGE ⇄ DARK MAGE）が延々と撃ち合う**。
 
-- 計画は `planEnemyShots`、飛行は `enemyFlight` → `traverseObstacles`、
-  相殺は `resolveParry`、結界の迎撃は `ringInterception`。**ロジックは一切書き換えない**。
-- 1 幕＝両者が同時に撃つ。**結界の迎撃 → 命中 → 弾どうしの相殺 → 暴発**の順に解く。
+- **計算は本番と完全に同一（#72）**：計画は `planEnemyShots`、解決は **`resolveTurn` をそのまま1回呼ぶ**。
+  相殺・結界の迎撃・障害物の削り・暴発・ダメージ・状態異常はすべて本番の実装が返した結果を描くだけで、
+  この層はロジックを持たない。演出の時刻もエンジンが返すゲーム秒（`flightTimes`／`clashes[].t`／`breakTime`）を使う。
+- 1 幕＝両者が同時に撃つ（A 側＝味方の発射、B 側＝敵弾として `resolveTurn` に渡す）。
+  干渉は本番と同じく**ゲーム時刻の早い順**に解ける。
+  かつては迎撃順・ダメージ式・相殺距離をこの層で書き直しており、**結界が壁を無視して張り続ける**
+  （`orbitWallBreak` を呼んでいなかった）・**相殺より先に迎撃を解くので消えたはずの弾が結界を壊す**
+  といった本番との食い違いが出ていた。
 - やられた側だけ **LVL +1・全回復**、壁は別配置に組み直す。LVL 5（同時 3 発）で決着したら両者 LVL 1 へ。
 - 敵AIの計画は重いので、**幕の尻尾で 1 フレーム 1 手ずつ**先取りして次の幕を組む（切り替わりで描画が止まらない）。

@@ -564,6 +564,12 @@
   letter-spacing: 1px;
   color: var(--text-dim);
 }
+/* 見返せるターンが1つのときの表示（#69） */
+.playbar-turn-now {
+  font-family: var(--expr);
+  font-size: 12px;
+  color: var(--gold-2);
+}
 .playbar-seek {
   flex: 1;
   min-width: 100px;

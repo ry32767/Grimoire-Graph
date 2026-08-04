@@ -93,8 +93,8 @@ interface ReplayEntry {
   obstacles: BattleState['obstacles']
   rField: number | undefined
 }
-/** 保持する見返しターン数（メモリを食いすぎない程度に直近ぶんだけ）。 */
-const REPLAY_KEEP = 8
+/** 保持する見返しターン数。見返せるのは**直近 1 ターン**だけでよい（#69）。 */
+const REPLAY_KEEP = 1
 
 /** 開発時のみ：URL の ?stage=N（1始まり）で指定ステージへ直行（通常プレイ＝本番ビルドでは無効・#33）。 */
 const DEV = import.meta.env.DEV

@@ -23,7 +23,14 @@ import {
   initialValues,
   templateUsesVar,
 } from '../game/exprFit'
-import { AXIS_DISTANCE, AXIS_THETA, padGeo } from '../render/draftpad'
+import {
+  POLAR_R_RANGE,
+  POLAR_SNAP_R,
+  POLAR_SNAP_T,
+  padToPolar,
+  polarScale,
+  polarToPad,
+} from '../render/draftpad'
 import { parseExpression } from '../game/functions'
 import { genZShape, parseZShape, patchZShape } from './zshape'
 import { formatPoly, polyFit } from './polyFit'
@@ -358,7 +365,9 @@ describe('係数スライダーの端での取り直し（#67）', () => {
   })
 })
 
-describe('作図台：フィットの分岐と結界の尺度（#67）', () => {
+const PAD_W_CENTER = 520 / 2
+
+describe('作図台：フィットの分岐と結界の尺度（#67/#69）', () => {
   it('定数式（y=0 / z=4）は多項式へ落とす（定数へフィットして直線にならない）', () => {
     expect(templateUsesVar(detectParams('0', 'x')!.template, 'x')).toBe(false)
     expect(templateUsesVar(detectParams('4', 't')!.template, 't')).toBe(false)
@@ -382,14 +391,29 @@ describe('作図台：フィットの分岐と結界の尺度（#67）', () => {
     }
   })
 
-  it('結界は横軸 θ（0〜2π）の普通のグラフとして描く（輪ではない）', () => {
-    expect(AXIS_THETA.max).toBeCloseTo(Math.PI * 2, 6)
-    expect(AXIS_THETA.snap).toBeCloseTo(Math.PI / 8, 6)
-    // 距離軸と同じ横幅いっぱいを使う（吸着した θ がそのままラジアン値になる）
-    expect(padGeo(AXIS_THETA).sx * AXIS_THETA.max).toBeCloseTo(
-      padGeo(AXIS_DISTANCE).sx * AXIS_DISTANCE.max,
-      6,
-    )
+  it('結界は極座標で描く：尺度は固定で、r を変えれば輪の大きさが変わる', () => {
+    // 尺度が半径に依らない（rmax 正規化していた頃は r=6 と r=9 が同じ大きさに見えた）
+    const p6 = polarToPad(0, 6)
+    const p9 = polarToPad(0, 9)
+    expect(p9.x - PAD_W_CENTER).toBeCloseTo((p6.x - PAD_W_CENTER) * 1.5, 6)
+    expect(POLAR_R_RANGE * polarScale()).toBeCloseTo((216 - 26) / 2, 6)
+  })
+
+  it('極座標の点は (θ, r) に吸着し、描画位置と往復する', () => {
+    expect(POLAR_SNAP_T).toBeCloseTo(Math.PI / 8, 6)
+    expect(POLAR_SNAP_R).toBe(1)
+    for (const [t, r] of [
+      [0, 6],
+      [Math.PI / 2, 4],
+      [Math.PI, 12],
+      [(Math.PI * 7) / 4, 8],
+    ] as const) {
+      const px = polarToPad(t, r)
+      const back = padToPolar(px.x, px.y)
+      expect(back.r).toBe(r)
+      expect(Math.cos(back.t)).toBeCloseTo(Math.cos(t), 6)
+      expect(Math.sin(back.t)).toBeCloseTo(Math.sin(t), 6)
+    }
   })
 
   it('結界（r=6）は変数を使わないので θ の多項式へ落ちる', () => {

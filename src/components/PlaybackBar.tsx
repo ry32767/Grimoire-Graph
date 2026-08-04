@@ -22,16 +22,21 @@ export default function PlaybackBar(props: Props) {
     <div className="playbar rwin rwin-flat" aria-label="プレイバック">
       <div className="playbar-turns">
         <span className="playbar-label">見返し</span>
-        {props.turns.map((t) => (
-          <button
-            key={t}
-            type="button"
-            className={`btn small${t === props.currentTurn ? ' selected' : ''}`}
-            onClick={() => props.onSelectTurn(t)}
-          >
-            T{t}
-          </button>
-        ))}
+        {/* 見返せるのは直近1ターンだけなので、選択肢が1つのときはボタン列を出さない（#69） */}
+        {props.turns.length > 1 ? (
+          props.turns.map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={`btn small${t === props.currentTurn ? ' selected' : ''}`}
+              onClick={() => props.onSelectTurn(t)}
+            >
+              T{t}
+            </button>
+          ))
+        ) : (
+          <span className="playbar-turn-now">T{props.currentTurn}</span>
+        )}
       </div>
       <div className="playbar-transport">
         <button type="button" className="btn small play" onClick={props.onTogglePlay} aria-label={props.paused ? '再生' : '一時停止'}>

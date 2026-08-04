@@ -3,7 +3,7 @@
 // 「係数をいじる」＝式中の数値をスライダーで動かす／「点から作る」＝打った点に式を合わせる。
 // 点フィットは **いま書いている式の係数**を自動で動かす（＝スライダーの自動調節・#67）。
 // 式が変数を使っていないときだけ多項式（1〜3次）へ落ちる。結果は必ず**上書き**する（元の式に足さない）。
-// 結界 r=f(θ) も普通のグラフ（横軸 θ）として同じ流儀で扱う（#68）。
+// 結界 r=f(θ) は**極座標の方眼紙**（同心円＝半径の目盛り）に描き、点も (θ, r) で拾う（#69）。
 import { useEffect, useRef, useState } from 'react'
 import type { Vec2 } from '../game/types'
 import { parseExpression } from '../game/functions'
@@ -30,12 +30,15 @@ import CoefSliders from './CoefSliders'
 import { formatPoly, polyFit } from './polyFit'
 import {
   AXIS_DISTANCE,
-  AXIS_THETA,
   PAD_H,
   PAD_W,
   PAD_Y_RANGE,
+  POLAR_NOTE,
+  POLAR_R_RANGE,
+  POLAR_SNAP_T,
   drawDraftPad,
   padGeo,
+  padToPolar,
 } from '../render/draftpad'
 
 interface Props {
@@ -64,8 +67,8 @@ export default function DraftPad({ composer: c, onChange, rDistance, focus, onCl
 
   const onZ = focus === 'z'
   const barrier = !onZ && c.mode === 'polar'
-  // 結界は横軸 θ（0〜2π）の普通のグラフとして扱う。軌道・z は横軸＝射線方向の距離
-  const axis = barrier ? AXIS_THETA : AXIS_DISTANCE
+  // 軌道・z は横軸＝射線方向の距離。結界は極座標なので軸は使わない
+  const axis = AXIS_DISTANCE
   const source = onZ ? c.zText : barrier ? barrierBody(c.yText) : c.yText
   const params = onZ ? c.zFitParams : c.fitParams
   const values = onZ ? c.zFitValues : c.fitValues
@@ -84,9 +87,10 @@ export default function DraftPad({ composer: c, onChange, rDistance, focus, onCl
     if (!ctx) return
     drawDraftPad(ctx, {
       axis,
+      polar: barrier,
       f: parseExpression(onZ ? c.zFreeExpr : c.freeExpr, varName),
       onZ,
-      // 角度軸に「的までの距離」は無い
+      // 極座標に「的までの距離」は無い
       rDistance: barrier ? null : rDistance,
       points: mode === 'pts' ? pts : [],
       fitted: mode === 'pts' ? poly : null,
@@ -101,15 +105,27 @@ export default function DraftPad({ composer: c, onChange, rDistance, focus, onCl
     const cv = ref.current
     if (!cv) return
     const rect = cv.getBoundingClientRect()
-    const g = padGeo(axis)
     const px = ((e.clientX - rect.left) * PAD_W) / rect.width
     const py = ((e.clientY - rect.top) * PAD_H) / rect.height
-    // 横軸は軸ごとの刻み（距離なら1、角度なら π/8）に吸着。値は実寸のまま持つ
-    const mx = Math.round((px - g.ox) / g.sx / axis.snap) * axis.snap
-    const my = Math.round((g.oy - py) / g.sy)
-    if (mx < 0 || mx > axis.max + 1e-9 || Math.abs(my) > PAD_Y_RANGE) return
+    // 結界は極座標で拾う（θ は π/8・r は 1 きざみ）。それ以外は格子点（1 きざみ）
+    let mx: number
+    let my: number
+    let snap: number
+    if (barrier) {
+      const q = padToPolar(px, py)
+      if (q.r < 1 || q.r > POLAR_R_RANGE) return
+      mx = q.t
+      my = q.r
+      snap = POLAR_SNAP_T
+    } else {
+      const g = padGeo(axis)
+      mx = Math.round((px - g.ox) / g.sx)
+      my = Math.round((g.oy - py) / g.sy)
+      if (mx < 0 || mx > axis.max || Math.abs(my) > PAD_Y_RANGE) return
+      snap = 1
+    }
     setPts((prev) => {
-      const i = prev.findIndex((p) => Math.abs(p.x - mx) < axis.snap / 2 && p.y === my)
+      const i = prev.findIndex((p) => Math.abs(p.x - mx) < snap / 2 && p.y === my)
       const next = i >= 0 ? prev.filter((_, k) => k !== i) : [...prev, { x: mx, y: my }]
       return next.sort((a, b) => a.x - b.x)
     })
@@ -152,7 +168,7 @@ export default function DraftPad({ composer: c, onChange, rDistance, focus, onCl
       </div>
       <div className="draft-canvas-wrap">
         <canvas ref={ref} width={PAD_W} height={PAD_H} onPointerDown={onPadPointer} aria-label="作図台" />
-        <div className="draft-note">{axis.note}</div>
+        <div className="draft-note">{barrier ? POLAR_NOTE : axis.note}</div>
       </div>
       <div className="draft-controls">
         <div className="draft-tabs">

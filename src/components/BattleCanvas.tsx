@@ -45,6 +45,7 @@ import {
   type PreviewPoint,
   type RingPhaseStore,
 } from '../render/board'
+import { seedRingPhases } from '../render/ringPhase'
 import { ringAverageAttr } from '../game/orbit'
 import { COLORS } from '../render/theme'
 
@@ -538,6 +539,9 @@ export default function BattleCanvas(props: Props) {
           for (const k of Object.keys(dissipateStartByIdx)) delete dissipateStartByIdx[Number(k)]
           for (const k of Object.keys(carveStartByKey)) delete carveStartByKey[k]
           for (const k of Object.keys(deathStartById)) delete deathStartById[k]
+          // 結界リングの粒は持ち越し状態。位相は毎フレーム seedRingPhases で組み直すが、
+          // 消えた結界のぶんが残らないようシークのたびに掃除する（#69）
+          for (const k of Object.keys(ringStoreRef.current)) delete ringStoreRef.current[k]
         } else if (!pb.paused) {
           clock += dt * (pb.rate || 1)
         }
@@ -697,7 +701,9 @@ export default function BattleCanvas(props: Props) {
           // 接触前：通常どおり周回して見せる（弾の到達を待つ）→ 下の通常描画へ
         }
 
-        // 通常の周回（存続中／霧散前）：帯＋その場の速度で流れる粒（v3 の _drawRing）
+        // 通常の周回（存続中／霧散前）：帯＋その場の速度で流れる粒（v3 の _drawRing）。
+        // 粒の位相は経過時刻から組み立てる（フレーム数で進めると見返しで巻き戻らない・#69）
+        seedRingPhases(ringStoreRef.current, ring, 'ally', elapsed)
         drawOrbitRing(ctx, vp, ring, 'ally', ringStoreRef.current)
         if (ringAverageAttr(ring) === 'dark') liveDarkRings.push({ ring, owner: 'ally' })
       }
