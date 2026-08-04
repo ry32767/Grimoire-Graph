@@ -14,7 +14,14 @@ import {
   zTextPatch,
   type ComposerState,
 } from './composer'
-import { buildParamFn, detectParams, fitToGraphAdaptive, initialValues } from '../game/exprFit'
+import {
+  buildParamFn,
+  detectParams,
+  fitToGraphAdaptive,
+  initialValues,
+  templateUsesVar,
+} from '../game/exprFit'
+import { polarScale } from '../render/draftpad'
 import { genZShape, parseZShape, patchZShape } from './zshape'
 import { formatPoly, polyFit } from './polyFit'
 import { computeReadout } from './readout'
@@ -345,5 +352,35 @@ describe('係数スライダーの端での取り直し（#67）', () => {
     const p = c.fitParams[0]
     const mid = { ...c, ...setCoeffPatch(c, p.key, (p.min + p.max) / 2) } as ComposerState
     expect(recenterCoeffPatch(mid, p.key)).toBeNull()
+  })
+})
+
+describe('作図台：フィットの分岐と結界の尺度（#67）', () => {
+  it('定数式（y=0 / z=4）は多項式へ落とす（定数へフィットして直線にならない）', () => {
+    expect(templateUsesVar(detectParams('0', 'x')!.template, 'x')).toBe(false)
+    expect(templateUsesVar(detectParams('4', 't')!.template, 't')).toBe(false)
+    // 3点を打てば従来どおり2次多項式が得られる
+    const pts = [
+      { x: 0, y: 0 },
+      { x: 10, y: 5 },
+      { x: 20, y: 0 },
+    ]
+    expect(formatPoly(polyFit(pts, 2)!)).toContain('x^2')
+  })
+
+  it('変数を使う式は「いまの式で合わせる」側に入る', () => {
+    for (const [e, v] of [
+      ['0.03*x^2', 'x'],
+      ['abs(x - 14) - 14', 'x'],
+      ['1/(x - 26)', 'x'],
+      ['5*exp(-((t - 27)/6)^2)', 't'],
+    ] as const) {
+      expect(templateUsesVar(detectParams(e, v)!.template, v)).toBe(true)
+    }
+  })
+
+  it('結界の輪は固定尺度で描く（r を変えると大きさが変わる）', () => {
+    expect(polarScale(9)).toBe(polarScale(6))
+    expect(9 * polarScale(9)).toBeGreaterThan(6 * polarScale(6))
   })
 })

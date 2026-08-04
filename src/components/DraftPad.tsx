@@ -6,7 +6,12 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Vec2 } from '../game/types'
 import { parseExpression } from '../game/functions'
-import { fitToGraphAdaptive, type DetectedParam, type ParamValues } from '../game/exprFit'
+import {
+  fitToGraphAdaptive,
+  templateUsesVar,
+  type DetectedParam,
+  type ParamValues,
+} from '../game/exprFit'
 import {
   type ComposerState,
   applyFitValuesPatch,
@@ -57,8 +62,9 @@ export default function DraftPad({ composer: c, onChange, rDistance, focus, onCl
   const values = onZ ? c.zFitValues : c.fitValues
   const template = onZ ? c.zFitTemplate : c.fitTemplate
   const varName: 'x' | 't' = onZ ? 't' : 'x'
-  // いまの式に係数（数値リテラル）があれば、その係数を点に合わせる。無ければ多項式に落ちる
-  const byExpr = params.length > 0 && template !== ''
+  // いまの式が変数を使っていれば、その係数を点に合わせる。
+  // 定数式（y=0・z=4 など。係数 p0 は検出されるが動かしても直線のまま）は多項式に落とす
+  const byExpr = params.length > 0 && templateUsesVar(template, varName)
   const poly = !byExpr && pts.length >= 2 ? polyFit(pts, deg) : null
   const polyExpr = poly ? formatPoly(poly, varName) : '—'
 

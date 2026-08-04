@@ -75,6 +75,15 @@ export function detectCoeffs(expr: string): { template: string; params: Detected
   return { template: pc.template, params }
 }
 
+/**
+ * テンプレートが変数（x / t）を実際に使っているか（#67）。
+ * `0` や `4` のような定数式は係数（p0）こそ検出されるが動かしても形にならないので、
+ * 作図台の点フィットはこれを見て「いまの式で合わせる」か「多項式で作り直す」かを決める。
+ */
+export function templateUsesVar(template: string, varName: 'x' | 't'): boolean {
+  return new RegExp(`\\b${varName}\\b`).test(template)
+}
+
 /** テンプレート＋係数定義＋値から式文字列を作る（表示・評価用・#52）。 */
 export function renderWithParams(template: string, params: DetectedParam[], values: ParamValues): string {
   if (params.length === 0) return template
