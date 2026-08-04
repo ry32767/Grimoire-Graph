@@ -46,6 +46,7 @@ import {
   type RingPhaseStore,
 } from '../render/board'
 import { seedRingPhases } from '../render/ringPhase'
+import { firstApproachTime, gameTimeAtArcLen } from '../render/effectTiming'
 import { ringAverageAttr } from '../game/orbit'
 import { COLORS } from '../render/theme'
 
@@ -477,6 +478,29 @@ export default function BattleCanvas(props: Props) {
     const tailMs = deathTail
     const realMs = flightMs + tailMs
 
+    /** ゲーム時刻（Σds/v）→ アニメの実時間 ms。 */
+    const msOfGameTime = (t: number): number =>
+      maxTotal > 0 ? Math.max(0, Math.min(flightMs, (t / maxTotal) * flightMs)) : 0
+    /**
+     * 弾 i がその弧長へ届く実時間 ms（#70）。演出の開始時刻を「経過時刻から引ける値」にするための要。
+     * これまでは到達したフレームの現在時刻をラッチしていたため、見返しで時刻を飛ばすと
+     * その時点で進行中だったはずの演出が出せなかった。
+     */
+    const msAtArc = (i: number, arcLen: number): number => {
+      const b = anim.bullets[i]
+      if (!b || b.samples.length === 0) return 0
+      return msOfGameTime(gameTimeAtArcLen(b.samples, timelines[i].tCum, arcLen))
+    }
+    /** 点 pos へ弾が最初に近づく実時間 ms（#70）。どの弾も届かなければ null。 */
+    const msAtApproach = (pos: Vec2): number | null => {
+      let best = Number.POSITIVE_INFINITY
+      for (let i = 0; i < anim.bullets.length; i++) {
+        const t = firstApproachTime(anim.bullets[i].samples, timelines[i].tCum, pos, CLASH_DIST)
+        if (t !== null && t < best) best = t
+      }
+      return Number.isFinite(best) ? msOfGameTime(best) : null
+    }
+
     // 被弾フラッシュ：対象IDごとに「反応を開始した実時刻」を記録し、以後減衰させる（#20）
     const flashStartByTarget: Record<string, number> = {}
     // 衝突火花：clash ごとに「弾がその点へ到達した実時刻」を記録し、その瞬間から弾けさせる（#20）
@@ -514,8 +538,7 @@ export default function BattleCanvas(props: Props) {
     let clock = 0
     let prevNow = start
     let lastSeekToken = playbackRef.current?.seekToken ?? -1
-    // シーク直後の 1 フレームだけ「すでに過ぎた演出」を発火済みとして畳む（巻き戻しでの一斉再生を防ぐ）
-    let preExpire = false
+
     const finish = () => {
       if (finished) return
       finished = true
@@ -523,8 +546,7 @@ export default function BattleCanvas(props: Props) {
       clearTimeout(timer)
       doneRef.current?.()
     }
-    /** 演出のラッチ時刻。preExpire 中は「はるか過去」に落として無音で通過させる。 */
-    const latchAt = (t: number) => (preExpire ? t - 1e6 : t)
+
     const frame = (now: number) => {
       const dt = Math.max(0, now - prevNow)
       prevNow = now
@@ -533,7 +555,6 @@ export default function BattleCanvas(props: Props) {
         if (pb.seekToken !== lastSeekToken) {
           lastSeekToken = pb.seekToken
           clock = pb.seekMs
-          preExpire = true
           for (const k of Object.keys(flashStartByTarget)) delete flashStartByTarget[k]
           for (const k of Object.keys(clashStartByIdx)) delete clashStartByIdx[Number(k)]
           for (const k of Object.keys(dissipateStartByIdx)) delete dissipateStartByIdx[Number(k)]
@@ -583,7 +604,7 @@ export default function BattleCanvas(props: Props) {
         if (!st) return
         for (const im of b.impacts) {
           if (st.arcLen >= im.arcLen && flashStartByTarget[im.id] === undefined) {
-            flashStartByTarget[im.id] = latchAt(elapsed)
+            flashStartByTarget[im.id] = msAtArc(i, im.arcLen)
           }
         }
       })
@@ -591,7 +612,7 @@ export default function BattleCanvas(props: Props) {
       if (e >= 0.55) {
         for (const o of anim.orbits) {
           for (const id of o.hitEnemyIds) {
-            if (flashStartByTarget[id] === undefined) flashStartByTarget[id] = latchAt(elapsed)
+            if (flashStartByTarget[id] === undefined) flashStartByTarget[id] = 0.55 * flightMs
           }
         }
       }
@@ -608,7 +629,7 @@ export default function BattleCanvas(props: Props) {
         if (deathStartById[d.id] !== undefined) continue
         const flashStart = flashStartByTarget[d.id]
         if (flashStart !== undefined) deathStartById[d.id] = flashStart
-        else if (e >= 0.9) deathStartById[d.id] = latchAt(elapsed)
+        else if (e >= 0.9) deathStartById[d.id] = 0.9 * flightMs
       }
       // 消滅が始まった敵は生存スプライトを隠す（消滅アニメへ譲る・#46）
       const hideEnemyIds = new Set<string>(Object.keys(deathStartById))
@@ -676,17 +697,10 @@ export default function BattleCanvas(props: Props) {
         if (o.broken) {
           if (dissipateStartByIdx[oi] === undefined) {
             const cp = o.carves[0]?.pos
-            let trig = false
-            if (cp) {
-              for (const st of states) {
-                if (st && Math.hypot(st.pos.x - cp.x, st.pos.y - cp.y) <= CLASH_DIST) {
-                  trig = true
-                  break
-                }
-              }
-            }
-            if (!trig && e >= 0.4) trig = true // 接触弾が無い（壁等）ときの保険
-            if (trig) dissipateStartByIdx[oi] = latchAt(elapsed)
+            const at = cp ? msAtApproach(cp) : null
+            // 接触弾が無い（壁等）ときは既定時刻へ落とす
+            const start = at ?? 0.4 * flightMs
+            if (elapsed >= start) dissipateStartByIdx[oi] = start
           }
           const dStart = dissipateStartByIdx[oi]
           if (dStart !== undefined) {
@@ -760,7 +774,7 @@ export default function BattleCanvas(props: Props) {
           const cv = b.carves[j]
           if (st.arcLen < cv.arcLen) continue // まだ弾が届いていない
           const key = `${i}-${j}`
-          if (carveStartByKey[key] === undefined) carveStartByKey[key] = latchAt(elapsed)
+          if (carveStartByKey[key] === undefined) carveStartByKey[key] = msAtArc(i, cv.arcLen)
           const cp = (elapsed - carveStartByKey[key]) / CARVE_BURST_MS
           if (cp >= 0 && cp < 1) drawCarveBurst(ctx, cv.pos, cv.r, cv.attr, cp, vp)
         }
@@ -780,12 +794,8 @@ export default function BattleCanvas(props: Props) {
         anim.clashes.forEach((clash, ci) => {
           const pos = clash.pos
           if (clashStartByIdx[ci] === undefined) {
-            for (const st of states) {
-              if (st && Math.hypot(st.pos.x - pos.x, st.pos.y - pos.y) <= CLASH_DIST) {
-                clashStartByIdx[ci] = latchAt(elapsed)
-                break
-              }
-            }
+            const at = msAtApproach(pos)
+            if (at !== null && elapsed >= at) clashStartByIdx[ci] = at
           }
           const start0 = clashStartByIdx[ci]
           if (start0 === undefined) return
@@ -838,7 +848,6 @@ export default function BattleCanvas(props: Props) {
         drawDamageNumber(ctx, sp.x, py, text, popupColor(p.kind), size, alpha, p.kind === 'heal')
       }
 
-      preExpire = false
       // 見返しモードは終端でも回し続ける（スライダーで前後に動かせるように）
       if (replayRef.current || elapsed < realMs) raf = requestAnimationFrame(frame)
       else finish()

@@ -173,7 +173,7 @@ src/
 │  ├ party.ts               自陣営 3 人
 │  └ story.ts               世界観テキスト
 ├ components/               React UI（BattleCanvas/FunctionPanel/Hud/Codex/Guide/screens/composer）
-├ render/                   draftpad.ts（作図台の方眼紙。軌道/z は距離軸・結界は極座標・#67/#69）・ringPhase.ts（結界リングの粒の位相＝経過時刻の関数・#69）・board.ts（盤面プリミティブ＝方眼/z場の同心円/射線/結界/闇幕・DCプロトタイプv3）・draw.ts（スプライトとエフェクト）・theme.ts（配色）・species.ts（種族→パレット/装飾の純粋関数・05c §0/§6・#46）・textures.ts（壁タイル）
+├ render/                   draftpad.ts（作図台の方眼紙。軌道/z は距離軸・結界は極座標・#67/#69）・ringPhase.ts（結界リングの粒の位相＝経過時刻の関数・#69）・effectTiming.ts（演出の発生時刻を弧長/衝突時刻から引く・#70）・board.ts（盤面プリミティブ＝方眼/z場の同心円/射線/結界/闇幕・DCプロトタイプv3）・draw.ts（スプライトとエフェクト）・theme.ts（配色）・species.ts（種族→パレット/装飾の純粋関数・05c §0/§6・#46）・textures.ts（壁タイル）
 ├ audio/sound.ts            Web Audio 合成の効果音・BGM
 └ styles/                   CSS・フォント
 ```
@@ -231,8 +231,8 @@ src/
 `App.tsx` が直近 1 ターンぶんの `ReplayEntry`（`REPLAY_KEEP`・#69）（`{turn, animation, allies, enemies, obstacles, rField}`＝
 **解決前の盤面ごと**）を持つ。見返し中は `BattleCanvas` にそのスナップショットと
 `playback: {paused, seekMs, seekToken, rate}` を渡し、`replay` を立てて終端でも `onAnimationDone` を呼ばせない。
-`seekToken` が変わったフレームだけ時計が飛び、そのとき既に過ぎている演出は「はるか過去」に畳んで無音で通過させる
-（巻き戻しで全エフェクトが一斉に再生されるのを防ぐ）。
+`seekToken` が変わったフレームだけ時計が飛ぶ。演出は**発生時刻**を先に求めてから進行度を出すので
+（`render/effectTiming.ts`・#70）、どの位置へ飛んでも「その時刻に進行中の演出」がそのまま描かれる。
 
 > **廃止したコンポーネント**：`Hud.tsx`（味方ステータス窓／敵陣営ウィンドウ）・
 > `CommandWindow.tsx`（コマンド窓）・`BattleLog.tsx`（戦闘ログパネル）は
