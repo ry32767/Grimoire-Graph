@@ -6,6 +6,7 @@
 // 描くだけで、この層はロジックを一切持たない（かつては迎撃順・ダメージ式・相殺距離を
 // 独自に書き直していて、壁を貫く結界・因果の逆転した霧散が出ていた）。
 // 演出の時刻もエンジンが返すゲーム秒（flightTimes / clashes[].t / breakTime）をそのまま使う。
+// 描き方も本編と共有する：弾の太さは trailWidthPx、結界の帯と粒は drawOrbitRing（#60/#74）。
 import type {
   ActiveOrbit,
   Ally,
@@ -24,6 +25,8 @@ import type {
 import { FIELD, GAME } from '../data/constants'
 import { toScreen, type Viewport } from '../game/coords'
 import { planEnemyShots } from '../game/enemyAI'
+import { predictAllyShots } from '../game/enemyPlanning/foresight'
+import { ringAverageAttr } from '../game/orbit'
 import { resolveTurn, type ResolveResult } from '../game/turn'
 import { flightTimes, timeToArc } from '../game/physics'
 import { attributeOf, zfieldAt } from '../game/attribute'
@@ -34,10 +37,17 @@ import {
   drawMisfire,
   drawOrbitDissipation,
   drawDamageNumber,
-  strokeZPath,
-  drawParticle,
 } from './draw'
-import { trailWidthPx } from './board'
+import {
+  drawDarkVeil,
+  drawLightAura,
+  drawOrbitRing,
+  trailWidthPx,
+  type DarkRing,
+  type LightRing,
+  type RingPhaseStore,
+} from './board'
+import { ringPhaseKey } from './ringPhase'
 import { TOKENS } from './palette'
 
 const TAU = Math.PI * 2
@@ -52,6 +62,9 @@ const FIRE_AT = 0.45
 const DISSIPATE_SEC = 0.76
 
 type Side = 'A' | 'B'
+
+/** 陣営 → 本編の役割名（A＝味方側の結界／B＝敵側の結界）。粒の位相キーもこれで揃える。 */
+const ringRole = (side: Side): 'ally' | 'enemy' => (side === 'A' ? 'ally' : 'enemy')
 
 /** 画面に描く1発（味方＝A側／敵＝B側どちらも同じ形で扱う）。 */
 interface Bolt {
@@ -100,8 +113,29 @@ interface Bout {
   /** 決着した画面秒 */
   ko?: number
   koSide?: Side
-  /** 幕の終わりに反映する状態 */
-  after: { hpA: number; hpB: number; obstacles: Obstacle[]; orbits: ActiveOrbit[] }
+  /** 幕の終わりに反映する状態（次の幕の計画はこれを盤面として使う） */
+  after: {
+    hpA: number
+    hpB: number
+    obstacles: Obstacle[]
+    orbits: ActiveOrbit[]
+    /** この幕で B が撃った手（次の幕で A 側の読みに渡す・#75） */
+    enemyCasts: AllyCast[]
+  }
+}
+
+/**
+ * 計画に使う盤面のスナップショット（幕の開始時点）。
+ * 先取り計画（幕の尻尾）と本計画で**同じ状態**を見せるために明示的に渡す
+ * （以前は先取りだけが「削れる前の壁・古い結界・古い HP」で計画していて、A 側だけ読みが古かった）。
+ */
+interface Board {
+  obstacles: Obstacle[]
+  orbits: ActiveOrbit[]
+  hpA: number
+  hpB: number
+  /** 一つ前の幕で B が撃った手（A 側の読み・#75） */
+  lastEnemyCasts: AllyCast[]
 }
 
 /** 1 フレームに 1 手だけ進めるための計画ジョブ。 */
@@ -113,6 +147,8 @@ interface PlanJob {
 export interface EndrollState {
   lvA: number
   lvB: number
+  /** 結界の粒の位相（本編と共有：board.drawOrbitRing がフレームごとに進める） */
+  ringPhases: RingPhaseStore
   hpA: number
   hpB: number
   bout: number
@@ -122,10 +158,12 @@ export interface EndrollState {
   round: Bout | null
   t0: number
   banner: 'lvup' | 'reset' | null
-  /** 次の幕を先取りで計画するためのキュー */
-  pre: { jobs: PlanJob[]; i: number; casts: AllyCast[]; roles: EnemyRole[] } | null
-  /** 一つ前の幕で A 側が撃った手（#75：B 側の読みに渡す。A 側の読みは planOne では持たない） */
+  /** 次の幕を先取りで計画するためのキュー（board＝その幕の開始時点の盤面） */
+  pre: { jobs: PlanJob[]; i: number; casts: AllyCast[]; roles: EnemyRole[]; board: Board } | null
+  /** 一つ前の幕で A 側が撃った手（#75：B 側の読みに渡す） */
   lastCasts: AllyCast[]
+  /** 一つ前の幕で B 側が撃った手（#75：A 側の読みに渡す。両陣営で読みの有無を揃える） */
+  lastEnemyCasts: AllyCast[]
 }
 
 const rnd = () => Math.random()
@@ -220,7 +258,7 @@ const FAMILY_TABLE: { A: EnemyFamily[]; B: EnemyFamily[] }[] = [
 ]
 
 /** LVL ごとの個体像。本番の敵と同じ形で組み、実際の敵AIへそのまま渡す。 */
-function makeMage(s: EndrollState, side: Side, bout: number): Enemy {
+function makeMage(s: EndrollState, side: Side, bout: number, board: Board): Enemy {
   const lv = side === 'A' ? s.lvA : s.lvB
   const fam = FAMILY_TABLE[Math.min(4, Math.max(0, lv - 1))]
   const mag = (2.7 + lv * 0.36) * (0.92 + rnd() * 0.18)
@@ -232,7 +270,7 @@ function makeMage(s: EndrollState, side: Side, bout: number): Enemy {
     id: side === 'A' ? 'mA' : 'mB',
     name: side === 'A' ? 'LIGHT MAGE' : 'DARK MAGE',
     pos: side === 'A' ? POS_A : POS_B,
-    hp: side === 'A' ? s.hpA : s.hpB,
+    hp: side === 'A' ? board.hpA : board.hpB,
     maxHp: START_HP,
     element: el,
     hitboxRadius: GAME.enemyHitbox,
@@ -276,21 +314,35 @@ function makeJobs(s: EndrollState, bout: number): PlanJob[] {
 /**
  * A 側の一手だけ計画する（本番の敵AIを castCount:1 で呼び、結果を「味方の発射」として使う）。
  * false を返したら同じジョブを次フレームへ持ち越す。
+ *
+ * **B 側（resolveTurn 内の planEnemyShots）と同じ材料をすべて渡す**のが要点：
+ * 見えている相手の結界・自前の結界（#71）・前の幕の読み（#75）。片方だけ欠けると
+ * 「同じ AI 同士の撃ち合い」に見えて実は一方だけが鈍い、という不公平な絵になる。
  */
 function planOne(
   s: EndrollState,
   job: PlanJob,
   bout: number,
   bucket: { casts: AllyCast[] },
+  board: Board,
 ): boolean {
-  const me = makeMage(s, 'A', bout)
-  const foe = makeMage(s, 'B', bout)
+  const me = makeMage(s, 'A', bout, board)
+  const foe = makeMage(s, 'B', bout, board)
+  const foeAlly = asAlly(foe)
   // 敵AIから見える結界＝相手（B側）が張っている持続結界
-  const foeRings = s.orbits.filter((o) => o.owner === 'enemy').map((o) => o.ring)
+  const foeRings = board.orbits.filter((o) => o.owner === 'enemy').map((o) => o.ring)
+  // 自前の持続結界（#71：重ね張りを避ける／上限まで張ったら張り直して速度を回復する判断に使う）。
+  // B 側は resolveTurn が同じものを渡している＝渡さないと A 側だけ AI が鈍る
+  const ownRings = board.orbits.filter((o) => o.owner === 'player').map((o) => o.ring)
+  // 読み（#75）：B が前の幕と同じ手で撃ってくると仮定した予測弾。B 側は resolveTurn が
+  // lastAllyCasts から同じものを作っている
+  const predicted = predictAllyShots(board.lastEnemyCasts, [foeAlly])
   const one: Enemy = { ...me, role: job.role, castCount: 1, patternPool: [job.role] }
   let traj: Trajectory | undefined
   try {
-    traj = planEnemyShots(one, [asAlly(foe)], s.obstacles, foeRings, [], FIELD.rField, 0)[0]?.trajectory
+    traj = planEnemyShots(one, [foeAlly], board.obstacles, foeRings, [], FIELD.rField, 0, ownRings, {
+      predicted,
+    })[0]?.trajectory
   } catch {
     traj = undefined
   }
@@ -356,19 +408,32 @@ function boltOf(
   }
 }
 
+/** いまの状態から計画用の盤面を作る（先取りできなかったぶんの計画に使う）。 */
+function boardOf(s: EndrollState): Board {
+  return {
+    obstacles: s.obstacles,
+    orbits: s.orbits,
+    hpA: s.hpA,
+    hpB: s.hpB,
+    lastEnemyCasts: s.lastEnemyCasts,
+  }
+}
+
 /** 幕を組み立てる：本番の resolveTurn を1回呼び、返ってきた結果を描画データへ読み替える。 */
 function startBout(s: EndrollState, now: number): void {
   s.bout++
-  const bucket = s.pre ?? { casts: [], jobs: [], i: 0, roles: [] }
+  // 先取りは「その幕の開始時点の盤面」で計画済み。補うぶんも同じ盤面で計画する
+  const board = s.pre?.board ?? boardOf(s)
+  const bucket = s.pre ?? { casts: [], jobs: [], i: 0, roles: [], board }
   // 先取りが間に合っていない手はここで補う
   const jobs = s.pre?.jobs ?? makeJobs(s, s.bout)
   for (let i = s.pre?.i ?? 0, guard = 0; i < jobs.length && guard < 24; guard++) {
-    if (planOne(s, jobs[i], s.bout, bucket)) i++
+    if (planOne(s, jobs[i], s.bout, bucket, board)) i++
   }
   s.pre = null
 
-  const mageA = makeMage(s, 'A', s.bout)
-  const mageB = makeMage(s, 'B', s.bout)
+  const mageA = makeMage(s, 'A', s.bout, board)
+  const mageB = makeMage(s, 'B', s.bout, board)
   const allyA: Ally = asAlly(mageA)
   let res: ResolveResult
   try {
@@ -377,9 +442,9 @@ function startBout(s: EndrollState, now: number): void {
       casts: bucket.casts,
       enemies: [mageB],
       castingEnemyIds: [mageB.id],
-      obstacles: s.obstacles,
+      obstacles: board.obstacles,
       mechanics: { obstacles: true, enemyFire: true },
-      activeOrbits: s.orbits,
+      activeOrbits: board.orbits,
       lastAllyCasts: s.lastCasts, // B 側の読み（#75）：A が前の幕と同じ手を撃つと仮定させる
     })
   } catch {
@@ -389,6 +454,12 @@ function startBout(s: EndrollState, now: number): void {
   }
 
   s.lastCasts = bucket.casts // 次の幕で B 側が読む「A の前の手」（#75）
+  // 次の幕で A 側が読む「B の前の手」（#75）。結界（周回）は resolveTurn 側と同じく読みから外れる
+  const enemyCasts: AllyCast[] = res.enemyShots.map((sh) => ({
+    allyId: mageB.id,
+    trajectory: sh.traj,
+    initialSpeed: mageB.castInitialSpeed,
+  }))
 
   // --- 弾（A=味方の発射型／B=敵弾）---
   const bolts: Bolt[] = []
@@ -430,6 +501,10 @@ function startBout(s: EndrollState, now: number): void {
       fresh: false,
     })
   }
+
+  // 粒の位相は幕をまたいで持ち越す（持続結界は流れが途切れない）。消えた結界のキーは捨てる
+  const live = new Set(rings.map((r) => ringPhaseKey(r.ring, ringRole(r.side))))
+  for (const key in s.ringPhases) if (!live.has(key)) delete s.ringPhases[key]
 
   // --- 暴発の爆発 ---
   const blasts: Bout['blasts'] = bolts
@@ -475,14 +550,15 @@ function startBout(s: EndrollState, now: number): void {
     clashes: res.clashes.filter((c) => Number.isFinite(c.t)),
     blasts,
     damages,
-    obstacles: s.obstacles,
+    obstacles: board.obstacles,
     k,
     duration: Math.min(14, last + 1.6),
     after: {
-      hpA: res.allies[0]?.hp ?? s.hpA,
-      hpB: res.enemies[0]?.hp ?? s.hpB,
+      hpA: res.allies[0]?.hp ?? board.hpA,
+      hpB: res.enemies[0]?.hp ?? board.hpB,
       obstacles: res.obstacles,
       orbits: res.orbits,
+      enemyCasts,
     },
   }
   s.t0 = now
@@ -493,6 +569,7 @@ export function createEndroll(now: number): EndrollState {
   const s: EndrollState = {
     lvA: 1,
     lvB: 1,
+    ringPhases: {},
     hpA: START_HP,
     hpB: START_HP,
     bout: 0,
@@ -503,6 +580,7 @@ export function createEndroll(now: number): EndrollState {
     banner: null,
     pre: null,
     lastCasts: [],
+    lastEnemyCasts: [],
   }
   s.obstacles = makeObstacles(1)
   startBout(s, now)
@@ -538,19 +616,30 @@ function tick(s: EndrollState, now: number): number {
     s.banner = lv >= MAX_LEVEL ? 'reset' : 'lvup'
     s.pre = null
   }
-  // 幕の尻尾で次の幕の計画を 1 フレーム 1 手ずつ進めておく（切り替わりで描画が止まらない）
+  // 幕の尻尾で次の幕の計画を 1 フレーム 1 手ずつ進めておく（切り替わりで描画が止まらない）。
+  // 盤面は**この幕を解決し終えた後の状態**（R.after）＝次の幕の開始時点。
+  // B 側は resolveTurn の中で最新の盤面を見るので、ここを今の s のままにすると A 側だけが
+  // 「削れる前の壁・古い結界・古い HP」で計画することになる（不公平な非対称）。
   if (lt > R.duration - 2.4 && R.ko === undefined) {
-    if (!s.pre) s.pre = { jobs: makeJobs(s, s.bout + 1), i: 0, casts: [], roles: [] }
+    const board: Board = {
+      obstacles: R.after.obstacles,
+      orbits: R.after.orbits,
+      hpA: R.after.hpA,
+      hpB: R.after.hpB,
+      lastEnemyCasts: R.after.enemyCasts,
+    }
+    if (!s.pre) s.pre = { jobs: makeJobs(s, s.bout + 1), i: 0, casts: [], roles: [], board }
     else if (s.pre.i < s.pre.jobs.length) {
-      if (planOne(s, s.pre.jobs[s.pre.i], s.bout + 1, s.pre)) s.pre.i++
+      if (planOne(s, s.pre.jobs[s.pre.i], s.bout + 1, s.pre, s.pre.board)) s.pre.i++
     }
   }
   if (lt >= R.duration) {
-    // 幕の終わりにエンジンの最終状態を反映する（削れた壁・持続結界・HP）
+    // 幕の終わりにエンジンの最終状態を反映する（削れた壁・持続結界・HP・読み）
     s.obstacles = R.after.obstacles
     s.orbits = R.after.orbits
     s.hpA = R.after.hpA
     s.hpB = R.after.hpB
+    s.lastEnemyCasts = R.after.enemyCasts
     if (R.ko !== undefined) {
       const lv = R.koSide === 'A' ? s.lvA : s.lvB
       if (lv >= MAX_LEVEL) {
@@ -567,6 +656,9 @@ function tick(s: EndrollState, now: number): number {
       }
       s.obstacles = makeObstacles(Math.max(s.lvA, s.lvB))
       s.orbits = [] // 決着で場の結界は消える
+      // 決着＝仕切り直しなので、両陣営の「前の手の読み」も持ち越さない（#75）
+      s.lastCasts = []
+      s.lastEnemyCasts = []
       s.banner = null
       s.pre = null
     }
@@ -632,20 +724,15 @@ export function drawEndroll(
         continue
       }
     }
+    // 帯も粒も本編と同じ drawOrbitRing に任せる（#60/#74）。粒は**その場のリング速度**で流れるので
+    // |z|<zRef の区間で加速し、|z|>zRef の区間で詰まる。かつてはここで
+    // 「一定周期（3.4秒で一周）・向きは陣営で反転」という自前の回転を描いていて、
+    // 結界が加速しない／闇側だけ逆回りに見える、という本編との食い違いが出ていた。
     ctx.save()
     if (rec.fresh) ctx.globalAlpha = Math.min(1, Math.max(0, (lt - 0.45) / 0.6))
     ctx.globalAlpha *= 0.34
-    strokeZPath(ctx, rec.ring, vp)
+    drawOrbitRing(ctx, vp, rec.ring, ringRole(rec.side), s.ringPhases, true)
     ctx.restore()
-    for (let n = 0; n < 12; n++) {
-      const dir = rec.side === 'A' ? 1 : -1
-      // 逆回り（dir=-1）では index が大きく負になる。JS の % は負を返すので必ず正へ畳む
-      // （従来は `+ ring.length` を1回足すだけで、now が大きいと負のまま＝**闇側だけ粒が出なかった**）
-      const raw = Math.floor((n / 12 + (now / 3400) * dir) * rec.ring.length)
-      const idx = ((raw % rec.ring.length) + rec.ring.length) % rec.ring.length
-      const pt = rec.ring[idx]
-      if (pt) drawParticle(ctx, pt.pos, col(attributeOf(pt.z), 1), vp, phase + n, 0.5)
-    }
   }
 
   // 壁（弾が届いた削りだけ見せる）
@@ -661,6 +748,21 @@ export function drawEndroll(
     })
     drawObstacles(ctx, view, vp)
   }
+
+  // 結界の効果（#39/#61/#73）：光＝内側を毎ターン回復させる癒やしの場、闇＝内側を隠す幕。
+  // 効果を及ぼすのは「霧散していない結界」だけ＝エンジンの判定（turn.ts §5.5）と同じ条件で選ぶ。
+  // 属性の決め方（ringAverageAttr）も描き方（drawLightAura/drawDarkVeil）も本編と同じ実装を呼ぶ。
+  const liveLight: LightRing[] = []
+  const liveDark: DarkRing[] = []
+  for (const rec of R.rings) {
+    if (rec.breakT !== null && lt >= at(rec.breakT)) continue
+    const avg = ringAverageAttr(rec.ring)
+    if (avg === 'light') liveLight.push({ ring: rec.ring, owner: ringRole(rec.side) })
+    else if (avg === 'dark') liveDark.push({ ring: rec.ring, owner: ringRole(rec.side) })
+  }
+  // 背景なので見出し（「癒やしの輪 — 毎ターン回復」等）は伏せる
+  drawLightAura(ctx, vp, liveLight, phase, true)
+  drawDarkVeil(ctx, vp, liveDark, phase, true)
 
   // 弾
   for (const b of R.bolts) {

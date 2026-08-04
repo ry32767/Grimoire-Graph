@@ -509,6 +509,8 @@ export function drawDarkVeil(
   vp: Viewport,
   rings: DarkRing[],
   phase: number,
+  /** true なら見出しを伏せる（エンドロールの背景など、読ませる相手が居ない場面） */
+  quiet = false,
 ): void {
   if (rings.length === 0) return
   const path = (r: DarkRing) => {
@@ -591,7 +593,7 @@ export function drawDarkVeil(
       const b = box(rings[j])
       const mx = (a.cx + b.cx) / 2
       const my = (a.cy + b.cy) / 2
-      if (Math.hypot(a.cx - b.cx, a.cy - b.cy) < (a.x1 - a.x0) / 2 + (b.x1 - b.x0) / 2) {
+      if (!quiet && Math.hypot(a.cx - b.cx, a.cy - b.cy) < (a.x1 - a.x0) / 2 + (b.x1 - b.x0) / 2) {
         ctx.save()
         ctx.textAlign = 'center'
         ctx.font = FONT(11, true)
@@ -615,14 +617,16 @@ export function drawDarkVeil(
     ctx.lineDashOffset = -phase * 6
     ctx.stroke()
     ctx.setLineDash([])
-    ctx.textAlign = 'center'
-    ctx.font = FONT(10, true)
-    const lb = r.owner === 'enemy' ? '敵の闇幕' : '闇幕 — 相手から見えにくい'
-    ctx.strokeStyle = '#04030a'
-    ctx.lineWidth = 3.5
-    ctx.strokeText(lb, b.cx, b.y0 - 6)
-    ctx.fillStyle = 'rgba(195,182,255,.9)'
-    ctx.fillText(lb, b.cx, b.y0 - 6)
+    if (!quiet) {
+      ctx.textAlign = 'center'
+      ctx.font = FONT(10, true)
+      const lb = r.owner === 'enemy' ? '敵の闇幕' : '闇幕 — 相手から見えにくい'
+      ctx.strokeStyle = '#04030a'
+      ctx.lineWidth = 3.5
+      ctx.strokeText(lb, b.cx, b.y0 - 6)
+      ctx.fillStyle = 'rgba(195,182,255,.9)'
+      ctx.fillText(lb, b.cx, b.y0 - 6)
+    }
     ctx.restore()
   }
 }
@@ -991,6 +995,8 @@ export function drawLightAura(
   vp: Viewport,
   rings: LightRing[],
   phase: number,
+  /** true なら見出しを伏せる（エンドロールの背景など、読ませる相手が居ない場面） */
+  quiet = false,
 ): void {
   if (rings.length === 0) return
   const path = (r: LightRing) => {
@@ -1056,14 +1062,16 @@ export function drawLightAura(
     ctx.lineDashOffset = phase * 6
     ctx.stroke()
     ctx.setLineDash([])
-    ctx.textAlign = 'center'
-    ctx.font = FONT(10, true)
-    const lb = r.owner === 'enemy' ? '敵の癒やしの輪' : '癒やしの輪 — 毎ターン回復'
-    ctx.strokeStyle = '#120c04'
-    ctx.lineWidth = 3.5
-    ctx.strokeText(lb, b.cx, b.y0 - 6)
-    ctx.fillStyle = '#ffd98a'
-    ctx.fillText(lb, b.cx, b.y0 - 6)
+    if (!quiet) {
+      ctx.textAlign = 'center'
+      ctx.font = FONT(10, true)
+      const lb = r.owner === 'enemy' ? '敵の癒やしの輪' : '癒やしの輪 — 毎ターン回復'
+      ctx.strokeStyle = '#120c04'
+      ctx.lineWidth = 3.5
+      ctx.strokeText(lb, b.cx, b.y0 - 6)
+      ctx.fillStyle = '#ffd98a'
+      ctx.fillText(lb, b.cx, b.y0 - 6)
+    }
     ctx.restore()
   }
 
@@ -1083,7 +1091,7 @@ export function drawLightAura(
       ctx.restore()
       const a = box(rings[i])
       const b = box(rings[j])
-      if (Math.hypot(a.cx - b.cx, a.cy - b.cy) < (a.x1 - a.x0) / 2 + (b.x1 - b.x0) / 2) {
+      if (!quiet && Math.hypot(a.cx - b.cx, a.cy - b.cy) < (a.x1 - a.x0) / 2 + (b.x1 - b.x0) / 2) {
         ctx.save()
         ctx.textAlign = 'center'
         ctx.font = FONT(11, true)
