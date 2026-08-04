@@ -284,7 +284,8 @@ export default function App() {
   const [stageLabel, setStageLabel] = useState('')
   // ===== 詠唱コンソール（y/z 別入力・DC プロトタイプ v3）=====
   const [consoleFocus, setConsoleFocus] = useState<ConsoleFocus>('y')
-  const [padOpen, setPadOpen] = useState(false)
+  // 記号盤は既定で開く（プロトタイプ v3 の padOpen:true）
+  const [padOpen, setPadOpen] = useState(true)
   const [draftOpen, setDraftOpen] = useState(false)
   const [solving, setSolving] = useState(false)
   // ===== ターン結果パネル =====
@@ -1334,11 +1335,12 @@ export default function App() {
                   enemies={battle.enemies}
                   obstacles={battle.obstacles}
                   rField={battle.rField}
-                  activeAllyId={showAimPreview ? activeAllyId : null}
+                  activeAllyId={activeAllyId}
                   playerPaths={showAimPreview ? playerPaths : undefined}
                   misfirePoints={showAimPreview ? misfirePoints : undefined}
                   zField={showAimPreview ? activeZField ?? undefined : undefined}
-                  showZField={showAimPreview}
+                  showZField
+                  zOfT={activeZAt}
                   standingOrbits={composing ? standingOrbits : undefined}
                   ghostPaths={composing ? ghostPaths : undefined}
                   ghostMisfires={composing ? ghostMisfires : undefined}
@@ -1359,7 +1361,7 @@ export default function App() {
                   onFieldClick={showAimPreview && fitPickActive ? onFieldClick : undefined}
                   pickMode={showAimPreview && fitPickActive}
                   onAim={showAimPreview && !fitPickActive && activeComposer?.mode === 'rotate' ? aimAt : undefined}
-                  aimAngle={showAimPreview && activeComposer?.mode === 'rotate' ? activeComposer.angle : undefined}
+                  aimAngle={activeComposer?.mode === 'rotate' ? activeComposer.angle : undefined}
                   aimEnemyId={activeReadout?.ray.enemyId ?? null}
                 />
               )}
@@ -1463,7 +1465,6 @@ export default function App() {
           {composing && activeComposer && activeReadout ? (
             <>
               <FunctionPanel
-                allyName={battle.allies.find((a) => a.id === activeAllyId)?.name ?? ''}
                 composer={activeComposer}
                 onChange={onChange}
                 readout={activeReadout}
@@ -1474,21 +1475,21 @@ export default function App() {
                 draftOpen={draftOpen}
                 onToggleDraft={() => setDraftOpen((o) => !o)}
                 padOpen={padOpen}
-                fitPickActive={fitPickActive}
-                fitPointCount={fitPoints.length}
-                onToggleFitPick={toggleFitPick}
-                onRunFit={runFit}
-                onClearFitPoints={clearFit}
               />
               <div className="fire-col">
                 <div className="fire-tools">
                   <button type="button" className="btn small" onClick={() => setPadOpen((o) => !o)}>
                     記号盤 {padOpen ? '▾' : '▸'}
                   </button>
-                  <button type="button" className="btn small" aria-label="手引き" onClick={() => setGuideOpen(true)}>
+                  <button
+                    type="button"
+                    className="btn small tool-help"
+                    aria-label="手引き"
+                    onClick={() => setGuideOpen(true)}
+                  >
                     ?
                   </button>
-                  <button type="button" className="btn small" onClick={() => setCodexOpen(true)}>
+                  <button type="button" className="btn small tool-codex" onClick={() => setCodexOpen(true)}>
                     図鑑
                   </button>
                 </div>
@@ -1534,6 +1535,17 @@ export default function App() {
               rDistance={activeReadout.ray.d}
               focus={consoleFocus}
               onClose={() => setDraftOpen(false)}
+              boardPick={
+                activeComposer.mode === 'rotate' && consoleFocus === 'y'
+                  ? {
+                      active: fitPickActive,
+                      count: fitPoints.length,
+                      onToggle: toggleFitPick,
+                      onRun: runFit,
+                      onClear: clearFit,
+                    }
+                  : undefined
+              }
             />
           </div>
         </div>

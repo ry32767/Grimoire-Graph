@@ -3,7 +3,18 @@
 import { describe, it, expect } from 'vitest'
 import type { Ally, Enemy, Obstacle } from '../game/types'
 import { FIELD } from '../data/constants'
-import { buildZAt, buildZField, yTextPatch, zTextPatch, type ComposerState } from './composer'
+import {
+  applyFitValuesPatch,
+  buildZAt,
+  buildZField,
+  recenterCoeffPatch,
+  setCoeffPatch,
+  yTextOf,
+  yTextPatch,
+  zTextPatch,
+  type ComposerState,
+} from './composer'
+import { buildParamFn, detectParams, fitToGraphAdaptive, initialValues } from '../game/exprFit'
 import { genZShape, parseZShape, patchZShape } from './zshape'
 import { formatPoly, polyFit } from './polyFit'
 import { computeReadout } from './readout'
@@ -260,5 +271,79 @@ describe('読み出しストリップの出し分け', () => {
     expect(computeReadout({ ally, composer: broken, ...ctx }).tone).toBe('error')
     const ok = makeComposer('0', '0')
     expect(computeReadout({ ally, composer: ok, ...ctx, impaired: true }).title).toContain('ひるみ')
+  })
+})
+
+describe('作図台：いまの式の係数を点に合わせる（#67）', () => {
+  it('結界（r=）へ多項式を入れるとき、変数が x のままだと式が壊れる（回帰）', () => {
+    const poly = formatPoly([1, -2, 0.05]) // x の多項式
+    const broken = yTextPatch(yTextOf(poly, 'polar'))
+    expect(broken.freeError).toBeTruthy() // r=f(θ) の変数は t なので読めない
+    const ok = yTextPatch(yTextOf(formatPoly([1, -2, 0.05], 't'), 'polar'))
+    expect(ok.freeError).toBeNull()
+    expect(ok.mode).toBe('polar')
+  })
+
+  it('方眼紙の点へ、いまの式の係数だけを合わせる（形は変えない）', () => {
+    const spec = detectParams('3*sin(0.2*x)', 'x')!
+    const samples = [0, 4, 8, 12, 16, 20].map((u) => ({ u, v: 7 * Math.sin(0.35 * u) }))
+    const fit = fitToGraphAdaptive(spec, initialValues(spec), samples)
+    const g = buildParamFn({ ...spec, params: fit.params }, fit.values)!
+    for (const s of samples) expect(g(s.u)).toBeCloseTo(s.v, 1)
+  })
+
+  it('定数式（z=4）も点の高さへ合わせられる（g(0) を引かない）', () => {
+    const spec = detectParams('4', 't')!
+    const fit = fitToGraphAdaptive(spec, initialValues(spec), [
+      { u: 10, v: 7 },
+      { u: 20, v: 7 },
+    ])
+    const g = buildParamFn({ ...spec, params: fit.params }, fit.values)!
+    expect(g(15)).toBeCloseTo(7, 3)
+  })
+
+  it('答えがレンジの外でも、スライダーの範囲を広げながら届く', () => {
+    const spec = detectParams('1*x', 'x')! // 初期レンジは -3〜5 程度
+    const fit = fitToGraphAdaptive(spec, initialValues(spec), [
+      { u: 4, v: 48 },
+      { u: 8, v: 96 },
+    ])
+    expect(fit.values.p0).toBeCloseTo(12, 1)
+    expect(fit.params[0].max).toBeGreaterThan(12)
+  })
+
+  it('合わせた結果は式を上書きする（元の式に足さない）', () => {
+    const c = makeComposer('3*sin(0.2*x)', '0')
+    const fit = fitToGraphAdaptive(
+      { template: c.fitTemplate, params: c.fitParams, varName: 'x' },
+      c.fitValues,
+      [
+        { u: 4, v: 3 },
+        { u: 8, v: -3 },
+      ],
+    )
+    const patch = applyFitValuesPatch(c, fit.params, fit.values)
+    expect(patch.yText).not.toContain('3*sin(0.2*x)3')
+    expect(yTextPatch(patch.yText!).freeError).toBeNull()
+    expect((patch.yText!.match(/sin/g) ?? []).length).toBe(1)
+  })
+})
+
+describe('係数スライダーの端での取り直し（#67）', () => {
+  it('端に張り付いた係数だけレンジを取り直し、つまみが中央へ戻る', () => {
+    const c = makeComposer('0.03*x^2', '0')
+    const p = c.fitParams[0]
+    const moved = { ...c, ...setCoeffPatch(c, p.key, p.max) } as ComposerState
+    const patch = recenterCoeffPatch(moved, p.key)!
+    const next = patch.fitParams![0]
+    expect(next.max).toBeGreaterThan(p.max)
+    expect((next.min + next.max) / 2).toBeCloseTo(p.max, 6)
+  })
+
+  it('端でなければ取り直さない（ドラッグ中に暴走しない）', () => {
+    const c = makeComposer('0.03*x^2', '0')
+    const p = c.fitParams[0]
+    const mid = { ...c, ...setCoeffPatch(c, p.key, (p.min + p.max) / 2) } as ComposerState
+    expect(recenterCoeffPatch(mid, p.key)).toBeNull()
   })
 })

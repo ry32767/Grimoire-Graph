@@ -374,13 +374,7 @@ describe('部屋の囲い（回り込み対策）', () => {
     expect(s.obstacles.some((o) => isSolidAt(o, { x, y: 0 }))).toBe(true)
     expect(s.obstacles.some((o) => isSolidAt(o, { x: -x, y: 0 }))).toBe(true)
   })
-
-  it('囲い壁は unbreakable（削って部屋の外へ抜けられない）', () => {
-    const s2 = STAGES[1]
-    const seal = s2.obstacles.find((o) => isSolidAt(o, { x: (s2.rField ?? FIELD.rField) - 3, y: 0 }))
-    expect(seal).toBeDefined()
-    expect(seal!.kind).toBe('unbreakable')
-  })
+  // ※「囲い壁が unbreakable」は冒頭の全ステージ横断テストで固定済み（ここでは重複させない）
 })
 
 describe('図鑑（05c）との整合', () => {

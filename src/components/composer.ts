@@ -17,8 +17,11 @@ import {
   renderExpr,
   renderWithParams,
   paramDefaults,
+  atRangeEdge,
+  recenterParam,
   type DetectedParam,
   type ParamSpec,
+  type ParamValues,
 } from '../game/exprFit'
 import { simulateFlight } from '../game/physics'
 import { detectMisfire } from '../game/misfire'
@@ -161,6 +164,77 @@ export function setCoeffPatch(c: ComposerState, key: string, value: number): Par
     yText: yTextOf(expr, c.mode),
     useFree: true,
     freeError: null,
+  }
+}
+
+/**
+ * スライダーを離した時点で端に張り付いている係数のレンジを、その値の中心へ取り直すパッチ（#67）。
+ * つまみが真ん中に戻り、続けて同じ方向へもっと大きい（小さい）値まで動かせる。
+ * ドラッグ中（値の変化ごと）に呼ぶと際限なく走るので、必ず操作の終わりに呼ぶこと。
+ * 取り直しが要らなければ null。
+ */
+export function recenterCoeffPatch(c: ComposerState, key: string): Partial<ComposerState> | null {
+  const params = recenterAll(c.fitParams, c.fitValues, key)
+  return params ? { fitParams: params } : null
+}
+
+/** z 係数スライダー版の recenterCoeffPatch（#67）。 */
+export function recenterZCoeffPatch(c: ComposerState, key: string): Partial<ComposerState> | null {
+  const params = recenterAll(c.zFitParams, c.zFitValues, key)
+  return params ? { zFitParams: params } : null
+}
+
+/** key（未指定なら全係数）のうち端に張り付いたものだけレンジを取り直す。変化なしなら null。 */
+function recenterAll(
+  params: DetectedParam[],
+  values: ParamValues,
+  key?: string,
+): DetectedParam[] | null {
+  let changed = false
+  const next = params.map((p) => {
+    if (key !== undefined && p.key !== key) return p
+    const v = values[p.key] ?? p.value
+    if (!Number.isFinite(v) || !atRangeEdge(p, v)) return p
+    changed = true
+    return recenterParam(p, v)
+  })
+  return changed ? next : null
+}
+
+/**
+ * 作図台の点フィット結果（係数レンジ＋値）を反映するパッチ（#67）。
+ * 式は組み立て直して**上書き**する（元の式に足さない）。
+ */
+export function applyFitValuesPatch(
+  c: ComposerState,
+  params: DetectedParam[],
+  values: ParamValues,
+): Partial<ComposerState> {
+  const expr = renderExpr({ ...fitSpecOf(c), params }, values)
+  return {
+    fitParams: params,
+    fitValues: values,
+    freeExpr: expr,
+    yText: yTextOf(expr, c.mode),
+    useFree: true,
+    freeError: null,
+  }
+}
+
+/** z 版の applyFitValuesPatch（#67）。 */
+export function applyZFitValuesPatch(
+  c: ComposerState,
+  params: DetectedParam[],
+  values: ParamValues,
+): Partial<ComposerState> {
+  const expr = renderWithParams(c.zFitTemplate, params, values)
+  return {
+    zFitParams: params,
+    zFitValues: values,
+    zFreeExpr: expr,
+    zText: expr,
+    zUseFree: true,
+    zFreeError: null,
   }
 }
 

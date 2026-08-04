@@ -17,36 +17,44 @@ import {
   drawScene,
   drawBullet,
   drawTrail,
-  drawWaveTrail,
-  drawParticle,
   drawMisfire,
   drawFallingDebris,
-  drawDamageNumber,
   drawCarveBurst,
   drawClashSpark,
   drawOrbitDissipation,
   drawBulletDissipation,
-  drawConcealVeil,
-  drawEnemyConceal,
+  bulletColorOf,
   drawEnemyDeath,
   drawBossCollapse,
-  strokeZPath,
   powerSizeFrac,
   type BossView,
   type SceneParams,
 } from '../render/draw'
+import {
+  drawAimArrow,
+  drawDamageNumber,
+  drawDarkVeil,
+  drawEnemyHpBars,
+  drawFlightPath,
+  drawImpactShockwave,
+  drawLaunchFlash,
+  drawOrbitRing,
+  drawParryBurst,
+  drawSpeedSparks,
+  type DarkRing,
+  type PreviewPoint,
+  type RingPhaseStore,
+} from '../render/board'
 import { ringAverageAttr } from '../game/orbit'
 import { COLORS } from '../render/theme'
 
-/** リング点の z（属性）から色を選ぶ。 */
-function zColor(z: number): string {
-  if (z > FIELD.epsilon) return COLORS.light1
-  if (z < -FIELD.epsilon) return COLORS.dark1
-  return COLORS.light2
-}
+/** 盤面キャンバスの既定サイズ（実測前の1フレームだけ使う保険値）。 */
+const FALLBACK_SIZE = { w: 640, h: 480 }
 
-const INTERNAL = 520
-const VP: Viewport = { width: INTERNAL, height: INTERNAL, unitsRadius: FIELD.rField }
+/** アニメ用サンプル列を、盤面描画が使うプレビュー点列（弧長つき）へ読み替える。 */
+function previewPointsOf(samples: AnimSample[]): PreviewPoint[] {
+  return samples.map((s) => ({ pos: s.pos, z: s.z, speed: s.speed, arcLen: s.arcLen }))
+}
 
 /** 弾の1サンプル（位置・速度・弧長・z）。速度で演出のペースを物理に一致させる（#7）。 */
 export interface AnimSample {
@@ -105,6 +113,8 @@ const FLASH_MS = 420
 /** パリィ／結界の衝突火花の持続（ms）と、弾がその点に到達したと見なす距離（数学ユニット・#20） */
 const CLASH_MS = 460
 const CLASH_DIST = 1.6
+/** 相殺（パリィ）演出の持続（ms・v3）。二重の衝撃波と破片が広がりきるまで */
+const PARRY_MS = 900
 
 /** 周回が壁/魔法に負けて霧散する演出の持続（ms・#34）。接触の瞬間から散り始める */
 const DISSIPATE_MS = 520
@@ -183,10 +193,20 @@ interface Props {
   onCollapseDone?: () => void
   /** 暴発半径のブレ帯（04b §4b.3）。プレビューの✕の周りにぼやけた二重リングを描く */
   misfireBand?: { min: number; max: number }
-  /** 編集中の z 場（#37）。showZField が真の間（作成フェーズは常時・#55）薄い場として表示する */
+  /** 編集中の z 場（#37）。場がエラーになる地点（極・定義域外）を赤で示すのに使う */
   zField?: (x: number, y: number) => number
-  /** z 場を薄く表示するか（#37）。作成フェーズ中は常に true（#55） */
+  /** z 場を表示するか（#37）。作成フェーズ中は常に true（#55） */
   showZField?: boolean
+  /**
+   * z(t)（t＝アクティブ術者からの飛行距離）。盤面に同心円として全開示する（v3 の主役）。
+   * z を「距離の関数」で書いているときだけ渡す。
+   */
+  zOfT?: ((t: number) => number) | null
+  /**
+   * プレビュー軌道を最後まで見せるか（既定 false＝出だしだけ）。
+   * 既定では「z(t) は完全情報／当たるかは撃つまで分からない」という設計に従う。
+   */
+  previewFull?: boolean
   /** 持続中の周回結界（#39）。作成フェーズで常時描画＋闇は視認性低下の幕をかける */
   standingOrbits?: StandingOrbit[]
   animation?: ResolveAnimation | null
@@ -266,52 +286,6 @@ function posAtTime(
   }
 }
 
-/**
- * リング各点までの累積「通過時間」(Σ ds/speed) と総時間（#60）。
- * 速度が速い区間ほど通過時間が短い＝粒がそこを素早く抜ける（点ごとの速度を演出に反映）。
- * 速度が未付与/一定なら従来どおり等速で回る。
- */
-function ringTimeline(ring: ZPoint[]): { cum: number[]; total: number } {
-  const cum = [0]
-  for (let i = 1; i < ring.length; i++) {
-    const ds = Math.hypot(ring[i].pos.x - ring[i - 1].pos.x, ring[i].pos.y - ring[i - 1].pos.y)
-    const v = Math.max(0.2, ((ring[i].speed ?? 0) + (ring[i - 1].speed ?? 0)) / 2)
-    cum.push(cum[i - 1] + ds / v)
-  }
-  return { cum, total: cum[cum.length - 1] || 1 }
-}
-
-/** phase∈[0,1) を累積時間で index へ写す（速い区間は素早く通過・#60）。 */
-function phaseToIndex(tl: { cum: number[]; total: number }, phase: number): number {
-  const target = (((phase % 1) + 1) % 1) * tl.total
-  for (let i = 1; i < tl.cum.length; i++) if (tl.cum[i] >= target) return i - 1
-  return tl.cum.length - 1
-}
-
-/** 粒の大きさに使う速度：その点の速度（#60）。無ければリング代表速度にフォールバック。 */
-function ptSpeed(pt: ZPoint, fallback: number): number {
-  return pt.speed ?? fallback
-}
-
-/** 持続中の周回（#39）：薄いリング＋ゆっくり周回する粒で常時表示する。 */
-function drawStandingOrbit(ctx: CanvasRenderingContext2D, o: StandingOrbit, trailPhase: number, vp: Viewport): void {
-  const ring = o.ring
-  const len = ring.length
-  if (len < 2) return
-  ctx.save()
-  ctx.globalAlpha = 0.26
-  strokeZPath(ctx, ring, vp)
-  ctx.restore()
-  const tl = ringTimeline(ring) // #60：点ごとの速度で粒の進みを変える
-  const N = 16
-  for (let n = 0; n < N; n++) {
-    const idx = phaseToIndex(tl, n / N + trailPhase * 0.03)
-    const pt = ring[idx]
-    if (!pt) continue
-    drawParticle(ctx, pt.pos, zColor(pt.z), vp, trailPhase * 2 + n, powerSizeFrac(ptSpeed(pt, o.speed), pt.z))
-  }
-}
-
 export default function BattleCanvas(props: Props) {
   const ref = useRef<HTMLCanvasElement>(null)
   const aimingRef = useRef(false)
@@ -328,6 +302,10 @@ export default function BattleCanvas(props: Props) {
   tickRef.current = props.onPlaybackTick
   const replayRef = useRef(props.replay)
   replayRef.current = props.replay
+  // 結界の粒の位相をフレーム間で持ち越す（v3：粒がその場の速度で流れる）
+  const ringStoreRef = useRef<RingPhaseStore>({})
+  // 前ターンの軌跡（残像）。解決アニメを組んだ時点で記録し、次の作成フェーズでうっすら残す（v3）
+  const trailsRef = useRef<ZPoint[][]>([])
 
   // 盤面の手動ズーム/パン（拡大縮小して見やすくする）。大アリーナ（rField 最大60）で有効。
   const [view, setView] = useState<{ zoom: number; pan: Vec2 }>({ zoom: 1, pan: { x: 0, y: 0 } })
@@ -337,9 +315,49 @@ export default function BattleCanvas(props: Props) {
     setView({ zoom: 1, pan: { x: 0, y: 0 } })
   }, [rField])
 
+  // 盤面はコンテナ全面（DC プロトタイプ v3）。CSS ピクセルの実寸を測り、DPR ぶんだけ内部解像度を上げる。
+  const [size, setSize] = useState<{ w: number; h: number }>(FALLBACK_SIZE)
+  useEffect(() => {
+    const canvas = ref.current
+    if (!canvas) return
+    const parent = canvas.parentElement ?? canvas
+    const measure = () => {
+      const w = Math.max(1, Math.round(parent.clientWidth))
+      const h = Math.max(1, Math.round(parent.clientHeight))
+      setSize((s) => (s.w === w && s.h === h ? s : { w, h }))
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(parent)
+    return () => ro.disconnect()
+  }, [])
+  // 内部解像度（DPR）を実寸に合わせる。描画は常に CSS ピクセル座標系で行う（setTransform）。
+  const dpr = Math.min(2, typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1)
+  const prepare = (ctx: CanvasRenderingContext2D): void => {
+    const canvas = ctx.canvas
+    const w = Math.round(size.w * dpr)
+    const h = Math.round(size.h * dpr)
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w
+      canvas.height = h
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.imageSmoothingEnabled = false
+  }
+
   // ビューポート（#49・06b §5.5）：場の半径 props.rField で倍率が決まる。面/フェーズで可変。
   // 手動ズーム/パンを反映（zoom=1・pan=0 なら従来どおり場全体がちょうど収まる）。
-  const vp: Viewport = { ...VP, unitsRadius: rField, zoom: view.zoom, pan: view.pan }
+  const vp: Viewport = { width: size.w, height: size.h, unitsRadius: rField, zoom: view.zoom, pan: view.pan }
+
+  // アクティブ術者（z 場の同心円・射線・プレビュー帯の中心）
+  const activeAlly = props.activeAllyId
+    ? props.allies.find((a) => a.id === props.activeAllyId && a.hp > 0) ?? null
+    : null
+  const activeIndex = activeAlly ? props.allies.filter((a) => a.hp > 0).findIndex((a) => a.id === activeAlly.id) : -1
+  const previewPath = activeIndex >= 0 ? props.playerPaths?.[activeIndex] ?? null : null
+  const aimTarget = props.aimEnemyId
+    ? props.enemies.find((e) => e.id === props.aimEnemyId) ?? null
+    : props.enemies.find((e) => e.hp > 0) ?? null
 
   const staticParams: SceneParams = {
     vp,
@@ -347,7 +365,6 @@ export default function BattleCanvas(props: Props) {
     enemies: props.enemies,
     obstacles: props.obstacles,
     activeAllyId: props.activeAllyId,
-    playerPaths: props.playerPaths,
     misfirePoints: props.misfirePoints,
     ghostPaths: props.ghostPaths,
     ghostMisfires: props.ghostMisfires,
@@ -355,6 +372,13 @@ export default function BattleCanvas(props: Props) {
     misfireBand: props.misfireBand,
     zField: props.zField,
     showZField: props.showZField,
+    zRings:
+      activeAlly && props.zOfT
+        ? { casterPos: activeAlly.pos, zOfT: props.zOfT, targetPos: aimTarget?.pos ?? null }
+        : undefined,
+    rayAxis: activeAlly && props.aimAngle !== undefined ? { pos: activeAlly.pos, angle: props.aimAngle } : null,
+    previewPath,
+    previewFull: props.previewFull,
   }
 
   useEffect(() => {
@@ -369,24 +393,21 @@ export default function BattleCanvas(props: Props) {
       const standing = props.standingOrbits ?? []
       const drawComposeFrame = (trailPhase: number) => {
         lastTrailRef.current = trailPhase
-        drawScene(ctx, { ...staticParams, trailPhase })
-        for (const o of standing) drawStandingOrbit(ctx, o, trailPhase, vp)
-        // 自陣の闇結界は内側を暗くぼかす（自己視認低下・#39）
+        prepare(ctx)
+        drawScene(ctx, { ...staticParams, trailPhase, trails: trailsRef.current })
+        // 結界（周回）：帯の太さ・明るさが区間ごとの速度を語り、粒がその場の速度で流れる（v3）
         for (const o of standing) {
-          if (o.owner !== 'enemy' && ringAverageAttr(o.ring) === 'dark') drawConcealVeil(ctx, o.ring, vp)
+          drawOrbitRing(ctx, vp, o.ring, o.owner === 'enemy' ? 'enemy' : 'ally', ringStoreRef.current)
         }
-        // 敵の闇結界の視認阻害（#61/#62）：1枚=ギリギリ見える／2枚重なり=全く見えない黒。まとめて処理
-        const enemyDarkRings = standing
-          .filter((o) => o.owner === 'enemy' && ringAverageAttr(o.ring) === 'dark')
-          .map((o) => o.ring)
-        drawEnemyConceal(ctx, enemyDarkRings, vp)
+        // 闇結界の視認阻害（#39/#61/#62）：1重＝幕＋ざらつき／2重＝真っ黒＋「視認不能」
+        const darkRings: DarkRing[] = standing
+          .filter((o) => ringAverageAttr(o.ring) === 'dark')
+          .map((o) => ({ ring: o.ring, owner: o.owner === 'enemy' ? 'enemy' : 'ally' }))
+        drawDarkVeil(ctx, vp, darkRings, trailPhase)
         // 発射方向インジケータ（#47）：active ally から θ 方向へ矢印
-        if (props.aimAngle !== undefined && props.activeAllyId) {
-          const a = props.allies.find((al) => al.id === props.activeAllyId)
-          if (a && a.hp > 0) drawAimArrow(ctx, a.pos, props.aimAngle, vp)
-        }
+        if (props.aimAngle !== undefined && activeAlly) drawAimArrow(ctx, vp, activeAlly.pos, props.aimAngle)
         // 敵ごとの残り HP は頭の上（盤面の隅にウィンドウを置かない）
-        drawEnemyHpBars(ctx, props.enemies, vp, undefined, props.aimEnemyId)
+        drawEnemyHpBars(ctx, vp, props.enemies, undefined, props.aimEnemyId)
         // 通過点フィットの選択点を✛で表示（#46）
         drawFitPoints(ctx, props.fitPoints, vp)
         // 点ピック中は指の上に拡大鏡（ルーペ）を出す（#49：指で点が隠れない）
@@ -417,6 +438,10 @@ export default function BattleCanvas(props: Props) {
     }
 
     const anim = props.animation
+    // 前ターンの軌跡（残像）として、この解決の飛行経路を控えておく（次の作成フェーズで薄く残る）
+    trailsRef.current = anim.bullets
+      .filter((b) => b.samples.length > 1)
+      .map((b) => b.samples.map((sm) => ({ pos: sm.pos, z: sm.z })))
     // 各弾の時間軸を構築。最も時間のかかる弾でアニメーション窓を決める（速い弾は先に着く＝#7）
     const timelines = anim.bullets.map((b) => buildTimeline(b.samples))
     const maxTotal = Math.max(0.001, ...timelines.map((t) => t.total))
@@ -603,9 +628,10 @@ export default function BattleCanvas(props: Props) {
       const gAmp = mfShake * 9 * (1 + doom * 1.5)
       const gx = mfShake > 0 ? Math.sin(elapsed * 0.07) * gAmp : 0
       const gy = mfShake > 0 ? Math.cos(elapsed * 0.085) * gAmp : 0
+      prepare(ctx)
       if (mfShake > 0) {
         ctx.fillStyle = COLORS.bg
-        ctx.fillRect(0, 0, INTERNAL, INTERNAL)
+        ctx.fillRect(0, 0, vp.width, vp.height)
       }
       ctx.save()
       ctx.translate(gx, gy)
@@ -613,9 +639,8 @@ export default function BattleCanvas(props: Props) {
       drawScene(ctx, {
         ...staticParams,
         obstacles,
-        playerPaths: undefined,
+        previewPath: null,
         misfirePoints: undefined,
-        showZField: false,
         flash,
         shakePhase: elapsed * 0.05,
         bossView: anim.bossView,
@@ -634,9 +659,7 @@ export default function BattleCanvas(props: Props) {
       }
 
       // 闇の周回は内側を暗くぼかす（#39：プレイヤー視点の視認性低下）。霧散した周回は幕を外す
-      for (const o of anim.orbits) {
-        if (!o.broken && ringAverageAttr(o.ring) === 'dark') drawConcealVeil(ctx, o.ring, vp)
-      }
+      const liveDarkRings: DarkRing[] = []
 
       // 軌道型リング：ゆっくり周回（#24）。壁/魔法に負けた周回は接触の瞬間から霧散（#34）
       for (let oi = 0; oi < anim.orbits.length; oi++) {
@@ -674,43 +697,12 @@ export default function BattleCanvas(props: Props) {
           // 接触前：通常どおり周回して見せる（弾の到達を待つ）→ 下の通常描画へ
         }
 
-        // 通常の周回（存続中／霧散前）
-        ctx.save()
-        ctx.globalAlpha = 0.28
-        strokeZPath(ctx, ring, vp)
-        ctx.restore()
-        // 複数パーティクルを並べて周回する。点ごとの速度で進みを変える（#60：速い区間は素早く抜ける）
-        const N = 18
-        const revs = 1.1
-        const eClamped = Number.isFinite(e) ? Math.max(0, Math.min(1, e)) : 0
-        const tl = ringTimeline(ring)
-        // #63：同じターン内で速度を累積する。1周ぶんの正味エネルギー変化 dSq（>0=加速する場）で、
-        // 進行 e が進むほど回転が速く/遅く、粒も大きく/小さくなる（速度＝アニメーションと連動）。
-        const spd = ring.map((p) => p.speed ?? 0)
-        const v0sq = Math.max(1, (spd[0] || o.speed || 1) ** 2)
-        const dSq = spd.length > 1 ? spd[spd.length - 1] ** 2 - spd[0] ** 2 : 0
-        const accum = Math.max(-0.85, Math.min(2.5, (dSq / v0sq) * revs)) // 窓全体での累積率
-        const spin = eClamped + accum * eClamped * eClamped * 0.5 // 累積で回転が加速/減速（位相は二次）
-        const mult = Math.max(0.15, Math.min(3, 1 + accum * eClamped)) // 現在の速度倍率（粒サイズに反映）
-        for (let n = 0; n < N; n++) {
-          const idx = phaseToIndex(tl, n / N + spin * revs)
-          const pt = ring[idx]
-          if (!pt) continue
-          const col = zColor(pt.z)
-          // 短い尾
-          const trail: Vec2[] = []
-          for (let t = 4; t >= 0; t--) {
-            const tp = ring[(idx - t * 2 + len) % len]
-            if (tp) trail.push(tp.pos)
-          }
-          ctx.globalAlpha = 0.5
-          drawTrail(ctx, trail, col, vp)
-          ctx.globalAlpha = 1
-          // 威力（=その点のリング速度×強度×累積倍率）で粒の大きさを変える（#21/#60/#63）
-          const sizeScale = powerSizeFrac(ptSpeed(pt, o.speed ?? 0) * mult, pt.z)
-          drawParticle(ctx, pt.pos, col, vp, trailPhase * 2 + n, sizeScale)
-        }
+        // 通常の周回（存続中／霧散前）：帯＋その場の速度で流れる粒（v3 の _drawRing）
+        drawOrbitRing(ctx, vp, ring, 'ally', ringStoreRef.current)
+        if (ringAverageAttr(ring) === 'dark') liveDarkRings.push({ ring, owner: 'ally' })
       }
+      // 闇結界の視認阻害（存続している闇のリングだけ）
+      drawDarkVeil(ctx, vp, liveDarkRings, trailPhase)
 
       // 発射型・敵弾（速度に応じて進む）
       anim.bullets.forEach((b, i) => {
@@ -725,18 +717,24 @@ export default function BattleCanvas(props: Props) {
         const exploding = b.misfirePos && elapsed >= arrivalMs
         // 霧散：暴発しない弾が終端（速度0）に達したら、小さくなって散る（#38。貫通で命中後も飛び続けた弾も対象）
         const vanishing = b.vanished && !b.misfirePos && elapsed >= arrivalMs
+        // 通ってきた道を属性色で残し（古いほど薄い）、一定間隔に燐光を落とす（v3）
+        const pts = previewPointsOf(b.samples)
+        drawFlightPath(ctx, vp, pts, idx, trailPhase, powerSizeFrac)
+        // 発射の閃光（詠唱の瞬間・術者位置から広がる輪）
+        if (elapsed < 260 && pts.length > 0) drawLaunchFlash(ctx, vp, pts[0].pos, z, elapsed / 260)
         if (!exploding && !vanishing) {
-          // 飛んだぶんの軌跡を逆位相の波＋揺れる粒で描く（発射アニメ中も表示・#11）
-          const traveled: ZPoint[] = b.samples
-            .slice(0, idx + 1)
-            .map((s) => ({ pos: s.pos, z: s.z }))
-          drawWaveTrail(ctx, traveled, vp, trailPhase, 0.95)
+          const frac = powerSizeFrac(b.samples[idx]?.speed ?? 0, z)
+          drawSpeedSparks(ctx, vp, pts, idx, phase, frac)
+          drawTrail(
+            ctx,
+            b.samples.slice(Math.max(0, idx - 26), idx + 1).map((s) => s.pos),
+            bulletColorOf(z),
+            vp,
+          )
           drawBullet(ctx, pos, z, vp, phase, b.samples[idx]?.speed ?? 0)
         }
         if (vanishing) {
           const last = b.samples[b.samples.length - 1]
-          const traveled: ZPoint[] = b.samples.map((s) => ({ pos: s.pos, z: s.z }))
-          drawWaveTrail(ctx, traveled, vp, trailPhase, 0.6)
           const dp = Math.min(0.999, (elapsed - arrivalMs) / DISSIPATE_MS)
           const sizeFrac = Math.max(0.35, powerSizeFrac(0, last?.z ?? 0) || Math.min(1, Math.abs(last?.z ?? 0) / FIELD.sMax))
           drawBulletDissipation(ctx, last?.pos ?? pos, last?.z ?? 0, dp, vp, sizeFrac)
@@ -762,7 +760,15 @@ export default function BattleCanvas(props: Props) {
         }
       })
 
-      // パリィ／結界の衝突火花（#20/#38）：弾がその交差点へ到達した瞬間に青い火花が弾ける。
+      // 着弾の衝撃波（#20）：被弾した対象の位置から白い輪が広がる（v3）
+      for (const id in flashStartByTarget) {
+        const dt = elapsed - flashStartByTarget[id]
+        if (dt < 0 || dt >= FLASH_MS) continue
+        const t = props.enemies.find((q) => q.id === id) ?? props.allies.find((q) => q.id === id)
+        if (t) drawImpactShockwave(ctx, vp, t.pos, dt / FLASH_MS)
+      }
+
+      // パリィ／結界の相殺（#20/#38）：二重の衝撃波＋光闇の破片＋「相殺」の文字（v3）。
       // 大きさは威力（パリィは2魔法の威力合計）に依存する。
       if (anim.clashes && anim.clashes.length > 0) {
         anim.clashes.forEach((clash, ci) => {
@@ -777,9 +783,12 @@ export default function BattleCanvas(props: Props) {
           }
           const start0 = clashStartByIdx[ci]
           if (start0 === undefined) return
-          const cp = (elapsed - start0) / CLASH_MS
+          const dt = elapsed - start0
+          if (dt < 0) return
+          if (dt < PARRY_MS) drawParryBurst(ctx, vp, pos, clash.power, dt / PARRY_MS)
+          const cp = dt / CLASH_MS
           const sizeFrac = Math.min(1, clash.power / (FIELD.sMax * FIELD.maxFlightSpeed))
-          if (cp >= 0 && cp < 1) drawClashSpark(ctx, pos, cp, vp, sizeFrac)
+          if (cp < 1) drawClashSpark(ctx, pos, cp, vp, sizeFrac)
         })
       }
 
@@ -790,9 +799,11 @@ export default function BattleCanvas(props: Props) {
       ctx.restore() // ステージ全体シェイクの translate を戻す
 
       // 敵ごとの残り HP（揺れの外＝読みやすい位置。消滅中の敵は出さない）
-      drawEnemyHpBars(ctx, props.enemies, vp, hideEnemyIds, null)
+      drawEnemyHpBars(ctx, vp, props.enemies, hideEnemyIds, null)
 
-      // ダメージ／回復の数値（揺れの外＝読みやすい UI として安定表示・#42）
+      // ダメージ／回復の数値（揺れの外＝読みやすい UI として安定表示・#42）。
+      // v3：黒の輪郭＋影のドット数字。重なりは上へ積み上げて必ず全部読める。
+      const placedPops: { x: number; y: number; w: number; h: number }[] = []
       for (let i = 0; i < popups.length; i++) {
         const p = popups[i]
         let start: number | undefined
@@ -800,15 +811,25 @@ export default function BattleCanvas(props: Props) {
         else if (p.trigger === 'misfire') start = Number.isFinite(misfireArrivalMs) ? misfireArrivalMs : undefined
         else start = flightMs * 0.5 // 回復は固定タイミング
         if (start === undefined) continue
-        start += popupOrd[i] * 110 // 積み重ねは少し遅らせて出す
         const t = (elapsed - start) / POPUP_MS
         if (t < 0 || t >= 1) continue
         const sp = toScreen(p.pos, vp)
-        const rise = t * 40 + popupOrd[i] * 6 // 上へ昇る
-        const alpha = t < 0.15 ? t / 0.15 : 1 - (t - 0.15) / 0.85 // フェードイン→アウト
-        const size = Math.min(40, 14 + p.amount * 0.22) // 大きさは量に依存
-        const text = p.kind === 'heal' ? `+${Math.round(p.amount)}` : `${Math.round(p.amount)}`
-        drawDamageNumber(ctx, sp.x, sp.y - 16 - rise, text, popupColor(p.kind), size, Math.max(0, alpha))
+        const text = `${Math.round(p.amount)}`
+        const size = Math.round(15 + Math.min(15, p.amount / 11))
+        const w = text.length * size * 0.68 + 12
+        const h = size * 1.35
+        let py = sp.y - 14 - Math.pow(t, 0.6) * 30
+        for (let g = 0; g < 28; g++) {
+          const c = placedPops.find(
+            (q) => Math.abs(q.x - sp.x) < (q.w + w) / 2 && Math.abs(q.y - py) < (q.h + h) / 2,
+          )
+          if (!c) break
+          py = c.y - (c.h + h) / 2 - 2
+        }
+        py = Math.max(h * 0.7 + 2, py)
+        placedPops.push({ x: sp.x, y: py, w, h })
+        const alpha = Math.min(1, (1 - t) * 2.6)
+        drawDamageNumber(ctx, sp.x, py, text, popupColor(p.kind), size, alpha, p.kind === 'heal')
       }
 
       preExpire = false
@@ -846,8 +867,12 @@ export default function BattleCanvas(props: Props) {
     props.doom,
     props.collapse,
     props.aimEnemyId,
+    props.zOfT,
+    props.previewFull,
     view.zoom,
     view.pan,
+    size.w,
+    size.h,
   ])
 
   // 破局（致死崩壊・04b §4b.2）：暴発の効果範囲がステージ全体を覆い、場そのものが呑まれる演出。
@@ -877,13 +902,15 @@ export default function BattleCanvas(props: Props) {
       const amp = 6 + progress * 16
       const gx = Math.sin(elapsed * 0.07) * amp
       const gy = Math.cos(elapsed * 0.085) * amp
+      prepare(ctx)
       ctx.fillStyle = COLORS.bg
-      ctx.fillRect(0, 0, INTERNAL, INTERNAL)
+      ctx.fillRect(0, 0, vp.width, vp.height)
       ctx.save()
       ctx.translate(gx, gy)
       drawScene(ctx, {
         ...staticParams,
-        playerPaths: undefined,
+        previewPath: null,
+        rayAxis: null,
         misfirePoints: undefined,
         ghostPaths: undefined,
         ghostMisfires: undefined,
@@ -900,7 +927,7 @@ export default function BattleCanvas(props: Props) {
       if (progress > 0.72) {
         ctx.globalAlpha = Math.min(1, (progress - 0.72) / 0.28)
         ctx.fillStyle = '#fff8e1'
-        ctx.fillRect(0, 0, INTERNAL, INTERNAL)
+        ctx.fillRect(0, 0, vp.width, vp.height)
         ctx.globalAlpha = 1
       }
       if (elapsed < COLLAPSE_MS) raf = requestAnimationFrame(frame)
@@ -914,7 +941,7 @@ export default function BattleCanvas(props: Props) {
       clearTimeout(timer)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.collapse])
+  }, [props.collapse, size.w, size.h])
 
   // ポインタ位置を数学座標へ変換（内部解像度と表示サイズの差を補正）
   const eventToMath = (e: { clientX: number; clientY: number }): Vec2 | null => {
@@ -922,8 +949,8 @@ export default function BattleCanvas(props: Props) {
     if (!canvas) return null
     const rect = canvas.getBoundingClientRect()
     if (rect.width === 0 || rect.height === 0) return null
-    const px = ((e.clientX - rect.left) * INTERNAL) / rect.width
-    const py = ((e.clientY - rect.top) * INTERNAL) / rect.height
+    const px = ((e.clientX - rect.left) * vp.width) / rect.width
+    const py = ((e.clientY - rect.top) * vp.height) / rect.height
     return toMath({ x: px, y: py }, vp)
   }
   const redrawCompose = () => composeDrawRef.current?.()
@@ -937,7 +964,10 @@ export default function BattleCanvas(props: Props) {
     if (!canvas) return null
     const rect = canvas.getBoundingClientRect()
     if (rect.width === 0 || rect.height === 0) return null
-    return { x: ((e.clientX - rect.left) * INTERNAL) / rect.width, y: ((e.clientY - rect.top) * INTERNAL) / rect.height }
+    return {
+      x: ((e.clientX - rect.left) * vp.width) / rect.width,
+      y: ((e.clientY - rect.top) * vp.height) / rect.height,
+    }
   }
   const clampZoom = (z: number) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z))
   // 場が画面外へ抜け切らないようパンを制限（中心から場の縁が見える範囲まで）
@@ -958,7 +988,7 @@ export default function BattleCanvas(props: Props) {
       return { zoom: z, pan: clampPan(pan, z) }
     })
   }
-  const zoomAtCenter = (nextZoom: number) => zoomAtInternal(nextZoom, { x: INTERNAL / 2, y: INTERNAL / 2 })
+  const zoomAtCenter = (nextZoom: number) => zoomAtInternal(nextZoom, { x: vp.width / 2, y: vp.height / 2 })
 
   // マルチタッチ（ピンチ）追跡
   const pointersRef = useRef<Map<number, Vec2>>(new Map())
@@ -1012,12 +1042,12 @@ export default function BattleCanvas(props: Props) {
       const { dist, mid } = pinchMetrics()
       const start = pinchRef.current
       const z = clampZoom((start.zoom * dist) / start.dist)
-      const baseScale = Math.min(INTERNAL, INTERNAL) / 2 / rField
+      const baseScale = Math.min(vp.width, vp.height) / 2 / rField
       const scale = baseScale * z
       // toScreen: midScreen = center + (focal - pan)*scale（y反転）→ pan = focal - (midScreen-center)/scale
       const pan = {
-        x: start.focal.x - (mid.x - INTERNAL / 2) / scale,
-        y: start.focal.y + (mid.y - INTERNAL / 2) / scale,
+        x: start.focal.x - (mid.x - vp.width / 2) / scale,
+        y: start.focal.y + (mid.y - vp.height / 2) / scale,
       }
       setView({ zoom: z, pan: clampPan(pan, z) })
       return
@@ -1064,14 +1094,18 @@ export default function BattleCanvas(props: Props) {
     <>
       <canvas
         ref={ref}
-        width={INTERNAL}
-        height={INTERNAL}
         aria-label="バトルフィールド"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
-        style={{ cursor: interactive ? 'crosshair' : 'default', touchAction: 'none' }}
+        style={{
+          cursor: interactive ? 'crosshair' : 'default',
+          touchAction: 'none',
+          width: '100%',
+          height: '100%',
+          display: 'block',
+        }}
       />
       <div className="zoom-controls" aria-label="盤面の拡大縮小">
         <button type="button" aria-label="拡大" onClick={() => zoomAtCenter(view.zoom * 1.4)}>
@@ -1104,8 +1138,8 @@ function drawPickLoupe(ctx: CanvasRenderingContext2D, pos: Vec2, vp: Viewport): 
   let cx = fs.x
   let cy = fs.y - R - gap
   if (cy - R < 4) cy = fs.y + R + gap // 上が見切れるなら下に出す
-  cx = Math.max(R + 4, Math.min(INTERNAL - R - 4, cx))
-  cy = Math.max(R + 4, Math.min(INTERNAL - R - 4, cy))
+  cx = Math.max(R + 4, Math.min(vp.width - R - 4, cx))
+  cy = Math.max(R + 4, Math.min(vp.height - R - 4, cy))
   const half = R / zoom
   ctx.save()
   // 指→ルーペの接続線
@@ -1152,98 +1186,6 @@ function drawPickLoupe(ctx: CanvasRenderingContext2D, pos: Vec2, vp: Viewport): 
   ctx.moveTo(fs.x, fs.y - 7)
   ctx.lineTo(fs.x, fs.y + 7)
   ctx.stroke()
-  ctx.restore()
-}
-
-/**
- * 敵ごとの残り HP を頭の上に描く（DC プロトタイプ v3 の _drawEnemyHp）。
- * 盤面の隅に別ウィンドウを置かず、対象のすぐ上で読ませる。射線上の敵は金色で強調する。
- * 近い敵どうしでバーが重ならないよう、上へ積み上げる。
- */
-function drawEnemyHpBars(
-  ctx: CanvasRenderingContext2D,
-  enemies: Enemy[],
-  vp: Viewport,
-  hide: Set<string> | undefined,
-  aimEnemyId: string | null | undefined,
-): void {
-  const rows = enemies.filter((e) => e.hp > 0 && !hide?.has(e.id))
-  if (rows.length === 0) return
-  ctx.save()
-  ctx.textBaseline = 'alphabetic'
-  const placed: { x: number; y: number; w: number }[] = []
-  for (const e of rows) {
-    const p = toScreen(e.pos, vp)
-    const hr = e.hitboxRadius * (vp.zoom ?? 1) * (Math.min(vp.width, vp.height) / 2 / vp.unitsRadius)
-    const frac = Math.max(0, Math.min(1, e.hp / (e.maxHp || 1)))
-    const W = Math.max(34, Math.min(74, hr * 2.6))
-    const H = 5
-    const x = Math.round(p.x - W / 2)
-    let y = Math.round(p.y - hr - 16)
-    for (let g = 0; g < 20; g++) {
-      const c = placed.find((q) => Math.abs(q.x - (x + W / 2)) < (q.w + W) / 2 + 2 && Math.abs(q.y - y) < 15)
-      if (!c) break
-      y = c.y - 15
-    }
-    placed.push({ x: x + W / 2, y, w: W })
-    const aimed = !!aimEnemyId && e.id === aimEnemyId
-    const bar = frac > 0.5 ? COLORS.hpOk : frac > 0.22 ? COLORS.light1 : COLORS.enemy
-    ctx.fillStyle = 'rgba(4,4,10,.82)'
-    ctx.fillRect(x - 2, y - 2, W + 4, H + 4)
-    ctx.fillStyle = '#1b1b2e'
-    ctx.fillRect(x, y, W, H)
-    ctx.fillStyle = bar
-    ctx.fillRect(x, y, Math.max(frac > 0 ? 1 : 0, Math.round(W * frac)), H)
-    ctx.strokeStyle = aimed ? COLORS.light2 : 'rgba(125,143,196,.85)'
-    ctx.lineWidth = 1
-    ctx.strokeRect(x - 0.5, y - 0.5, W + 1, H + 1)
-    ctx.fillStyle = 'rgba(6,6,14,.7)' // 四分割の目盛り
-    for (let k = 1; k < 4; k++) ctx.fillRect(Math.round(x + (W * k) / 4), y, 1, H)
-    ctx.font = "700 10px 'DotGothic16', monospace"
-    ctx.textAlign = 'center'
-    const txt = `${Math.ceil(e.hp)}/${e.maxHp}`
-    ctx.strokeStyle = '#05040b'
-    ctx.lineWidth = 3
-    ctx.strokeText(txt, x + W / 2, y - 3)
-    ctx.fillStyle = aimed ? COLORS.light2 : '#c9d2e6'
-    ctx.fillText(txt, x + W / 2, y - 3)
-    if (e.boss) {
-      ctx.strokeStyle = '#05040b'
-      ctx.lineWidth = 3
-      ctx.strokeText('☠', x - 8, y + H)
-      ctx.fillStyle = COLORS.enemy
-      ctx.fillText('☠', x - 8, y + H)
-    }
-  }
-  ctx.restore()
-}
-
-/** 発射方向（θ）の矢印を active ally から伸ばす（#47）。 */
-function drawAimArrow(ctx: CanvasRenderingContext2D, from: Vec2, angle: number, vp: Viewport): void {
-  const LEN = 7 // 数学ユニット
-  const tip = { x: from.x + Math.cos(angle) * LEN, y: from.y + Math.sin(angle) * LEN }
-  const a = toScreen(from, vp)
-  const b = toScreen(tip, vp)
-  ctx.save()
-  ctx.strokeStyle = '#ffd56b'
-  ctx.fillStyle = '#ffd56b'
-  ctx.globalAlpha = 0.85
-  ctx.lineWidth = 2.5
-  ctx.setLineDash([5, 4])
-  ctx.beginPath()
-  ctx.moveTo(a.x, a.y)
-  ctx.lineTo(b.x, b.y)
-  ctx.stroke()
-  ctx.setLineDash([])
-  // 矢じり
-  const ang = Math.atan2(b.y - a.y, b.x - a.x)
-  const h = 9
-  ctx.beginPath()
-  ctx.moveTo(b.x, b.y)
-  ctx.lineTo(b.x - h * Math.cos(ang - 0.4), b.y - h * Math.sin(ang - 0.4))
-  ctx.lineTo(b.x - h * Math.cos(ang + 0.4), b.y - h * Math.sin(ang + 0.4))
-  ctx.closePath()
-  ctx.fill()
   ctx.restore()
 }
 

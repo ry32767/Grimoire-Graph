@@ -194,7 +194,7 @@ z 場に極（1/x 型の特異点）を仕込み、狙点で暴発させる敵�
 
 | 定数 | 値 | 意味 |
 |---|---|---|
-| `INTERNAL` | 520 | Canvas 内部解像度（px・正方形） |
+| 盤面 canvas | コンテナ全面 | `.gm-board-inner` の実寸（CSS px）を `ResizeObserver` で測り、内部解像度は `devicePixelRatio`（最大2）倍 |
 | `MS_PER_GAMESEC` | 360 | ゲーム内時間→実時間の換算（ms） |
 | `MIN_MS` / `MAX_MS` | 700 / 2300 | 飛行演出の下限/上限（ms） |
 | `MIN_SPEED` | 0.5 | タイムライン用の最小速度 |

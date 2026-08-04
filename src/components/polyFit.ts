@@ -36,15 +36,19 @@ export function polyFit(points: Vec2[], deg: number): number[] | null {
   return B.map((b, i) => b / A[i][i])
 }
 
-/** 係数（低次→高次）を mathjs が読める式へ整形する。 */
-export function formatPoly(coeffs: number[]): string {
+/**
+ * 係数（低次→高次）を mathjs が読める式へ整形する。
+ * varName で変数を選ぶ（軌道 y は x、z 場・結界 r=f(θ) は t）。
+ */
+export function formatPoly(coeffs: number[], varName: 'x' | 't' = 'x'): string {
   let s = ''
   for (let i = coeffs.length - 1; i >= 0; i--) {
     const v = coeffs[i]
     if (Math.abs(v) < 5e-5) continue
     let num = Math.abs(v).toFixed(4).replace(/0+$/, '').replace(/\.$/, '')
     if (num === '') num = '0'
-    const term = i === 0 ? num : `${num === '1' ? '' : `${num}*`}${i === 1 ? 'x' : `x^${i}`}`
+    const term =
+      i === 0 ? num : `${num === '1' ? '' : `${num}*`}${i === 1 ? varName : `${varName}^${i}`}`
     s += (v < 0 ? (s ? ' - ' : '-') : s ? ' + ' : '') + term
   }
   return s || '0'

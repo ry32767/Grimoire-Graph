@@ -1,7 +1,7 @@
 /* =========================================================
    詠唱コンソール／読み出しストリップ／作図台／見返しバー／ステージ選択
-   （DC プロトタイプ v3 の UI をこのリポジトリのトークンへ移植した分）
-   属性色（--light/--dark）は「意味」だけに使い、構造は鋼青（--edge-lite/--cursor）で組む。
+   **正典＝ docs/ゲームUIプロトタイプ検討/Graph Mage Battle v3.dc.html**。
+   寸法・色・枠線幅はプロトタイプのインラインスタイルをそのまま写している（勝手に変えない）。
    ========================================================= */
 
 /* ---- 読み出しの色調（tone-*）：意味に対応した1色だけを縁と文字に載せる ---- */
@@ -23,14 +23,14 @@
 .readout-strip {
   display: flex;
   align-items: baseline;
-  gap: 12px;
-  width: min(100%, 860px);
+  gap: 14px;
+  width: 100%;
   margin-inline: auto;
-  padding: 8px 12px;
+  padding: 8px 14px;
   min-width: 0;
-  background: var(--win-2);
-  border-left: 4px solid var(--edge-lite);
-  border-bottom: 2px solid var(--edge-lite);
+  background: #08080e;
+  border-left: 4px solid var(--dim);
+  border-bottom: 1.5px solid var(--dim);
 }
 .readout-strip.tone-good {
   border-color: var(--light);
@@ -45,7 +45,7 @@
 .readout-title {
   flex: none;
   font-family: var(--expr);
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1.2;
   white-space: nowrap;
   color: inherit;
@@ -54,7 +54,7 @@
   min-width: 0;
   font-size: 11px;
   line-height: 1.35;
-  color: var(--text-dim);
+  color: var(--dim);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -62,16 +62,16 @@
 
 /* ---- 4マスの読み取り値 ---- */
 .readout-stats {
-  border: 2px solid var(--edge-lite);
-  background: var(--win);
-  margin-bottom: 8px;
+  border: 1.5px solid var(--edge);
+  background: var(--panel);
+  margin-bottom: 0;
 }
 .readout-stats-head {
-  padding: 6px 9px;
-  border-bottom: 2px solid var(--edge-lite);
-  background: var(--win-2);
-  font-size: 11px;
-  color: var(--text-dim);
+  padding: 7px 10px;
+  border-bottom: 1.5px solid var(--edge);
+  background: var(--panel-head);
+  font-size: 10.5px;
+  color: var(--dim);
   letter-spacing: 1px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -82,17 +82,18 @@
   grid-template-columns: 1fr 1fr;
 }
 .readout-stat {
-  padding: 7px 9px;
-  border-right: 1px solid var(--edge-dark);
-  border-bottom: 1px solid var(--edge-dark);
+  padding: 8px 10px;
+  border-right: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
 }
 .readout-stat .k {
-  font-size: 10px;
-  color: var(--text-dim);
+  font-size: 9.5px;
+  letter-spacing: 0.5px;
+  color: var(--dim);
 }
 .readout-stat .v {
   font-family: var(--expr);
-  font-size: 15px;
+  font-size: 14.5px;
   margin-top: 2px;
   white-space: nowrap;
 }
@@ -101,7 +102,7 @@
 .spell-console {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 .console-head {
@@ -113,7 +114,7 @@
 .expr-row {
   display: flex;
   align-items: stretch;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 .expr-tag {
@@ -122,116 +123,126 @@
   display: grid;
   place-items: center;
   font-family: var(--expr);
-  font-size: 16px;
-  border: 2px solid var(--edge-lite);
-  background: var(--win-2);
+  font-size: 15px;
+  border: 1.5px solid var(--edge-2);
+  background: var(--input-bg);
 }
 .expr-tag.y {
-  color: var(--light);
-  border-color: var(--light);
+  color: var(--gold);
+  background: #171205;
+  border-color: var(--gold-d);
 }
 .expr-tag.z {
-  color: var(--dark);
-  border-color: var(--dark);
+  color: var(--vio);
+  background: #120e26;
+  border-color: var(--vio-d);
 }
 .expr-input {
   flex: 1;
   min-width: 0;
-  background: var(--bg);
-  border: 2px solid var(--edge-lite);
+  background: var(--input-bg);
+  border: 1.5px solid var(--edge-2);
   color: var(--text);
   font-family: var(--expr);
-  font-size: 16px;
-  padding: 8px 10px;
+  font-size: 15.5px;
+  letter-spacing: 0.3px;
+  padding: 9px 11px;
   outline: none;
 }
 .expr-input.y {
-  color: var(--light-soft);
+  color: var(--gold-2);
 }
 .expr-input.z {
-  color: var(--dark);
+  color: var(--vio-2);
 }
-.expr-input.focused {
-  border-color: var(--cursor);
+.expr-input.y.focused {
+  border-color: var(--gold);
+}
+.expr-input.z.focused {
+  border-color: var(--vio);
 }
 .expr-input.invalid {
-  border-color: var(--hp-low);
+  border-color: var(--red);
 }
 .solve-angle {
   flex: none;
-  width: 104px;
+  width: 96px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
   gap: 1px;
+  padding: 0 9px;
+  background: var(--input-bg);
+  border: 1.5px solid var(--edge-2);
   text-align: left;
 }
 .solve-label {
-  font-size: 10px;
-  color: var(--text-dim);
+  font-size: 9px;
+  color: var(--dim);
+  white-space: nowrap;
 }
 .solve-label em {
   font-style: normal;
-  color: var(--light);
+  color: var(--gold);
 }
 .solve-value {
   font-family: var(--expr);
-  font-size: 14px;
-  color: var(--light-soft);
+  font-size: 13px;
+  color: var(--gold-2);
 }
 .el-auto {
   flex: none;
-  width: 88px;
+  width: 78px;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 0 8px;
-  background: var(--bg);
-  border: 2px solid var(--edge-lite);
+  padding: 0 9px;
+  background: var(--input-bg);
+  border: 1.5px solid var(--edge-2);
 }
 .el-auto .k {
-  font-size: 10px;
-  color: var(--text-dim);
+  font-size: 9px;
+  color: var(--dim);
 }
 .el-auto .v {
-  font-size: 13px;
+  font-size: 12px;
 }
 .console-hint {
   min-height: 15px;
+  font-family: var(--expr);
   font-size: 11px;
-  line-height: 1.4;
-  color: var(--text-dim);
+  line-height: 1.3;
+  color: var(--dim);
 }
 .console-hint.error {
-  color: var(--hp-low);
+  color: var(--red);
 }
 
 /* ---- 係数スライダー（式中の数値を自動検出） ---- */
 .coef-row {
   display: flex;
-  gap: 6px;
+  gap: 7px;
   flex-wrap: wrap;
 }
 .coef-ctrl {
   display: flex;
   align-items: center;
-  gap: 7px;
-  background: var(--bg);
-  border: 1px solid var(--edge-lite);
-  padding: 4px 8px;
+  gap: 8px;
+  background: var(--console-bg);
+  border: 1px solid var(--edge);
+  padding: 5px 9px;
 }
 .coef-label {
   font-family: var(--expr);
   font-size: 13px;
-  color: var(--light);
+  color: var(--gold);
 }
 .coef-val {
   font-family: var(--expr);
-  font-size: 13px;
-  color: var(--light-soft);
-  width: 44px;
-  text-align: right;
+  font-size: 12px;
+  color: var(--gold-2);
+  width: 50px;
 }
 .coef-ctrl input[type='range'] {
   width: 104px;
@@ -240,34 +251,36 @@
 /* ---- 術式（スペルブック） ---- */
 .spellbook {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 7px;
   min-width: 0;
 }
 .spellbook-label {
   flex: none;
+  padding-top: 6px;
   font-size: 10px;
   letter-spacing: 1px;
   white-space: nowrap;
-  color: var(--light-soft);
+  color: var(--gold-2);
 }
 .spellbook-label.ward {
-  color: var(--dark);
+  color: var(--vio-2);
 }
+/* 術式チップは横幅に合わせて並べ、入りきらないときだけ折り返す（横スクロールにしない・#67） */
 .spellbook-row {
   flex: 1;
   min-width: 0;
   display: flex;
+  flex-wrap: wrap;
   gap: 5px;
-  overflow-x: auto;
   padding-bottom: 2px;
 }
 .spell-chip {
   flex: none;
-  background: var(--bg-2);
-  border: 2px solid var(--edge-lite);
+  background: var(--key-bg);
+  border: 1.5px solid var(--edge-2);
   color: var(--text);
-  padding: 4px 8px;
+  padding: 5px 9px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -275,25 +288,25 @@
   cursor: pointer;
 }
 .spell-chip:hover {
-  border-color: var(--cursor);
+  border-color: var(--gold-d);
 }
 .spell-chip.ward {
-  border-color: var(--dark-soft);
+  border-color: var(--vio-d);
 }
 .spell-chip .nm {
   font-size: 11px;
   line-height: 1.15;
-  color: var(--light-soft);
+  color: var(--gold-2);
   white-space: nowrap;
 }
 .spell-chip.ward .nm {
-  color: var(--dark);
+  color: var(--vio-2);
 }
 .spell-chip .fx {
   font-family: var(--expr);
-  font-size: 11px;
+  font-size: 9.5px;
   line-height: 1.15;
-  color: var(--text-dim);
+  color: var(--dim);
   white-space: nowrap;
 }
 
@@ -317,35 +330,32 @@
 .keypad {
   display: grid;
   grid-template-columns: repeat(11, 1fr);
-  gap: 3px;
-}
-.gm-console .keypad {
-  max-width: 720px;
+  gap: 4px;
 }
 .pad-key {
-  background: var(--bg-2);
-  border: 2px solid var(--edge-lite);
-  color: var(--text);
+  background: var(--key-bg);
+  border: 1.5px solid var(--edge-2);
+  color: var(--neu);
   font-family: var(--expr);
   font-size: 13px;
-  padding: 4px 0;
-  box-shadow: 0 2px 0 var(--edge-dark);
+  padding: 7px 0;
+  box-shadow: 1px 1px 0 #000;
   cursor: pointer;
 }
 .pad-key:active {
-  transform: translateY(2px);
+  transform: translate(1px, 1px);
   box-shadow: none;
 }
 .pad-key.var {
-  border-color: var(--light);
-  color: var(--light-soft);
+  background: #171205;
+  border-color: var(--gold-d);
+  color: var(--gold-2);
 }
 .pad-key.del {
-  border-color: var(--hp-low);
-  color: var(--hp-low);
+  color: var(--red);
 }
 .pad-key.fn {
-  color: var(--dark);
+  color: var(--neu);
 }
 
 /* ---- z 整形 ---- */
@@ -353,12 +363,12 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 7px 8px;
-  background: var(--bg);
-  border: 1px solid var(--edge-lite);
+  padding: 7px 9px;
+  background: var(--console-bg);
+  border: 1px solid var(--edge);
 }
 .zshape.free {
-  border-color: var(--dark-soft);
+  border-color: var(--vio-d);
 }
 .zshape-head {
   display: flex;
@@ -369,14 +379,14 @@
 .zshape-title {
   font-size: 10px;
   letter-spacing: 1px;
-  color: var(--text-dim);
+  color: var(--dim);
 }
 .zshape-badge {
   font-size: 10px;
-  color: var(--text-dim);
+  color: var(--dim);
 }
 .zshape-badge.free {
-  color: var(--dark);
+  color: var(--vio-2);
 }
 .zshape-kinds {
   display: flex;
@@ -398,9 +408,9 @@
 }
 .zshape-sliders .val {
   font-family: var(--expr);
-  font-size: 13px;
-  color: var(--light-soft);
-  width: 38px;
+  font-size: 12px;
+  color: var(--gold-2);
+  width: 34px;
   text-align: right;
 }
 
@@ -409,8 +419,8 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 8px;
-  background: var(--win);
+  padding: 9px 11px;
+  background: #0b0b14;
 }
 .draft-head {
   display: flex;
@@ -419,15 +429,15 @@
 }
 .draft-title {
   font-size: 12px;
-  color: var(--light-soft);
+  color: var(--gold-2);
 }
 .draft-close {
   margin-left: auto;
 }
 .draft-canvas-wrap {
   position: relative;
-  background: var(--bg);
-  border: 1px solid var(--edge-lite);
+  background: var(--input-bg);
+  border: 1px solid var(--edge);
 }
 .draft-canvas-wrap canvas {
   width: 100%;
@@ -459,9 +469,9 @@
   min-width: 0;
   font-family: var(--expr);
   font-size: 13px;
-  color: var(--light-soft);
-  background: var(--bg);
-  border: 1px solid var(--edge-lite);
+  color: var(--gold-2);
+  background: var(--input-bg);
+  border: 1px solid var(--edge);
   padding: 4px 8px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -487,7 +497,7 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 8px 10px;
+  padding: 6px 8px;
 }
 .playbar-turns,
 .playbar-transport {
@@ -508,8 +518,8 @@
 .playbar-clock {
   flex: none;
   font-family: var(--expr);
-  font-size: 12px;
-  color: var(--light-soft);
+  font-size: 11px;
+  color: var(--gold-2);
   width: 92px;
   text-align: right;
 }
@@ -562,23 +572,24 @@
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  background: var(--bg-2);
-  border: 2px solid var(--edge-lite);
-  box-shadow: 0 3px 0 var(--edge-dark);
+  background: var(--key-bg);
+  border: 1.5px solid var(--edge-2);
+  box-shadow: none;
   color: var(--text);
   text-align: left;
   cursor: pointer;
 }
 .room-chip:hover {
-  border-color: var(--cursor);
+  border-color: var(--gold-d);
 }
 .room-chip.selected {
-  border-color: var(--light);
+  background: #241d06;
+  border-color: var(--gold);
 }
 .room-mark {
   width: 10px;
   height: 10px;
-  background: var(--edge-lite);
+  background: var(--edge-2);
   transform: rotate(45deg);
   flex: none;
 }
@@ -598,8 +609,8 @@
 /* ---- 手引き（図解チュートリアル） ---- */
 .guide-figure {
   position: relative;
-  background: var(--bg);
-  border: 2px solid var(--edge-lite);
+  background: var(--input-bg);
+  border: 1.5px solid var(--edge);
 }
 .guide-figure canvas {
   width: 100%;
@@ -616,11 +627,11 @@
   height: 9px;
   padding: 0;
   border: 0;
-  background: var(--edge-lite);
+  background: var(--edge);
   cursor: pointer;
 }
 .guide-dot.on {
-  background: var(--light);
+  background: var(--gold);
 }
 .guide-nav {
   display: flex;
@@ -635,20 +646,16 @@
     grid-template-columns: repeat(6, 1fr);
   }
   .solve-angle {
-    width: 88px;
+    width: 86px;
   }
   .el-auto {
     width: 76px;
   }
   .readout-strip {
-    flex-direction: column;
-    gap: 2px;
+    gap: 10px;
   }
   .readout-title {
     font-size: 14px;
-  }
-  .readout-sub {
-    white-space: normal;
   }
 }
 
@@ -718,7 +725,7 @@
 .endroll-sep {
   width: 1px;
   height: 44px;
-  background: var(--edge-lite);
+  background: var(--edge-2);
 }
 .endroll-note {
   font-size: 12.5px;

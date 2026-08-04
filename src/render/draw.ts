@@ -1,11 +1,20 @@
 // Canvas 描画関数（機能3・5・#15）。座標変換は coords に集約したものを使う。
 import type { Ally, Attribute, Enemy, EnemySpecies, Obstacle, ObstacleKind, Vec2, ZPoint } from '../game/types'
 import { FIELD } from '../data/constants'
-import { toScreen, scaleOf, visibleBounds, type Viewport } from '../game/coords'
+import { toScreen, scaleOf, type Viewport } from '../game/coords'
 import { attributeOf, strengthOf } from '../game/attribute'
 import { COLORS } from './theme'
-import { ARENA, TOKENS } from './palette'
 import { getWallTexture } from './textures'
+import {
+  drawBoardAxes,
+  drawBoardGrid,
+  drawPreviewRibbon,
+  drawRayAxis,
+  drawTurnTrails,
+  drawZFieldRings,
+  toPreviewPoints,
+  type ZFieldRingsOptions,
+} from './board'
 import {
   speciesOf,
   speciesStyle,
@@ -25,8 +34,6 @@ export interface SceneParams {
   obstacles: Obstacle[]
   /** 現在編集中の味方（強調表示） */
   activeAllyId?: string | null
-  /** 各味方のプレビュー軌道（z つき＝属性で色分け。発射型=飛行軌道／軌道型=リング） */
-  playerPaths?: (ZPoint[] | null)[]
   /** 各味方の暴発（関数エラー）点。プレビューで赤い✕として可視化する。エラー無しは null */
   misfirePoints?: (Vec2 | null)[]
   /** 敵ゴースト軌道（数学座標の点列の配列） */
@@ -43,10 +50,25 @@ export interface SceneParams {
   shakePhase?: number
   /** 軌跡アニメの位相（パーティクルが揺れ・波が流れる。作成フェーズで進める） */
   trailPhase?: number
-  /** 編集中の z 場 z=f(x,y)（#37）。showZField の間だけ薄い場として表示する */
+  /** 編集中の z 場 z=f(x,y)（#37）。showZField の間だけ「場がエラーになる地点」の赤を重ねる */
   zField?: (x: number, y: number) => number
   /** z 場をいじっている間だけ true：場のプレビューを表示する（#37） */
   showZField?: boolean
+  /**
+   * z 場の同心円表示（DC プロトタイプ v3）。術者を中心に z(t) を全開示する盤面の主役。
+   * 作成フェーズで showZField のときだけ渡す。
+   */
+  zRings?: ZFieldRingsOptions
+  /** 射線のローカル座標系（f(x) が住む軸）。アクティブ術者の位置と θ */
+  rayAxis?: { pos: Vec2; angle: number } | null
+  /**
+   * アクティブ術者のプレビュー軌道（v3 のリボン表現）。
+   * previewFull=false のときは弧長 PREVIEW_STUB_ARC までの出だしだけを見せる（＝当たるかは撃つまで分からない）。
+   */
+  previewPath?: ZPoint[] | null
+  previewFull?: boolean
+  /** 前ターンの軌跡（残像）。作成フェーズでうっすら残す */
+  trails?: ZPoint[][]
   /** ボスの多段外見（#51）に渡す状態（bossPhase・finale・outcome）。 */
   bossView?: BossView
   /** 撃破演出が始まった敵ID（#46）：生存スプライトを隠し、消滅アニメへ譲る。 */
@@ -91,90 +113,14 @@ function idSeed(id: string): number {
   return h
 }
 
-/** 方眼1マス＝数学1ユニット（射出関数・z 場と同じ基準で読めるように・#53）。 */
-export const GRID_UNIT = 1
-/** 数えやすさのため、5ユニットごとに濃い大目盛りを引く。 */
-const GRID_MAJOR = 5
-/** ズームアウト時でも線を引きすぎて固まらないための上限（#53：崩れない保険）。 */
-const GRID_MAX_LINES = 240
-
-/** u が大目盛り（GRID_MAJOR の倍数）か。 */
-function isMajorLine(u: number): boolean {
-  return Math.abs(u - Math.round(u / GRID_MAJOR) * GRID_MAJOR) < 1e-9
-}
-
-/** 背景：数学グリッドと軸・場外境界（場のタイルは廃止）。1マス=1ユニット・可視範囲に追従（#53）。 */
+/**
+ * 背景：方眼・軸・目盛り数値・場外境界（DC プロトタイプ v3 の盤面）。
+ * 1マス=2ユニット、10ごとに濃い線、5ごとに数値を振る「グラフ用紙」の見せ方。
+ * 単体で呼ばれたとき（エンドロール等）は軸まで一気に描く。
+ */
 export function drawBackground(ctx: CanvasRenderingContext2D, vp: Viewport): void {
-  ctx.fillStyle = COLORS.bg
-  ctx.fillRect(0, 0, vp.width, vp.height)
-
-  // 光/闇の気配（DESIGN.md §4.3：左上に金・右下に紫をごく薄く）
-  const lightGlow = ctx.createRadialGradient(0, 0, 0, 0, 0, vp.width * 0.6)
-  lightGlow.addColorStop(0, ARENA.lightGlow)
-  lightGlow.addColorStop(1, 'rgba(244,196,48,0)')
-  ctx.fillStyle = lightGlow
-  ctx.fillRect(0, 0, vp.width, vp.height)
-  const darkGlow = ctx.createRadialGradient(vp.width, vp.height, 0, vp.width, vp.height, vp.width * 0.6)
-  darkGlow.addColorStop(0, ARENA.darkGlow)
-  darkGlow.addColorStop(1, 'rgba(138,111,214,0)')
-  ctx.fillStyle = darkGlow
-  ctx.fillRect(0, 0, vp.width, vp.height)
-
-  // 画面に映る数学範囲をユニット境界へ丸める（スケール変更でも方眼が全体を覆う）
-  const b = visibleBounds(vp)
-  // 線が多すぎる極端なズームアウトでは間隔を倍々に広げて固まりを防ぐ（通常スケールでは 1）
-  let unit = GRID_UNIT
-  const span = Math.max(b.maxX - b.minX, b.maxY - b.minY)
-  while (span / unit > GRID_MAX_LINES) unit *= 2
-  const x0 = Math.floor(b.minX / unit) * unit
-  const x1 = Math.ceil(b.maxX / unit) * unit
-  const y0 = Math.floor(b.minY / unit) * unit
-  const y1 = Math.ceil(b.maxY / unit) * unit
-
-  // 縦線・横線（小目盛り→大目盛りの順に2パスで描き、大目盛りを上に重ねる）
-  for (const major of [false, true]) {
-    ctx.strokeStyle = major ? COLORS.gridMajor : COLORS.grid
-    ctx.lineWidth = 1
-    ctx.beginPath()
-    for (let u = x0; u <= x1 + 1e-9; u += unit) {
-      if (isMajorLine(u) !== major) continue
-      const a = toScreen({ x: u, y: y0 }, vp)
-      const c = toScreen({ x: u, y: y1 }, vp)
-      ctx.moveTo(a.x, a.y)
-      ctx.lineTo(c.x, c.y)
-    }
-    for (let u = y0; u <= y1 + 1e-9; u += unit) {
-      if (isMajorLine(u) !== major) continue
-      const a = toScreen({ x: x0, y: u }, vp)
-      const c = toScreen({ x: x1, y: u }, vp)
-      ctx.moveTo(a.x, a.y)
-      ctx.lineTo(c.x, c.y)
-    }
-    ctx.stroke()
-  }
-  // 軸
-  ctx.strokeStyle = COLORS.axis
-  ctx.lineWidth = 2
-  const o = toScreen({ x: 0, y: 0 }, vp)
-  ctx.beginPath()
-  ctx.moveTo(0, o.y)
-  ctx.lineTo(vp.width, o.y)
-  ctx.moveTo(o.x, 0)
-  ctx.lineTo(o.x, vp.height)
-  ctx.stroke()
-
-  // 原点マーカー（DESIGN.md §4.3：cursor色の6px角＋濃縁）
-  ctx.fillStyle = TOKENS.cursor
-  ctx.strokeStyle = TOKENS.edgeDark
-  ctx.lineWidth = 1
-  ctx.fillRect(o.x - 3, o.y - 3, 6, 6)
-  ctx.strokeRect(o.x - 3, o.y - 3, 6, 6)
-
-  // 場外境界（rField：真円・鋼青の縁）
-  ctx.strokeStyle = TOKENS.edgeLite
-  ctx.beginPath()
-  ctx.arc(o.x, o.y, vp.unitsRadius * scaleOf(vp), 0, Math.PI * 2)
-  ctx.stroke()
+  drawBoardGrid(ctx, vp, COLORS.bg)
+  drawBoardAxes(ctx, vp)
 }
 
 function strokePath(ctx: CanvasRenderingContext2D, pts: Vec2[], vp: Viewport): void {
@@ -1288,45 +1234,6 @@ export function drawWaveTrail(
   ctx.restore()
 }
 
-/**
- * z 場（属性の高さ）を薄い場として描く（#37）。z をいじっている間だけ表示し、敵・壁より下のレイヤに置く。
- * 格子状にサンプルし、光（z>0）=金・闇（z<0）=紫で、強度（|z|→zPeak付近で最大）ほど濃く塗る。
- */
-export function drawZFieldOverlay(
-  ctx: CanvasRenderingContext2D,
-  zField: (x: number, y: number) => number,
-  vp: Viewport,
-): void {
-  // 方眼と同じ1ユニット刻みのセルで塗る（1マス=1ユニット・グリッドに整列・#53）。
-  // セルは整数境界 [x, x+1] を占め、中心 (x+0.5, y+0.5) の z で代表させる。
-  const s = scaleOf(vp)
-  const cell = GRID_UNIT * s
-  const R = vp.unitsRadius // #49：場の半径はビューポートから（面/フェーズで可変）
-  const b = visibleBounds(vp)
-  const x0 = Math.max(-R, Math.floor(b.minX / GRID_UNIT) * GRID_UNIT)
-  const x1 = Math.min(R, Math.ceil(b.maxX / GRID_UNIT) * GRID_UNIT)
-  const y0 = Math.max(-R, Math.floor(b.minY / GRID_UNIT) * GRID_UNIT)
-  const y1 = Math.min(R, Math.ceil(b.maxY / GRID_UNIT) * GRID_UNIT)
-  ctx.save()
-  for (let x = x0; x < x1 + 1e-9; x += GRID_UNIT) {
-    for (let y = y0; y < y1 + 1e-9; y += GRID_UNIT) {
-      const cx = x + GRID_UNIT / 2
-      const cy = y + GRID_UNIT / 2
-      if (Math.hypot(cx, cy) > R) continue
-      const z = zField(cx, cy)
-      if (!Number.isFinite(z)) continue
-      const attr = attributeOf(z)
-      if (attr === 'neutral') continue
-      const t = Math.min(strengthOf(z) / FIELD.sMax, 1)
-      const c = toScreen({ x: cx, y: cy }, vp)
-      ctx.fillStyle =
-        attr === 'light' ? `rgba(244,196,48,${0.04 + t * 0.16})` : `rgba(123,92,196,${0.05 + t * 0.18})`
-      ctx.fillRect(c.x - cell / 2, c.y - cell / 2, cell + 1, cell + 1)
-    }
-  }
-  ctx.restore()
-}
-
 /** 極とみなす |z| の発散しきい（ここを超えて伸び続ければ極＝発散と判定）。 */
 const ERR_BLOWUP = 500
 
@@ -1408,37 +1315,42 @@ export function drawZFieldErrors(
 
 /** 静的シーン一式を描画する。 */
 export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
-  drawBackground(ctx, p.vp)
+  // 方眼 → z 場の同心円 → 軸・目盛り（v3 の重ね順：軸は場の上で必ず読める）
+  drawBoardGrid(ctx, p.vp, COLORS.bg)
 
   // ステージの異変（04b §4b.2）：instability が上がるほど背景が波打ち、床にひびが走る
   if (p.anomaly && p.anomaly > 0) {
     drawAnomaly(ctx, p.vp, p.anomaly, p.trailPhase ?? p.shakePhase ?? 0)
   }
 
-  // 編集中の z 場を薄い場として表示（#37）。敵・壁より下のレイヤ＝背景直後に描く
-  if (p.showZField && p.zField) {
-    drawZFieldOverlay(ctx, p.zField, p.vp)
-    // 場がエラーになる地点を全て赤で可視化（極=線・定義域外=領域・#30）
-    drawZFieldErrors(ctx, p.zField, p.vp)
-  }
+  // z 場：術者中心の同心円（半径＝飛行距離 t）。地形より下に敷く（v3 の盤面）
+  if (p.showZField && p.zRings) drawZFieldRings(ctx, p.vp, p.zRings)
+  drawBoardAxes(ctx, p.vp)
+  // 場がエラーになる地点を全て赤で可視化（極=線・定義域外=領域・#30）
+  if (p.showZField && p.zField) drawZFieldErrors(ctx, p.zField, p.vp)
 
-  // 敵ゴースト軌道
+  // 射線のローカル座標系（f(x) が住む軸・10 ごとの目盛り）
+  if (p.rayAxis) drawRayAxis(ctx, p.vp, p.rayAxis.pos, p.rayAxis.angle)
+
+  // 敵ゴースト軌道（次の一手の破線）
   if (p.ghostPaths) {
-    ctx.strokeStyle = COLORS.ghost
-    ctx.lineWidth = 2
+    ctx.save()
+    ctx.strokeStyle = 'rgba(188,198,224,.42)'
+    ctx.lineWidth = 1.6
     ctx.setLineDash([5, 4])
     for (const path of p.ghostPaths) strokePath(ctx, path, p.vp)
     ctx.setLineDash([])
+    ctx.restore()
   }
 
   drawObstacles(ctx, p.obstacles, p.vp)
 
-  // 各味方のプレビュー軌道（z で色分け）。敵より先に描き、敵に被らせない（#27）。
-  // #37：軌跡のみを表示し、着弾点（どこで途切れるか）のマーカーは出さない。
-  if (p.playerPaths) {
-    for (const path of p.playerPaths) {
-      if (path && path.length > 1) strokeZPath(ctx, path, p.vp)
-    }
+  // 前ターンの軌跡（残像）：どこを通ったかがうっすら残る
+  if (p.trails && p.trails.length > 0) drawTurnTrails(ctx, p.vp, p.trails)
+
+  // アクティブ術者のプレビュー軌道（v3 のリボン）。既定は出だしだけ＝当たるかは撃つまで分からない
+  if (p.previewPath && p.previewPath.length > 1) {
+    drawPreviewRibbon(ctx, p.vp, toPreviewPoints(p.previewPath), p.previewFull ?? false)
   }
 
   // 敵・術者は軌跡の上に描く（軌跡で隠れない・#27）
@@ -1448,10 +1360,29 @@ export function drawScene(ctx: CanvasRenderingContext2D, p: SceneParams): void {
   // 関数エラーで暴発する点を赤い✕で可視化（最前面・#30）。
   // instability が進んでいると、半径のブレ帯（min–max のぼやけた二重リング）を重ねる（04b §4b.3）
   if (p.misfirePoints) {
+    const phase = p.shakePhase ?? p.trailPhase ?? 0
     for (const m of p.misfirePoints) {
       if (!m) continue
       if (p.misfireBand) drawMisfireBand(ctx, m, p.misfireBand, p.vp)
       drawMisfireMarker(ctx, m, p.vp)
+      // 膜が摩耗するほど、予想半径そのものが揺らいで読めなくなる（04b §4b.3・v3）
+      if (p.misfireBand && (p.anomaly ?? 0) >= 3) {
+        const mid = (p.misfireBand.min + p.misfireBand.max) / 2
+        const amp = ((p.anomaly ?? 0) - 2) * 0.55
+        const c = toScreen(m, p.vp)
+        const s = scaleOf(p.vp)
+        ctx.save()
+        ctx.setLineDash([3, 5])
+        ctx.lineWidth = 1
+        for (let k = 0; k < 3; k++) {
+          const rr = (mid + Math.sin(phase * 2.1 + k * 2.3) * amp * (1 + k * 0.45)) * s
+          ctx.strokeStyle = `rgba(255,125,94,${(0.22 - k * 0.05).toFixed(3)})`
+          ctx.beginPath()
+          ctx.arc(c.x, c.y, Math.max(2, rr), 0, Math.PI * 2)
+          ctx.stroke()
+        }
+        ctx.restore()
+      }
     }
   }
 

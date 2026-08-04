@@ -162,7 +162,7 @@ src/
 │  │  ├ trajectories.ts       family→軌道の組み立て（attacker/ruptor 共有）
 │  │  └ perception.ts         隠蔽時の見かけ位置・脅威優先度（attacker/ruptor 共有）
 │  ├ recommend.ts           おすすめ術式の探索
-│  ├ exprFit.ts             式の係数化（数値→スライダー）・通過点フィット（最小二乗・#46）
+│  ├ exprFit.ts             式の係数化（数値→スライダー）・通過点/方眼紙フィット（最小二乗・#46/#67）
 │  ├ turn.ts                ターン解決の中核
 │  └ battle.ts              戦闘ループ・勝敗判定
 ├ data/
@@ -171,7 +171,7 @@ src/
 │  ├ party.ts               自陣営 3 人
 │  └ story.ts               世界観テキスト
 ├ components/               React UI（BattleCanvas/FunctionPanel/Hud/Codex/Guide/screens/composer）
-├ render/                   draw.ts（描画関数群）・theme.ts（配色）・species.ts（種族→パレット/装飾の純粋関数・05c §0/§6・#46）・textures.ts（壁タイル）
+├ render/                   draftpad.ts（作図台の方眼紙・結界の輪・#67）・board.ts（盤面プリミティブ＝方眼/z場の同心円/射線/結界/闇幕・DCプロトタイプv3）・draw.ts（スプライトとエフェクト）・theme.ts（配色）・species.ts（種族→パレット/装飾の純粋関数・05c §0/§6・#46）・textures.ts（壁タイル）
 ├ audio/sound.ts            Web Audio 合成の効果音・BGM
 └ styles/                   CSS・フォント
 ```
@@ -192,12 +192,14 @@ src/
 | `components/rayInfo.ts` | 射線上に何があるか・距離 r での読み取り値・極・立ちはだかる結界（[03 §3.6](03-functions.md)） |
 | `components/readout.ts` | 上をまとめて「読み出しストリップ」「4 マスの数値」「術者カードの一行」を組む |
 | `components/zshape.ts` | z の正準形（山/段/波/平）の解析と生成（[03 §3.2b](03-functions.md)） |
-| `components/polyFit.ts` | 作図台の最小二乗多項式フィットと式整形 |
+| `components/polyFit.ts` | 作図台の最小二乗多項式フィットと式整形（式に係数が無いときの受け皿・#67） |
+| `components/CoefSliders.tsx` | 係数スライダー（コンソールと作図台で共有・端で離すとレンジ取り直し・#67） |
 | `components/solveAngle.ts` | 「⟳ 解く」：形はそのままに的を通る θ を数値探索（`simulateFlight` を実際に回す） |
 | `components/testStage.ts` | 「試しの間」（壁 4 種＋直射敵 2 体の練習部屋）の Stage を組み立てる |
 | `components/TopRail.tsx` | 上段レール（間・進行・ターン・味方/敵の合計HP・膜） |
 | `components/ZPlot.tsx` | 右レールの z(t) 断面（描画は `render/zplot.ts`） |
 | `components/CasterCards.tsx` | 右レールの術者カード（HP・式・読み出しの一行） |
+| `render/board.ts` | 盤面の見せ方（DC プロトタイプ v3）：方眼・軸・**z 場の同心円**・射線のローカル軸・狙いの矢印・プレビュー帯・結界リング・闇幕・飛翔の残光/閃光/火花・衝撃波・相殺・敵頭上 HP バー・ダメージ数値。属性/強度/加速度は `src/game/` の純粋関数を読むだけで、ロジックは持たない |
 | `render/tutorialFigures.ts` | 手引き（8 枚）の canvas 図版 |
 | `render/titleScreen.ts` | タイトル背景（式が動くループアニメーション） |
 | `components/AnomalyOverlay.tsx` | 膜の摩耗の全画面演出（描画は `render/anomaly.ts`） |

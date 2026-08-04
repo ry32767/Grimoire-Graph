@@ -94,6 +94,7 @@ npm run build
 
 # テスト / 静的解析
 npm test          # Vitest（ゲームロジックの純粋関数）
+npm run test:all  # 上記＋バランス回帰の自動プレイボット（時間がかかる）
 npm run lint      # ESLint
 npm run typecheck # tsc --noEmit
 ```

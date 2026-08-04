@@ -2,15 +2,22 @@
 // y（軌道）と z（属性場）を別入力として並べ、いま編集している側のコントロールだけを出す。
 // y 欄は `r=` で始めると結界（極座標 r=f(θ)）になる。z 欄の変数は t＝術者からの距離。
 import { useRef } from 'react'
-import { type ComposerState, setCoeffPatch, yTextPatch, zTextPatch, yTextOf } from './composer'
+import {
+  type ComposerState,
+  recenterCoeffPatch,
+  setCoeffPatch,
+  yTextPatch,
+  zTextPatch,
+  yTextOf,
+} from './composer'
 import type { Readout } from './readout'
 import { elementReadout } from './readout'
+import CoefSliders from './CoefSliders'
 import ZFieldControls from './ZFieldControls'
 
 export type ConsoleFocus = 'y' | 'z'
 
 interface Props {
-  allyName: string
   composer: ComposerState
   onChange: (next: Partial<ComposerState>) => void
   readout: Readout
@@ -25,11 +32,6 @@ interface Props {
   /** 記号盤（キーパッド）を出すか（開閉ボタンは発射列にある） */
   padOpen: boolean
   /** 盤面の通過点フィット（#46・射出のみ） */
-  fitPickActive?: boolean
-  fitPointCount?: number
-  onToggleFitPick?: () => void
-  onRunFit?: () => void
-  onClearFitPoints?: () => void
 }
 
 /** y（軌道）の術式 */
@@ -134,13 +136,6 @@ export default function FunctionPanel(props: Props) {
 
   return (
     <div className="spell-console">
-      <div className="console-head">
-        <span className="panel-ally">{props.allyName} の術式</span>
-        <span className={`kind-badge ${c.mode === 'polar' ? 'orbit' : 'projectile'}`}>
-          {c.mode === 'polar' ? '軌道型（結界）' : '発射型（火球）'}
-        </span>
-      </div>
-
       {/* y = f(x)（`r=` で結界） */}
       <div className="expr-row">
         <span className="expr-tag y">y=</span>
@@ -207,21 +202,15 @@ export default function FunctionPanel(props: Props) {
       {/* y を編集中：式から自動検出した係数スライダー */}
       {!onZ && canFit && (
         <div className="coef-row">
-          {c.fitParams.map((p) => (
-            <div className="coef-ctrl" key={p.key}>
-              <span className="coef-label">{p.label}</span>
-              <span className="coef-val">{(c.fitValues[p.key] ?? p.value).toFixed(2)}</span>
-              <input
-                type="range"
-                min={p.min}
-                max={p.max}
-                step={p.step}
-                value={c.fitValues[p.key] ?? p.value}
-                onChange={(e) => onChange(setCoeffPatch(c, p.key, Number(e.target.value)))}
-                aria-label={`係数 ${p.label}`}
-              />
-            </div>
-          ))}
+          <CoefSliders
+            params={c.fitParams}
+            values={c.fitValues}
+            onSet={(key, v) => onChange(setCoeffPatch(c, key, v))}
+            onCommit={(key) => {
+              const patch = recenterCoeffPatch(c, key)
+              if (patch) onChange(patch)
+            }}
+          />
         </div>
       )}
 
@@ -260,36 +249,6 @@ export default function FunctionPanel(props: Props) {
               </button>
             ))}
           </div>
-        </div>
-      )}
-
-      {/* 盤面の通過点フィット（射出のみ・#46） */}
-      {!onZ && canFit && props.onToggleFitPick && (
-        <div className="fit-row">
-          <span className="fit-label">盤面で通過点</span>
-          <button
-            type="button"
-            className={`btn small${props.fitPickActive ? ' selected' : ''}`}
-            onClick={props.onToggleFitPick}
-          >
-            {props.fitPickActive ? '点を置く…' : '点を選ぶ'}
-          </button>
-          <button
-            type="button"
-            className="btn small primary"
-            disabled={(props.fitPointCount ?? 0) < 1}
-            onClick={props.onRunFit}
-          >
-            フィット（{props.fitPointCount ?? 0}）
-          </button>
-          <button
-            type="button"
-            className="btn small"
-            disabled={(props.fitPointCount ?? 0) < 1 && !props.fitPickActive}
-            onClick={props.onClearFitPoints}
-          >
-            クリア
-          </button>
         </div>
       )}
 

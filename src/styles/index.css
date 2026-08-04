@@ -86,13 +86,78 @@ body {
   background-attachment: fixed;
 }
 
+/* ---- 素の要素：プロトタイプ v3 の body 直下スタイルをそのまま写す ---- */
 button {
   font-family: var(--font-body);
+  letter-spacing: 0.5px;
   cursor: pointer;
+  color: inherit;
+  border-radius: 0;
+  image-rendering: pixelated;
+  transition: none;
+}
+button:active {
+  transform: translate(1px, 1px);
+}
+input {
+  font-family: var(--expr);
+  border-radius: 0;
+  letter-spacing: 0.5px;
 }
 
 canvas {
   image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* ドット調のレンジつまみ：丸みを消して四角いブロックに（プロトタイプ v3） */
+input[type='range'] {
+  accent-color: var(--gold);
+  -webkit-appearance: none;
+  appearance: none;
+  height: 12px;
+  background: var(--key-bg);
+  border: 1.5px solid var(--edge-2);
+  background-image:
+    linear-gradient(
+      90deg,
+      transparent calc(50% - 1px),
+      var(--edge-2) calc(50% - 1px),
+      var(--edge-2) calc(50% + 1px),
+      transparent calc(50% + 1px)
+    ),
+    repeating-linear-gradient(90deg, transparent 0 7px, #1b1b2e 7px 8px);
+  background-repeat: no-repeat, repeat;
+}
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 10px;
+  height: 16px;
+  background: var(--gold);
+  border: 1.5px solid #000;
+  box-shadow: 2px 2px 0 #000;
+}
+input[type='range']::-moz-range-thumb {
+  width: 10px;
+  height: 16px;
+  border-radius: 0;
+  background: var(--gold);
+  border: 1.5px solid #000;
+}
+
+::selection {
+  background: var(--gold);
+  color: #0b0b14;
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2a42;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* ---- 共通：チャンキー枠パネル ---- */
@@ -107,61 +172,60 @@ canvas {
 
 /* ---- ボタン（DESIGN.md §4.2：押し込む石。角丸なし・ハード影・鋼青が構造色） ---- */
 .btn {
-  background: var(--bg-2);
-  color: var(--text);
-  border: 2px solid var(--edge-lite);
+  background: var(--key-bg);
+  color: var(--dim);
+  border: 1.5px solid var(--edge-2);
   border-radius: 0;
-  box-shadow: 0 3px 0 var(--edge-dark);
-  padding: 8px 14px;
-  font-size: 13px;
-  transition: transform 0.05s;
+  box-shadow: none;
+  padding: 7px 12px;
+  font-size: 11px;
+  letter-spacing: 1px;
+  transition: none;
 }
 .btn:hover,
 .btn:focus-visible {
-  border-color: var(--cursor);
-  color: var(--cursor);
+  color: var(--gold-2);
 }
 .btn:active {
-  transform: translateY(3px);
-  box-shadow: 0 0 0 var(--edge-dark);
+  transform: translate(1px, 1px);
+  box-shadow: none;
 }
-/* gold：そのフェーズの最重要アクション（1画面1つ・DESIGN.md §2.3例外） */
+/* gold：そのフェーズの最重要アクション（プロトタイプの選択・強調と同じ塗り） */
 .btn.primary,
 .btn.gold {
-  background: linear-gradient(180deg, #3a2f10, var(--bg-2));
-  border-color: var(--light);
-  color: var(--light-soft);
-  box-shadow: 0 3px 0 #6b4e00;
+  background: #241d06;
+  border-color: var(--gold);
+  color: var(--gold-2);
+  box-shadow: none;
 }
 .btn.primary:hover,
 .btn.gold:hover {
-  border-color: var(--light);
-  color: var(--light);
+  border-color: var(--gold);
+  color: var(--gold-2);
 }
 .btn.danger {
-  border-color: var(--hp-low);
-  color: var(--hp-low);
+  border-color: var(--red);
+  color: var(--red);
 }
-/* 選択状態は鋼青（属性色は使わない・DESIGN.md 三原則1） */
 .btn.selected {
-  background: var(--win);
-  border-color: var(--cursor);
-  color: var(--cursor);
+  background: #241d06;
+  border-color: var(--gold);
+  color: var(--gold-2);
 }
 .btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
 .btn.small {
-  padding: 5px 9px;
-  font-size: 12px;
+  padding: 4px 8px;
+  font-size: 10.5px;
 }
 /* ghost/テキスト：枠なし tertiary（補助アクション） */
 .btn.ghost {
   background: transparent;
   border-color: transparent;
   box-shadow: none;
-  color: var(--text-dim);
+  color: var(--dim);
 }
 .btn.ghost:hover {
   color: var(--cursor);
@@ -583,7 +647,6 @@ div.story-text {
 }
 .slider-row input[type='range'] {
   flex: 1;
-  accent-color: var(--light-1);
 }
 .slider-row .val {
   width: 48px;
@@ -1191,23 +1254,6 @@ code {
   border-color: var(--cursor);
   color: var(--cursor);
   box-shadow: inset 0 0 0 1px var(--cursor);
-}
-
-/* ---- z強度ゲージの現在値・注釈行 ---- */
-.zgauge-readout {
-  font-size: 12px;
-  color: var(--text-dim);
-  margin-top: 4px;
-}
-.zgauge-readout .zval {
-  font-family: var(--expr);
-  font-size: 16px;
-}
-.zgauge-readout .zval.light {
-  color: var(--light);
-}
-.zgauge-readout .zval.dark {
-  color: var(--dark);
 }
 
 /* ---- 点フィット文脈バー ---- */

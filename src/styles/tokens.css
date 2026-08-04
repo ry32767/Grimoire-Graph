@@ -1,33 +1,65 @@
 /* =========================================================
-   デザイントークン（DESIGN.md 正典）
-   「苔むした遺跡の石板に刻まれた、古代式の端末」
-   属性色（光=金/闇=紫）はゲームの意味専用。UI構造は鋼青（edge-lite/cursor）。
+   デザイントークン
+   **正典＝ docs/ゲームUIプロトタイプ検討/Graph Mage Battle v3.dc.html の CSS 変数**。
+   値はプロトタイプの `body{...}` に定義された変数をそのまま写している（変更禁止）。
+
+     --gold:#f4c65a --gold2:#ffe6a0 --goldd:#6b4e14
+     --vio:#957dff  --vio2:#c3b6ff  --viod:#342765
+     --neu:#aab3c6  --red:#ff7d5e
+     --bg:#06060c   --panel:#0d0d18 --panel2:#10101c
+     --edge:#26263c --edge2:#3a3a58 --dim:#7c7f94
+
+   本プロジェクト側の変数名は据え置き、**値だけ**をプロトタイプへ合わせる。
    HEX直書き禁止：実装は必ずこのファイルの変数を参照する。
    ========================================================= */
 :root {
-  /* 2.1 基調（背景・面） */
-  --bg: #08070f;
-  --arena-bg: #0d0b16;
-  --win: #17132a;
-  --win-2: #100c1e;
+  /* ---- プロトタイプの変数（原典の名前のまま・こちらが正） ---- */
+  --gold: #f4c65a;
+  --gold-2: #ffe6a0;
+  --gold-d: #6b4e14;
+  --vio: #957dff;
+  --vio-2: #c3b6ff;
+  --vio-d: #342765;
+  --neu: #aab3c6;
+  --red: #ff7d5e;
+  --panel: #0d0d18;
+  --panel-2: #10101c;
+  --panel-head: #0e0e1a;
+  --edge: #26263c;
+  --edge-2: #3a3a58;
+  --dim: #7c7f94;
+  /* 面の細かい塗り分け（プロトタイプのインラインスタイルで直書きされている値） */
+  --shell-bg: #0a0812;
+  --board-bg: #05050b;
+  --rail-cell: #13101d;
+  --console-bg: #0a0a13;
+  --input-bg: #07070f;
+  --key-bg: #0c0c16;
+  --hairline: #17172a;
 
-  /* 2.2 縁・構造（UIクロム） */
-  --edge-dark: #05040a;
-  --edge-lite: #7d8fc4;
-  --cursor: #9fb3ff;
+  /* 2.1 基調（面） */
+  --bg: var(--shell-bg);
+  --arena-bg: var(--board-bg);
+  --win: var(--panel);
+  --win-2: var(--panel-2);
 
-  /* 2.3 属性色（ゲームの意味専用・UI構造への使用禁止） */
-  --light: #f4c430;
-  --light-soft: #fff3c4;
-  --dark: #8a6fd6;
-  --dark-soft: #362a66;
+  /* 2.2 縁・構造（UIクロム）＝プロトタイプの --edge / --edge2。明るい鋼青は使わない */
+  --edge-dark: #000000;
+  --edge-lite: var(--edge);
+  --cursor: var(--edge-2);
+
+  /* 2.3 属性色（ゲームの意味専用） */
+  --light: var(--gold);
+  --light-soft: var(--gold-2);
+  --dark: var(--vio);
+  --dark-soft: var(--vio-d);
 
   /* 2.4 状態色 */
-  --text: #eef0fb;
-  --text-dim: #8b8fae;
-  --hp-ok: #6bd58c;
-  --hp-low: #e2596b;
-  --warn: #e2a04a;
+  --text: #e9e9f4;
+  --text-dim: var(--dim);
+  --hp-ok: #7fe6a4;
+  --hp-low: var(--red);
+  --warn: var(--gold);
 
   /* 2.5 レイアウト・操作（4px基調。狭幅でも操作密度を落としすぎない） */
   --space-1: 4px;
@@ -48,9 +80,10 @@
   --radius: 0;
   --motion-fast: 90ms steps(2, end);
 
-  /* 3. タイポグラフィ（フォントファイル未同梱のためフォールバックスタックのみ） */
-  --font: 'Pixelify Sans', 'PixelMplus', 'DotGothic16', sans-serif;
-  --expr: 'VT323', monospace;
+  /* 3. タイポグラフィ（プロトタイプは全面 DotGothic16、見出しに Silkscreen） */
+  --font: 'DotGothic16', 'Pixelify Sans', 'PixelMplus', sans-serif;
+  --expr: 'DotGothic16', monospace;
+  --px: 'Silkscreen', 'DotGothic16', monospace;
 
   color-scheme: dark;
 }

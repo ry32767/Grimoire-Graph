@@ -42,6 +42,26 @@ function rangeFor(v: number): { min: number; max: number; step: number } {
 }
 
 /**
+ * 値 v がスライダーの端（1刻みぶんの余裕を見る）に張り付いているか（#67）。
+ * ここで true になったら recenterParam でレンジを取り直し、更に先の値へ進めるようにする。
+ */
+export function atRangeEdge(p: DetectedParam, v: number): boolean {
+  const m = p.step
+  return v <= p.min + m || v >= p.max - m
+}
+
+/**
+ * スライダーのレンジを現在値 v の中心へ取り直す（#67）。幅は「いまの幅」と「|v|」の大きい方を
+ * 半幅に採るので、端まで振り切るたびに到達できる範囲が広がっていく。
+ */
+export function recenterParam(p: DetectedParam, v: number): DetectedParam {
+  const half = Math.max((p.max - p.min) / 2, Math.abs(v), 2)
+  const min = Math.round((v - half) * 100) / 100
+  const max = Math.round((v + half) * 100) / 100
+  return { ...p, min, max, step: niceStep((max - min) / 200) }
+}
+
+/**
  * 式から係数（数値リテラル）を検出し、テンプレートとスライダー定義を返す（変数非依存・#52）。
  * 1 変数（軌道）にも 2 変数（z 場 x,y）にも使える。検出できなければ（不正式）null。
  */
@@ -141,18 +161,23 @@ function localFrame(angle: number, origin: Vec2, points: Vec2[]): { lx: number; 
   })
 }
 
-/** 係数ベクトルでの残差ベクトル（局所フレーム）。評価不能なら null。 */
+/**
+ * 係数ベクトルでの残差ベクトル。評価不能なら null。
+ * relative=true（盤面の通過点フィット）は軌道が g(x)−g(0) を回した形なので g(0) を引く。
+ * relative=false（作図台の方眼紙）はグラフそのものを合わせるので引かない（#67）。
+ */
 function residualsOf(
   spec: ParamSpec,
   keys: string[],
   c: number[],
   frame: { lx: number; ly: number }[],
+  relative: boolean,
 ): number[] | null {
   const vals: ParamValues = {}
   for (let i = 0; i < keys.length; i++) vals[keys[i]] = c[i]
   const g = buildParamFn(spec, vals)
   if (!g) return null
-  const g0 = g(0)
+  const g0 = relative ? g(0) : 0
   if (!Number.isFinite(g0)) return null
   const r: number[] = []
   for (const f of frame) {
@@ -189,8 +214,14 @@ function solveLinear(A: number[][], b: number[]): number[] | null {
   return x.every((v) => Number.isFinite(v)) ? x : null
 }
 
-function costOf(spec: ParamSpec, keys: string[], c: number[], frame: { lx: number; ly: number }[]): number {
-  const r = residualsOf(spec, keys, c, frame)
+function costOf(
+  spec: ParamSpec,
+  keys: string[],
+  c: number[],
+  frame: { lx: number; ly: number }[],
+  relative: boolean,
+): number {
+  const r = residualsOf(spec, keys, c, frame, relative)
   return r ? sumSq(r) : Infinity
 }
 
@@ -253,12 +284,13 @@ function lmRun(
   frame: { lx: number; ly: number }[],
   maxLx: number,
   smoothW: number,
+  relative: boolean,
 ): { c: number[] } {
   const n = keys.length
   const resid = (cc: number[]): number[] | null => {
     // 前方に極がある係数は弾が暴発する。LM が極へ踏み込まないよう、ここで無効化して避ける
     if (pathHasPole(spec, keys, cc, maxLx, 36)) return null
-    const rd = residualsOf(spec, keys, cc, frame)
+    const rd = residualsOf(spec, keys, cc, frame, relative)
     if (!rd) return null
     const rs = smoothResiduals(spec, keys, cc, maxLx, smoothW)
     if (!rs) return null
@@ -344,7 +376,12 @@ function roughnessOf(spec: ParamSpec, keys: string[], c: number[], maxLx: number
  * これで sin の周波数や高次多項式が「点は通るが激しく振動する」過適合を避けつつ、
  * sin・指数・1/x など非凸な関数にも対応する（決定的・乱数なし）。
  */
-function multiStartLM(spec: ParamSpec, current: ParamValues, frame: { lx: number; ly: number }[]): number[] {
+function multiStartLM(
+  spec: ParamSpec,
+  current: ParamValues,
+  frame: { lx: number; ly: number }[],
+  relative: boolean,
+): number[] {
   const keys = spec.params.map((p) => p.key)
   const lo = spec.params.map((p) => p.min)
   const hi = spec.params.map((p) => p.max)
@@ -364,8 +401,8 @@ function multiStartLM(spec: ParamSpec, current: ParamValues, frame: { lx: number
   // 各スタートを LM（データ＋滑らかさ）で最適化し、選別はデータ適合コストで行う。
   // ただし前方に極（発散）がある係数は弾が暴発するので除外（cost=∞）。
   const results = starts.map((st) => {
-    const c = lmRun(spec, keys, st, lo, hi, frame, maxLx, smoothW).c
-    const cost = pathHasPole(spec, keys, c, maxLx) ? Infinity : costOf(spec, keys, c, frame)
+    const c = lmRun(spec, keys, st, lo, hi, frame, maxLx, smoothW, relative).c
+    const cost = pathHasPole(spec, keys, c, maxLx) ? Infinity : costOf(spec, keys, c, frame, relative)
     return { c, cost }
   })
   let bestCost = Infinity
@@ -451,8 +488,55 @@ export function fitToPoints(
   if (keys.length === 0 || points.length === 0) return { values, angle }
   const fitAngle = chooseAngle(origin, points, angle)
   const frame = localFrame(fitAngle, origin, points)
-  const best = multiStartLM(spec, values, frame)
+  const best = multiStartLM(spec, values, frame, true)
   const out: ParamValues = {}
   for (let i = 0; i < keys.length; i++) out[keys[i]] = best[i]
   return { values: out, angle: fitAngle }
+}
+
+/** 作図台（関数空間の方眼紙）の通過点。u＝横軸（x または t）、v＝縦軸（y / z）。 */
+export interface GraphSample {
+  u: number
+  v: number
+}
+
+/**
+ * 方眼紙に打った点へ、**いま書いている式の係数**を合わせる（#67）。多項式に置き換えるのではなく
+ * 係数スライダーを自動で動かすので、選んだ術式（sin・指数・1/x…）の形はそのまま保たれる。
+ * 盤面フィットと違い回転・g(0) の引き算はしない（グラフそのものを合わせる）。
+ * 係数が無い／点が無いときは値を変えない（決定的・乱数なし）。
+ */
+export function fitToGraph(spec: ParamSpec, values: ParamValues, samples: GraphSample[]): ParamValues {
+  const keys = spec.params.map((p) => p.key)
+  if (keys.length === 0 || samples.length === 0) return values
+  const frame = samples.map((s) => ({ lx: s.u, ly: s.v }))
+  const best = multiStartLM(spec, values, frame, false)
+  const out: ParamValues = {}
+  for (let i = 0; i < keys.length; i++) out[keys[i]] = best[i]
+  return out
+}
+
+/**
+ * fitToGraph を、スライダーのレンジごと広げながら繰り返す（#67）。LM は [min,max] に閉じ込めて
+ * 解くので、答えがレンジの外にあると端で止まってしまう。端に張り付いた係数はレンジを取り直して
+ * （＝つまみが中央に戻る）もう一度解き、動かなくなったら終わる。
+ */
+export function fitToGraphAdaptive(
+  spec: ParamSpec,
+  values: ParamValues,
+  samples: GraphSample[],
+  rounds = 3,
+): { params: DetectedParam[]; values: ParamValues } {
+  let params = spec.params
+  let vals = values
+  for (let i = 0; i < rounds; i++) {
+    vals = fitToGraph({ ...spec, params }, vals, samples)
+    const widened = params.map((p) => {
+      const v = vals[p.key] ?? p.value
+      return Number.isFinite(v) && atRangeEdge(p, v) ? recenterParam(p, v) : p
+    })
+    if (widened.every((p, k) => p === params[k])) break
+    params = widened
+  }
+  return { params, values: vals }
 }
