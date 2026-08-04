@@ -153,7 +153,8 @@ export default function FunctionPanel(props: Props) {
     else setY(yTextOf(expr, kind === 'ward' ? 'polar' : 'rotate'))
   }
 
-  const canFit = c.mode === 'rotate' && c.fitParams.length > 0
+  // 係数スライダーは結界（r=f(θ)）でも出す。setCoeffPatch が mode に応じて接頭辞を付け直す（#68）
+  const canFit = c.fitParams.length > 0
   const aim = `${((c.angle * 180) / Math.PI).toFixed(0)}°`
 
   return (
@@ -230,7 +231,7 @@ export default function FunctionPanel(props: Props) {
       {/* z を編集中：整形（山/段/波/平）とスライダー */}
       {onZ && <ZFieldControls composer={c} onChange={onChange} rDistance={readout.ray.d} />}
 
-      {/* y を編集中：式から自動検出した係数スライダー */}
+      {/* y／r を編集中：式から自動検出した係数スライダー */}
       {!onZ && canFit && (
         <div className="coef-row">
           <CoefSliders

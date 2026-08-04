@@ -66,7 +66,6 @@ export default function DraftPad({ composer: c, onChange, rDistance, focus, onCl
   const barrier = !onZ && c.mode === 'polar'
   // 結界は横軸 θ（0〜2π）の普通のグラフとして扱う。軌道・z は横軸＝射線方向の距離
   const axis = barrier ? AXIS_THETA : AXIS_DISTANCE
-  const view = mode
   const source = onZ ? c.zText : barrier ? barrierBody(c.yText) : c.yText
   const params = onZ ? c.zFitParams : c.fitParams
   const values = onZ ? c.zFitValues : c.fitValues
@@ -89,16 +88,16 @@ export default function DraftPad({ composer: c, onChange, rDistance, focus, onCl
       onZ,
       // 角度軸に「的までの距離」は無い
       rDistance: barrier ? null : rDistance,
-      points: view === 'pts' ? pts : [],
-      fitted: view === 'pts' ? poly : null,
+      points: mode === 'pts' ? pts : [],
+      fitted: mode === 'pts' ? poly : null,
     })
-  }, [c.freeExpr, c.zFreeExpr, view, pts, poly, rDistance, onZ, barrier, axis, varName])
+  }, [c.freeExpr, c.zFreeExpr, mode, pts, poly, rDistance, onZ, barrier, axis, varName])
 
   // y↔r や y↔z を切り替えたら、前の座標の意味で打った点は捨てる
   useEffect(() => setPts([]), [barrier, onZ])
 
   const onPadPointer = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (view !== 'pts') return
+    if (mode !== 'pts') return
     const cv = ref.current
     if (!cv) return
     const rect = cv.getBoundingClientRect()
@@ -159,14 +158,14 @@ export default function DraftPad({ composer: c, onChange, rDistance, focus, onCl
         <div className="draft-tabs">
           <button
             type="button"
-            className={`btn small${view === 'coef' ? ' selected' : ''}`}
+            className={`btn small${mode === 'coef' ? ' selected' : ''}`}
             onClick={() => setMode('coef')}
           >
             係数をいじる
           </button>
           <button
             type="button"
-            className={`btn small${view === 'pts' ? ' selected' : ''}`}
+            className={`btn small${mode === 'pts' ? ' selected' : ''}`}
             onClick={() => setMode('pts')}
           >
             点から作る
@@ -176,7 +175,7 @@ export default function DraftPad({ composer: c, onChange, rDistance, focus, onCl
             {source || '0'}
           </span>
         </div>
-        {view === 'coef' && (
+        {mode === 'coef' && (
           <div className="coef-row">
             {params.length > 0 ? (
               <CoefSliders params={params} values={values} onSet={setCoef} onCommit={commitCoef} />
@@ -185,7 +184,7 @@ export default function DraftPad({ composer: c, onChange, rDistance, focus, onCl
             )}
           </div>
         )}
-        {view === 'pts' && (
+        {mode === 'pts' && (
           <div className="draft-pts-row">
             {byExpr ? (
               <span className="hint">いまの式の係数（{params.map((p) => p.label).join('・')}）を点に合わせる</span>
@@ -218,7 +217,7 @@ export default function DraftPad({ composer: c, onChange, rDistance, focus, onCl
             </button>
           </div>
         )}
-        {view === 'pts' && boardPick && (
+        {mode === 'pts' && boardPick && (
           <div className="draft-pts-row">
             <span className="hint">盤面で通過点</span>
             <button

@@ -171,7 +171,7 @@ src/
 │  ├ party.ts               自陣営 3 人
 │  └ story.ts               世界観テキスト
 ├ components/               React UI（BattleCanvas/FunctionPanel/Hud/Codex/Guide/screens/composer）
-├ render/                   draftpad.ts（作図台の方眼紙・結界の輪・#67）・board.ts（盤面プリミティブ＝方眼/z場の同心円/射線/結界/闇幕・DCプロトタイプv3）・draw.ts（スプライトとエフェクト）・theme.ts（配色）・species.ts（種族→パレット/装飾の純粋関数・05c §0/§6・#46）・textures.ts（壁タイル）
+├ render/                   draftpad.ts（作図台の方眼紙。軌道は距離軸・結界は θ 軸の同じグラフ・#67/#68）・board.ts（盤面プリミティブ＝方眼/z場の同心円/射線/結界/闇幕・DCプロトタイプv3）・draw.ts（スプライトとエフェクト）・theme.ts（配色）・species.ts（種族→パレット/装飾の純粋関数・05c §0/§6・#46）・textures.ts（壁タイル）
 ├ audio/sound.ts            Web Audio 合成の効果音・BGM
 └ styles/                   CSS・フォント
 ```

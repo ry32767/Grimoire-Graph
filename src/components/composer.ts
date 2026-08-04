@@ -193,15 +193,11 @@ export function recenterZCoeffPatch(c: ComposerState, key: string): Partial<Comp
   return params ? { zFitParams: params } : null
 }
 
-/** key（未指定なら全係数）のうち端に張り付いたものだけレンジを取り直す。変化なしなら null。 */
-function recenterAll(
-  params: DetectedParam[],
-  values: ParamValues,
-  key?: string,
-): DetectedParam[] | null {
+/** key の係数が端に張り付いていればレンジを取り直す。変化なしなら null。 */
+function recenterAll(params: DetectedParam[], values: ParamValues, key: string): DetectedParam[] | null {
   let changed = false
   const next = params.map((p) => {
-    if (key !== undefined && p.key !== key) return p
+    if (p.key !== key) return p
     const v = values[p.key] ?? p.value
     if (!Number.isFinite(v) || !atRangeEdge(p, v)) return p
     changed = true
