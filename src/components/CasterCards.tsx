@@ -55,7 +55,8 @@ export default function CasterCards({ allies, composers, readouts, activeAllyId,
               <span className="caster-hp-max">/{a.maxHp}</span>
             </span>
             <span className="caster-expr">
-              y={c?.yText || '0'} <span className="sep">·</span> z={c?.zText || '0'}
+              {c?.mode === 'polar' ? '' : 'y='}
+              {c?.yText || '0'} <span className="sep">·</span> z={c?.zText || '0'}
             </span>
           </button>
         )

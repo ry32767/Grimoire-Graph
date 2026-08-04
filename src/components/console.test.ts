@@ -5,10 +5,12 @@ import type { Ally, Enemy, Obstacle } from '../game/types'
 import { FIELD } from '../data/constants'
 import {
   applyFitValuesPatch,
+  barrierBody,
   buildZAt,
   buildZField,
   recenterCoeffPatch,
   setCoeffPatch,
+  swapExprVar,
   yTextOf,
   yTextPatch,
   zTextPatch,
@@ -21,7 +23,8 @@ import {
   initialValues,
   templateUsesVar,
 } from '../game/exprFit'
-import { polarScale } from '../render/draftpad'
+import { AXIS_DISTANCE, AXIS_THETA, padGeo } from '../render/draftpad'
+import { parseExpression } from '../game/functions'
 import { genZShape, parseZShape, patchZShape } from './zshape'
 import { formatPoly, polyFit } from './polyFit'
 import { computeReadout } from './readout'
@@ -379,8 +382,69 @@ describe('作図台：フィットの分岐と結界の尺度（#67）', () => {
     }
   })
 
-  it('結界の輪は固定尺度で描く（r を変えると大きさが変わる）', () => {
-    expect(polarScale(9)).toBe(polarScale(6))
-    expect(9 * polarScale(9)).toBeGreaterThan(6 * polarScale(6))
+  it('結界は横軸 θ（0〜2π）の普通のグラフとして描く（輪ではない）', () => {
+    expect(AXIS_THETA.max).toBeCloseTo(Math.PI * 2, 6)
+    expect(AXIS_THETA.snap).toBeCloseTo(Math.PI / 8, 6)
+    // 距離軸と同じ横幅いっぱいを使う（吸着した θ がそのままラジアン値になる）
+    expect(padGeo(AXIS_THETA).sx * AXIS_THETA.max).toBeCloseTo(
+      padGeo(AXIS_DISTANCE).sx * AXIS_DISTANCE.max,
+      6,
+    )
+  })
+
+  it('結界（r=6）は変数を使わないので θ の多項式へ落ちる', () => {
+    const c = makeComposer('r=6', '0')
+    expect(c.mode).toBe('polar')
+    expect(templateUsesVar(c.fitTemplate, 't')).toBe(false)
+    const pts = [
+      { x: 0, y: 4 },
+      { x: Math.PI, y: 8 },
+      { x: Math.PI * 2, y: 4 },
+    ]
+    const expr = formatPoly(polyFit(pts, 2)!, 't')
+    expect(expr).toContain('t^2')
+    expect(yTextPatch(yTextOf(expr, 'polar')).freeError).toBeNull()
+  })
+})
+
+describe('軌道 y= と結界 r= の切り替え（#68）', () => {
+  it('入力欄には接頭辞を出さない（r= はタグ側が持つ）', () => {
+    const c = makeComposer('r=6 + 1.6*cos(3*t)', '0')
+    expect(c.mode).toBe('polar')
+    expect(barrierBody(c.yText)).toBe('6 + 1.6*cos(3*t)')
+    expect(barrierBody(c.yText)).not.toContain('r=')
+    const y = makeComposer('0.03*x^2', '0')
+    expect(y.mode).toBe('rotate')
+    expect(y.yText).toBe('0.03*x^2')
+  })
+
+  it('切り替えで変数だけ入れ替わり、どの術式も読める式のままになる', () => {
+    const ySpells = ['0', '0.03*x^2', '6*sin(0.4*x)', '8*sin(0.3*x)*exp(-0.06*x)', 'abs(x - 14) - 14', '1/(x - 26)']
+    for (const e of ySpells) {
+      const swapped = swapExprVar(e, 't')
+      expect(swapped).not.toMatch(/\bx\b/)
+      expect(parseExpression(swapped === '' ? '0' : swapped, 't')).not.toBeNull()
+    }
+    const wardSpells = ['6', '6 + 1.6*cos(3*t)', '5/(1 - 0.55*cos(t))', '5 + 1.4*abs(sin(4*t))', '4 + 0.5*t']
+    for (const e of wardSpells) {
+      const swapped = swapExprVar(e, 'x')
+      expect(swapped).not.toMatch(/\bt\b/)
+      expect(parseExpression(swapped, 'x')).not.toBeNull()
+    }
+  })
+
+  it('関数名（exp / max / tan / sqrt）を巻き込まない', () => {
+    expect(swapExprVar('exp(-x)*max(x,1)', 't')).toBe('exp(-t)*max(t,1)')
+    expect(swapExprVar('tan(t) + sqrt(t)', 'x')).toBe('tan(x) + sqrt(x)')
+  })
+
+  it('切り替え後も r=/y= の往復で式本体が保たれる', () => {
+    const c = makeComposer('6*sin(0.4*x)', '0')
+    const toWard = yTextPatch(yTextOf(swapExprVar(c.yText, 't'), 'polar'))
+    expect(toWard.mode).toBe('polar')
+    expect(barrierBody(toWard.yText!)).toBe('6*sin(0.4*t)')
+    const back = yTextPatch(yTextOf(swapExprVar(barrierBody(toWard.yText!), 'x'), 'rotate'))
+    expect(back.mode).toBe('rotate')
+    expect(back.yText).toBe('6*sin(0.4*x)')
   })
 })

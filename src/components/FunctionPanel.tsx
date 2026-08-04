@@ -1,11 +1,15 @@
 // 詠唱コンソール（DC プロトタイプ v3 の CONSOLE）。
 // y（軌道）と z（属性場）を別入力として並べ、いま編集している側のコントロールだけを出す。
-// y 欄は `r=` で始めると結界（極座標 r=f(θ)）になる。z 欄の変数は t＝術者からの距離。
+// 上段は「y= / r=」の切り替えボタン＋式。接頭辞は**ボタン側**が持ち、入力欄には書かない（#68）。
+// 術式チップも同じ切り替えで軌道／結界を出し分ける。z 欄の変数は t＝術者からの距離。
 import { useRef } from 'react'
 import {
   type ComposerState,
+  barrierBody,
+  isBarrierText,
   recenterCoeffPatch,
   setCoeffPatch,
+  swapExprVar,
   yTextPatch,
   zTextPatch,
   yTextOf,
@@ -83,13 +87,31 @@ export default function FunctionPanel(props: Props) {
   const onZ = focus === 'z'
   const el = elementReadout(readout.ref.z)
 
-  const setY = (text: string) => onChange(yTextPatch(text))
+  const ward = c.mode === 'polar'
+  // 入力欄には `r=` を書かない。表示も編集も式の本体だけを扱う
+  const yBody = ward ? barrierBody(c.yText) : c.yText
+
   const setZ = (text: string) => onChange(zTextPatch(text))
+  const setY = (text: string) => {
+    // 親切機能として `r=` と打たれたら結界へ切り替える（接頭辞は入力欄には残さない）
+    const typed = isBarrierText(text)
+    const body = typed ? barrierBody(text) : text
+    onChange(yTextPatch(yTextOf(body, typed ? 'polar' : c.mode)))
+  }
+  /** 軌道 y= と結界 r= を切り替える（式の変数 x↔t も入れ替える）。 */
+  const setKind = (next: 'rotate' | 'polar') => {
+    props.onFocusChange('y')
+    if (c.mode === next) return
+    let body = swapExprVar(yBody, next === 'polar' ? 't' : 'x')
+    // 直線 y=0 のまま結界にすると半径 0（張れない）になるので、既定の円を入れておく
+    if (next === 'polar' && (body.trim() === '' || body.trim() === '0')) body = '6'
+    onChange(yTextPatch(yTextOf(body, next)))
+  }
 
   /** 記号盤：いま編集中の欄のキャレット位置へ記号を差し込む。 */
   const insert = (token: string) => {
     const input = onZ ? zRef.current : yRef.current
-    const cur = onZ ? c.zText : c.yText
+    const cur = onZ ? c.zText : yBody
     let s = cur.length
     let e = cur.length
     if (input && input.selectionStart != null) {
@@ -136,19 +158,28 @@ export default function FunctionPanel(props: Props) {
 
   return (
     <div className="spell-console">
-      {/* y = f(x)（`r=` で結界） */}
+      {/* y = f(x)／結界 r = f(θ)。接頭辞はタグ側が持つ */}
       <div className="expr-row">
-        <span className="expr-tag y">y=</span>
+        <button
+          type="button"
+          className={`expr-tag kind-tag ${ward ? 'ward' : 'y'}`}
+          onClick={() => setKind(ward ? 'rotate' : 'polar')}
+          title={ward ? '押すと軌道 y= に戻る' : '押すと結界 r= に切り替える'}
+          aria-label={ward ? '結界 r=（押すと軌道 y= に切り替え）' : '軌道 y=（押すと結界 r= に切り替え）'}
+        >
+          <span className="kind-now">{ward ? 'r=' : 'y='}</span>
+          <span className="kind-swap">⇄</span>
+        </button>
         <input
           ref={yRef}
           className={`expr-input y${c.freeError ? ' invalid' : ''}${!onZ ? ' focused' : ''}`}
-          value={c.yText}
+          value={yBody}
           onChange={(e) => setY(e.target.value)}
           onFocus={() => props.onFocusChange('y')}
           spellCheck={false}
           autoComplete="off"
-          placeholder="0.06*x^2 - 2  ／  r=6+1.6*cos(3t)"
-          aria-label="軌道の式 y = f(x)"
+          placeholder={ward ? '6 + 1.6*cos(3*t)　（t = θ）' : '0.06*x^2 - 2'}
+          aria-label={ward ? '結界の式 r = f(θ)' : '軌道の式 y = f(x)'}
         />
         <button
           type="button"
@@ -214,17 +245,38 @@ export default function FunctionPanel(props: Props) {
         </div>
       )}
 
-      {/* 術式（スペルブック） */}
+      {/* 術式（スペルブック）。y のときは軌道／結界をトグルで出し分ける */}
       <div className="spellbook">
-        <span className="spellbook-label y">{onZ ? '術式 · 属性場 z' : '術式 · 軌道 y'}</span>
+        {onZ ? (
+          <span className="spellbook-label y">術式 · 属性場 z</span>
+        ) : (
+          <div className="kind-toggle" role="group" aria-label="術式の種類">
+            <button
+              type="button"
+              className={`kind-btn y${ward ? '' : ' selected'}`}
+              onClick={() => setKind('rotate')}
+              title="弾を撃つ軌道 y=f(x)"
+            >
+              y= 軌道
+            </button>
+            <button
+              type="button"
+              className={`kind-btn ward${ward ? ' selected' : ''}`}
+              onClick={() => setKind('polar')}
+              title="弾を撃たず身を守る結界 r=f(θ)"
+            >
+              r= 結界
+            </button>
+          </div>
+        )}
         <div className="spellbook-row">
-          {(onZ ? Z_SPELLS : Y_SPELLS).map((sp) => (
+          {(onZ ? Z_SPELLS : ward ? WARD_SPELLS : Y_SPELLS).map((sp) => (
             <button
               key={sp.name}
               type="button"
-              className="spell-chip"
-              title={`${sp.title} ${onZ ? 'z' : 'y'} = ${sp.expr}`}
-              onClick={() => applySpell(sp.expr, onZ ? 'z' : 'y')}
+              className={`spell-chip${!onZ && ward ? ' ward' : ''}`}
+              title={`${sp.title} ${onZ ? 'z' : ward ? 'r' : 'y'} = ${sp.expr}`}
+              onClick={() => applySpell(sp.expr, onZ ? 'z' : ward ? 'ward' : 'y')}
             >
               <span className="nm">{sp.name}</span>
               <span className="fx">{sp.tag}</span>
@@ -232,25 +284,6 @@ export default function FunctionPanel(props: Props) {
           ))}
         </div>
       </div>
-      {!onZ && (
-        <div className="spellbook">
-          <span className="spellbook-label ward">術式 · 結界 r</span>
-          <div className="spellbook-row">
-            {WARD_SPELLS.map((sp) => (
-              <button
-                key={sp.name}
-                type="button"
-                className="spell-chip ward"
-                title={`${sp.title} r = ${sp.expr}`}
-                onClick={() => applySpell(sp.expr, 'ward')}
-              >
-                <span className="nm">{sp.name}</span>
-                <span className="fx">{sp.tag}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* 記号盤（開閉は発射列の「記号盤」ボタン） */}
       {props.padOpen && (

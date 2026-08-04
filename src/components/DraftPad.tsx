@@ -2,7 +2,8 @@
 // 関数空間の方眼紙。盤面ではないので、ここで打つ点は格子点（整数）に吸着する。
 // 「係数をいじる」＝式中の数値をスライダーで動かす／「点から作る」＝打った点に式を合わせる。
 // 点フィットは **いま書いている式の係数**を自動で動かす（＝スライダーの自動調節・#67）。
-// 式に数値が無いときだけ多項式（1〜3次）へ落ちる。結果は必ず**上書き**する（元の式に足さない）。
+// 式が変数を使っていないときだけ多項式（1〜3次）へ落ちる。結果は必ず**上書き**する（元の式に足さない）。
+// 結界 r=f(θ) も普通のグラフ（横軸 θ）として同じ流儀で扱う（#68）。
 import { useEffect, useRef, useState } from 'react'
 import type { Vec2 } from '../game/types'
 import { parseExpression } from '../game/functions'
@@ -15,6 +16,7 @@ import {
 import {
   type ComposerState,
   applyFitValuesPatch,
+  barrierBody,
   applyZFitValuesPatch,
   recenterCoeffPatch,
   recenterZCoeffPatch,
@@ -26,7 +28,15 @@ import {
 } from './composer'
 import CoefSliders from './CoefSliders'
 import { formatPoly, polyFit } from './polyFit'
-import { PAD_H, PAD_TMAX, PAD_W, PAD_Y_RANGE, drawDraftPad, padGeo } from '../render/draftpad'
+import {
+  AXIS_DISTANCE,
+  AXIS_THETA,
+  PAD_H,
+  PAD_W,
+  PAD_Y_RANGE,
+  drawDraftPad,
+  padGeo,
+} from '../render/draftpad'
 
 interface Props {
   composer: ComposerState
@@ -54,14 +64,14 @@ export default function DraftPad({ composer: c, onChange, rDistance, focus, onCl
 
   const onZ = focus === 'z'
   const barrier = !onZ && c.mode === 'polar'
-  // 結界（r=f(θ)）は輪であって片道のグラフではないので、点から作るは出さない（係数で調整する）
-  const canPickPoints = !barrier
-  const view = canPickPoints ? mode : 'coef'
-  const source = onZ ? c.zText : c.yText
+  // 結界は横軸 θ（0〜2π）の普通のグラフとして扱う。軌道・z は横軸＝射線方向の距離
+  const axis = barrier ? AXIS_THETA : AXIS_DISTANCE
+  const view = mode
+  const source = onZ ? c.zText : barrier ? barrierBody(c.yText) : c.yText
   const params = onZ ? c.zFitParams : c.fitParams
   const values = onZ ? c.zFitValues : c.fitValues
   const template = onZ ? c.zFitTemplate : c.fitTemplate
-  const varName: 'x' | 't' = onZ ? 't' : 'x'
+  const varName: 'x' | 't' = onZ || barrier ? 't' : 'x'
   // いまの式が変数を使っていれば、その係数を点に合わせる。
   // 定数式（y=0・z=4 など。係数 p0 は検出されるが動かしても直線のまま）は多項式に落とす
   const byExpr = params.length > 0 && templateUsesVar(template, varName)
@@ -74,28 +84,33 @@ export default function DraftPad({ composer: c, onChange, rDistance, focus, onCl
     const ctx = cv.getContext('2d')
     if (!ctx) return
     drawDraftPad(ctx, {
-      f: parseExpression(onZ ? c.zFreeExpr : c.freeExpr, barrier || onZ ? 't' : 'x'),
-      barrier,
+      axis,
+      f: parseExpression(onZ ? c.zFreeExpr : c.freeExpr, varName),
       onZ,
-      rDistance,
+      // 角度軸に「的までの距離」は無い
+      rDistance: barrier ? null : rDistance,
       points: view === 'pts' ? pts : [],
       fitted: view === 'pts' ? poly : null,
     })
-  }, [c.freeExpr, c.zFreeExpr, view, pts, poly, rDistance, onZ, barrier])
+  }, [c.freeExpr, c.zFreeExpr, view, pts, poly, rDistance, onZ, barrier, axis, varName])
+
+  // y↔r や y↔z を切り替えたら、前の座標の意味で打った点は捨てる
+  useEffect(() => setPts([]), [barrier, onZ])
 
   const onPadPointer = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (view !== 'pts') return
     const cv = ref.current
     if (!cv) return
     const rect = cv.getBoundingClientRect()
-    const g = padGeo()
+    const g = padGeo(axis)
     const px = ((e.clientX - rect.left) * PAD_W) / rect.width
     const py = ((e.clientY - rect.top) * PAD_H) / rect.height
-    const mx = Math.round((px - g.ox) / g.sx)
+    // 横軸は軸ごとの刻み（距離なら1、角度なら π/8）に吸着。値は実寸のまま持つ
+    const mx = Math.round((px - g.ox) / g.sx / axis.snap) * axis.snap
     const my = Math.round((g.oy - py) / g.sy)
-    if (mx < 0 || mx > PAD_TMAX || Math.abs(my) > PAD_Y_RANGE) return
+    if (mx < 0 || mx > axis.max + 1e-9 || Math.abs(my) > PAD_Y_RANGE) return
     setPts((prev) => {
-      const i = prev.findIndex((p) => p.x === mx && p.y === my)
+      const i = prev.findIndex((p) => Math.abs(p.x - mx) < axis.snap / 2 && p.y === my)
       const next = i >= 0 ? prev.filter((_, k) => k !== i) : [...prev, { x: mx, y: my }]
       return next.sort((a, b) => a.x - b.x)
     })
@@ -138,11 +153,7 @@ export default function DraftPad({ composer: c, onChange, rDistance, focus, onCl
       </div>
       <div className="draft-canvas-wrap">
         <canvas ref={ref} width={PAD_W} height={PAD_H} onPointerDown={onPadPointer} aria-label="作図台" />
-        <div className="draft-note">
-          {barrier
-            ? '結界は極座標 r=f(θ)。輪の大きさは方眼紙の縦目盛りと同じ尺度で描いている'
-            : '横軸 = 射線方向の距離 ・「点から作る」では格子点のみ（敵は格子に乗らない）'}
-        </div>
+        <div className="draft-note">{axis.note}</div>
       </div>
       <div className="draft-controls">
         <div className="draft-tabs">
@@ -153,15 +164,13 @@ export default function DraftPad({ composer: c, onChange, rDistance, focus, onCl
           >
             係数をいじる
           </button>
-          {canPickPoints && (
-            <button
-              type="button"
-              className={`btn small${view === 'pts' ? ' selected' : ''}`}
-              onClick={() => setMode('pts')}
-            >
-              点から作る
-            </button>
-          )}
+          <button
+            type="button"
+            className={`btn small${view === 'pts' ? ' selected' : ''}`}
+            onClick={() => setMode('pts')}
+          >
+            点から作る
+          </button>
           <span className="draft-target">
             {onZ ? 'z = ' : barrier ? 'r = ' : 'y = '}
             {source || '0'}

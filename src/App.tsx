@@ -373,6 +373,8 @@ export default function App() {
   const markTouched = (id: string) => setTouchedAllies((s) => (s.has(id) ? s : new Set(s).add(id)))
   const onChange = (patch: Partial<ComposerState>) => {
     setConfirmArmed(false) // 式を変えたら確認ゲートを解除（04b §4b.2）
+    // 軌道 y↔結界 r を切り替えたら、前の意味で拾った盤面の通過点は捨てる（#68）
+    if (patch.mode && patch.mode !== composers[activeAllyId]?.mode) clearFit()
     setComposers((m) => ({ ...m, [activeAllyId]: { ...m[activeAllyId], ...patch } }))
     markTouched(activeAllyId)
   }

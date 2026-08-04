@@ -137,6 +137,59 @@
   background: #120e26;
   border-color: var(--vio-d);
 }
+.expr-tag.ward {
+  color: var(--vio);
+  background: #120e26;
+  border-color: var(--vio-d);
+}
+
+/* ---- 軌道 y= / 結界 r= の切り替え（#68） ---- */
+/* 押せることが初見で分かるよう、幅を広げて ⇄ を添える */
+.expr-tag.kind-tag {
+  width: 52px;
+  grid-template-rows: auto auto;
+  gap: 1px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+.expr-tag.kind-tag:hover,
+.expr-tag.kind-tag:focus-visible {
+  border-color: var(--cursor);
+}
+.kind-tag .kind-now {
+  font-size: 15px;
+  line-height: 1;
+}
+.kind-tag .kind-swap {
+  font-size: 9px;
+  line-height: 1;
+  color: var(--text-dim);
+}
+.kind-toggle {
+  flex: none;
+  display: flex;
+  border: 1.5px solid var(--edge-2);
+}
+.kind-btn {
+  background: #0c0c16;
+  border: none;
+  color: var(--dim);
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+.kind-btn + .kind-btn {
+  border-left: 1.5px solid var(--edge-2);
+}
+.kind-btn.y.selected {
+  background: #241d06;
+  color: var(--gold-2);
+}
+.kind-btn.ward.selected {
+  background: #1a1030;
+  color: var(--vio-2);
+}
 .expr-input {
   flex: 1;
   min-width: 0;

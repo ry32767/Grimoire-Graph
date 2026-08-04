@@ -5,8 +5,9 @@
 ものではなく、「画面上で本当にそう見えるか」を確認するためのもの。
 
 > 依存はプロジェクト（package.json）に追加しない。このフォルダの外（任意の作業用ディレクトリ）で
-> `npm i playwright-core pngjs gifenc` を実行し、そこから node で本スクリプトを指すか、
-> スクリプトをコピーして使う。
+> `npm i playwright pngjs gifenc`（＋`npx playwright install chromium`）を実行し、そこから node で
+> 本スクリプトを指すか、スクリプトをコピーして使う。`playwright` を入れた場合は `CHROMIUM_PATH` は不要
+> （同梱の Chromium が使われる）。
 
 ## 使い方
 
@@ -17,6 +18,10 @@ npm run dev
 # 2. 指定ステージを「全員おまかせ→全員発射」連打で自動プレイし、フレームを保存
 #    usage: node drive.mjs <stage(1始まり)> <ターン数> <出力dir> [1ターンの撮影ms]
 node tools/testplay/drive.mjs 6 4 ./frames-stage6 9000
+
+# 2b. 詠唱コンソール／作図台の見た目だけ撮る（#68）
+#     usage: node shots.mjs <出力dir>
+node tools/testplay/shots.mjs ./shots
 
 # 3. フレーム連番を GIF へ（クロップ・縮小・パレット量子化つき）
 #    usage: node png2gif.mjs <dir> <開始index> <枚数> <out.gif> [フレーム間引き step]

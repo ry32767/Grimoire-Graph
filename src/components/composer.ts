@@ -115,6 +115,15 @@ export function normalizeExprInput(text: string): string {
   return (text ?? '').replace(/θ/g, 't').replace(/π/g, 'pi').replace(/√/g, 'sqrt')
 }
 
+/**
+ * 軌道 y=f(x) と結界 r=f(θ) を切り替えるときに、式の変数だけを入れ替える（#68）。
+ * `\b` 境界で見るので `exp` `max` `tan` `sqrt` などの関数名は巻き込まない。
+ */
+export function swapExprVar(expr: string, to: 'x' | 't'): string {
+  const from = to === 'x' ? 't' : 'x'
+  return (expr ?? '').replace(new RegExp(`\\b${from}\\b`, 'g'), to)
+}
+
 /** 式（接頭辞なし）から y 欄のテキストを作る。 */
 export function yTextOf(expr: string, mode: 'rotate' | 'polar'): string {
   return mode === 'polar' ? `r=${expr}` : expr
