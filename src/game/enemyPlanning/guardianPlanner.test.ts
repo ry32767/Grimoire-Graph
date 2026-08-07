@@ -7,8 +7,11 @@ import { attachRingSpeeds, buildRing, ringEncloses, ringRadius } from '../orbit'
 import { isSolidAt } from '../obstacle'
 import { simulateFlight } from '../physics'
 import { strengthOf } from '../attribute'
+import { constZField } from '../zfields'
+import { predictAllyShots, type PredictedShot } from './foresight'
+import { predictedBlock } from './guardianThreat'
 import { FIELD, GAME } from '../../data/constants'
-import type { Ally, Enemy, Obstacle, Trajectory } from '../types'
+import type { Ally, AllyCast, Enemy, Obstacle, Trajectory, Vec2 } from '../types'
 
 const ally = (id: string, pos: { x: number; y: number }): Ally => ({
   id, name: id, pos, hp: 100, maxHp: 100, element: 'light', statuses: [],
@@ -142,6 +145,99 @@ describe('守護型：LVL が上がるほど複雑な式で最適化できる（
     const plan = planEnemyShot(g, threat, [], [], [g])
     const ring = ringOf(plan!.trajectory)
     for (const rp of ring) expect(Math.abs(rp.z)).toBeCloseTo(FIELD.zRef, 6)
+  })
+})
+
+describe('守護型：前ターンの相手の魔法を読んで張る（#76）', () => {
+  /** 味方 from → to へ真っ直ぐ飛ぶ手（強さ mag の一定場）。 */
+  const castAt = (allyId: string, from: Vec2, to: Vec2, mag: number, speed = 10): AllyCast => ({
+    allyId,
+    trajectory: {
+      mode: 'rotate', g: () => 0, angle: Math.atan2(to.y - from.y, to.x - from.x), origin: from, z: constZField(mag),
+    } as Trajectory,
+    initialSpeed: speed,
+  })
+  const shooter = ally('s', { x: 18, y: 0 }) // 右（+x）から撃ってくる
+  const plan = (g: Enemy, allies: Ally[], predicted: PredictedShot[]) =>
+    planEnemyShot(g, allies, [], [], [g], undefined, 0, [], { predicted })
+
+  it('飛来弾の反対極で張る＝同極では透過されてしまう弾を実際に撃ち落とせる', () => {
+    const g = guardian({ level: 7, directedAura: true }) // element=light＝従来は光の結界
+    const light = predictAllyShots([castAt('s', shooter.pos, g.pos, FIELD.zRef)], [shooter])
+    const barrier = ringOf(plan(g, [shooter], light)!.trajectory)
+    // 光で来るので闇（z<0）側を強く張る＝反対極でしか相殺できない（04-magic §4.6）
+    expect(Math.min(...barrier.map((rp) => rp.z))).toBeLessThan(0)
+    expect(predictedBlock(barrier, light).stopped).toBe(1)
+    // 読みが無ければ従来どおり自分の属性（光）の一様な場＝この弾は素通りしてしまう
+    const naive = ringOf(planEnemyShot(g, [shooter], [], [], [g])!.trajectory)
+    expect(Math.min(...naive.map((rp) => rp.z))).toBeGreaterThan(0)
+    expect(predictedBlock(naive, light).stopped).toBe(0)
+  })
+
+  it('闇で来れば光で張る（極性は飛来弾に合わせて反転する）', () => {
+    const g = guardian({ level: 7, element: 'dark', directedAura: true })
+    const dark = predictAllyShots([castAt('s', shooter.pos, g.pos, -FIELD.zRef)], [shooter])
+    const barrier = ringOf(plan(g, [shooter], dark)!.trajectory)
+    expect(Math.max(...barrier.map((rp) => rp.z))).toBeGreaterThan(0)
+    expect(predictedBlock(barrier, dark).stopped).toBe(1)
+  })
+
+  it('防御の指向性は「飛来弾が来る方角」へ向く（脅威度が最大の味方の方角ではない）', () => {
+    // 手負いの味方は真下（-y）＝脅威度は最大だが、実際に飛んでくるのは右（+x）から
+    const wounded: Ally = { ...ally('w', { x: 0, y: -20 }), hp: 20 }
+    const g = guardian({ level: 7, directedAura: true })
+    const incoming = predictAllyShots([castAt('s', shooter.pos, g.pos, FIELD.zRef)], [shooter, wounded])
+    const peakPhi = (traj: Trajectory): number => {
+      const ring = ringOf(traj)
+      const peak = ring.reduce((b, rp) => (Math.abs(rp.z) > Math.abs(b.z) ? rp : b))
+      return Math.atan2(peak.pos.y - g.pos.y, peak.pos.x - g.pos.x)
+    }
+    expect(Math.abs(peakPhi(plan(g, [shooter, wounded], incoming)!.trajectory))).toBeLessThan(Math.PI / 6)
+    // 読みが無ければ従来どおり脅威度最大の味方（真下）へ向く
+    expect(peakPhi(planEnemyShot(g, [shooter, wounded], [], [], [g])!.trajectory)).toBeCloseTo(-Math.PI / 2, 1)
+  })
+
+  it('stage が極性を指定した個体（guardZSign）は読みでも極性を変えない', () => {
+    const g = guardian({ level: 7, directedAura: true, guardZSign: 1 })
+    const light = predictAllyShots([castAt('s', shooter.pos, g.pos, FIELD.zRef)], [shooter])
+    const ring = ringOf(plan(g, [shooter], light)!.trajectory)
+    expect(Math.max(...ring.map((rp) => rp.z))).toBeGreaterThan(0)
+    expect(Math.min(...ring.map((rp) => rp.z))).toBeGreaterThanOrEqual(0)
+  })
+
+  it('3発を接触時刻順に再評価し、先の迎撃による結界の失速を後続弾へ引き継ぐ', () => {
+    const barrier = ringOf({
+      mode: 'polar',
+      f: () => GAME.enemyGuardRadius,
+      origin: { x: 0, y: 0 },
+      z: constZField(-FIELD.zRef),
+    }, 8)
+    const near = ally('near', { x: 12, y: 0 })
+    const middle = ally('middle', { x: 15, y: 0 })
+    const far = ally('far', { x: 18, y: 0 })
+    const shots = predictAllyShots([
+      castAt('far', far.pos, { x: 0, y: 0 }, FIELD.zRef, 2),
+      castAt('middle', middle.pos, { x: 0, y: 0 }, FIELD.zRef, 4),
+      castAt('near', near.pos, { x: 0, y: 0 }, FIELD.zRef, 3),
+    ], [near, middle, far])
+
+    // 入力順は逆でも、近い2発を順に止めて失速し、最後の弾には結界を破られる。
+    expect(predictedBlock(barrier, shots).stopped).toBe(2)
+  })
+
+  it('最大半径だけをかすめる強い弾でなく、実形状へ当たる弾の反対極を選ぶ', () => {
+    const g = guardian({ level: 4, directedAura: true })
+    const nearMiss = ally('near-miss', { x: 18, y: 10 })
+    const actual = ally('actual', { x: 18, y: 0 })
+    const predicted = predictAllyShots([
+      castAt('near-miss', nearMiss.pos, { x: -18, y: 10 }, FIELD.zRef, 12),
+      castAt('actual', actual.pos, g.pos, -FIELD.zRef, 3),
+    ], [nearMiss, actual])
+    const ring = ringOf(plan(g, [nearMiss, actual], predicted)!.trajectory)
+
+    expect(predictedBlock(ring, predicted).stopped).toBe(1)
+    expect(predictedBlock(ring, [predicted[1]]).stopped).toBe(1)
+    expect(predictedBlock(ring, [predicted[0]]).stopped).toBe(0)
   })
 })
 

@@ -94,6 +94,96 @@ describe('命中 → ダメージ（#15）', () => {
   })
 })
 
+describe('同時発射の攻撃は物理イベント時刻順に解決する', () => {
+  const straight = (origin: { x: number; y: number }): Trajectory => ({
+    mode: 'rotate', g: () => 0, angle: 0, origin, z: zLightMid,
+  })
+  const run = (reverse: boolean, targetHp: number) => {
+    const slow = cast('slow', straight({ x: -8, y: 0 }), 8)
+    const fast = cast('fast', straight({ x: 0, y: 0 }), 8)
+    const casts = reverse ? [fast, slow] : [slow, fast]
+    return resolveTurn({
+      allies: [ally('slow', { x: -8, y: 0 }), ally('fast', { x: 0, y: 0 })],
+      casts,
+      enemies: [enemy('target', { x: 5, y: 0 }, 'dark', targetHp)],
+      castingEnemyIds: [],
+      obstacles: [],
+      mechanics: onlyHit,
+    })
+  }
+  const attackSummary = (result: ReturnType<typeof resolveTurn>) => ({
+    hp: result.enemies[0].hp,
+    hits: result.allyShots
+      .map((shot) => ({ allyId: shot.allyId, hits: shot.hits }))
+      .sort((a, b) => a.allyId.localeCompare(b.allyId)),
+    popups: result.popups.map(({ targetId, amount, kind, t }) => ({ targetId, amount, kind, t })),
+  })
+
+  it('到達時刻の違う2発は casts を反転してもHP・hits・popupsが一致する', () => {
+    const forward = attackSummary(run(false, 1000))
+    const reversed = attackSummary(run(true, 1000))
+
+    expect(reversed).toEqual(forward)
+    expect(forward.hits.every((shot) => shot.hits.length === 1)).toBe(true)
+    expect(forward.popups[0].t).toBeLessThan(forward.popups[1].t)
+  })
+
+  it('早い致死弾の後に到達する弾は casts 順にかかわらず撃破済み対象へ命中しない', () => {
+    const forward = attackSummary(run(false, 1))
+    const reversed = attackSummary(run(true, 1))
+
+    expect(reversed).toEqual(forward)
+    expect(forward.hp).toBe(0)
+    expect(forward.hits.find((shot) => shot.allyId === 'fast')?.hits).toHaveLength(1)
+    expect(forward.hits.find((shot) => shot.allyId === 'slow')?.hits).toHaveLength(0)
+    expect(forward.popups).toHaveLength(1)
+  })
+})
+
+describe('敵の同時攻撃も物理イベント時刻順に解決する', () => {
+  const run = (reverse: boolean, targetHp: number) => {
+    const far = enemy('far', { x: 0, y: 12 }, 'dark', 100, 8)
+    const near = enemy('near', { x: 0, y: 5 }, 'dark', 100, 8)
+    const enemies = reverse ? [near, far] : [far, near]
+    const castingEnemyIds = reverse ? ['near', 'far'] : ['far', 'near']
+    return resolveTurn({
+      allies: [ally('target', { x: 0, y: -8 }, 'neutral', targetHp)],
+      casts: [],
+      enemies,
+      castingEnemyIds,
+      obstacles: [],
+      mechanics: withFire,
+    })
+  }
+  const attackSummary = (result: ReturnType<typeof resolveTurn>) => ({
+    hp: result.allies[0].hp,
+    hits: result.enemyShots
+      .map((shot) => ({ enemyId: shot.enemyId, hits: shot.hits }))
+      .sort((a, b) => a.enemyId.localeCompare(b.enemyId)),
+    popups: result.popups.map(({ targetId, amount, kind, t }) => ({ targetId, amount, kind, t })),
+  })
+
+  it('enemies と castingEnemyIds を反転しても味方HP・hits・popupsが一致する', () => {
+    const forward = attackSummary(run(false, 1000))
+    const reversed = attackSummary(run(true, 1000))
+
+    expect(reversed).toEqual(forward)
+    expect(forward.hits.every((shot) => shot.hits.length === 1)).toBe(true)
+    expect(forward.popups[0].t).toBeLessThan(forward.popups[1].t)
+  })
+
+  it('早い敵の致死弾後に到達する敵弾は配列順にかかわらず命中しない', () => {
+    const forward = attackSummary(run(false, 1))
+    const reversed = attackSummary(run(true, 1))
+
+    expect(reversed).toEqual(forward)
+    expect(forward.hp).toBe(0)
+    expect(forward.hits.find((shot) => shot.enemyId === 'near')?.hits).toHaveLength(1)
+    expect(forward.hits.find((shot) => shot.enemyId === 'far')?.hits).toHaveLength(0)
+    expect(forward.popups).toHaveLength(1)
+  })
+})
+
 describe('暴発（自爆・#3/#9）', () => {
   it('1/x は術者位置で暴発し近くの味方を巻き込む', () => {
     const res = resolveTurn({
@@ -221,6 +311,9 @@ describe('周回が魔法に負けると霧散する（#34）', () => {
     const orbitShot = res.allyShots.find((s) => s.kind === 'orbit')!
     expect(orbitShot.broken).toBe(true) // 失速で自滅する
     expect(res.log.some((l) => l.text.includes('失速') && l.text.includes('自滅'))).toBe(true) // 自滅ログで分かる
+    // 回り出す前の自壊は bornBroken=true・breakTime は null のまま（実際に破壊された時刻ではない・#75）
+    expect(orbitShot.bornBroken).toBe(true)
+    expect(orbitShot.breakTime).toBeNull()
   })
 })
 
@@ -709,6 +802,48 @@ describe('暴発は AoE 内の結界も最大威力で削る（§3.5）', () => 
     expect(res.log.some((l) => l.text.includes('暴発に呑まれて'))).toBe(true)
   })
 
+  it('暴発 AoE 内の結界へのパリィ火花は「最速点」でなく「爆心に最も近い点」に出る（#75）', () => {
+    // 減速判定（最大速度基準）は変えず、演出座標だけ最近接点にすることを確認する。
+    // 実際の暴発座標を先に取得してから、爆心近くの遅い点／遠くの速い点を仕込む。
+    const probe = resolveTurn({
+      allies: [ally('m', { x: 0, y: 0 })],
+      casts: [cast('m', upMisfire)],
+      enemies: [],
+      castingEnemyIds: [],
+      obstacles: [],
+      mechanics: onlyHit,
+    })
+    const center = probe.allyShots.find((s) => s.misfirePos)!.misfirePos!
+    const near = { x: center.x, y: center.y } // 爆心そのもの・遅い
+    const far = { x: center.x + FIELD.aoeRadius - 0.3, y: center.y } // 圏内の縁・速い（vMax はこちら）
+    const orbit: ActiveOrbit = {
+      id: 'ring1',
+      ownerId: 'm',
+      owner: 'player',
+      ring: [
+        { pos: near, z: FIELD.zRef, speed: 1 },
+        { pos: far, z: FIELD.zRef, speed: 20 },
+        { pos: { x: center.x, y: center.y + 0.5 }, z: FIELD.zRef, speed: 1 },
+      ],
+      ringSpeed: 20,
+    }
+    const res = resolveTurn({
+      allies: [ally('m', { x: 0, y: 0 })],
+      casts: [cast('m', upMisfire)],
+      enemies: [],
+      castingEnemyIds: [],
+      obstacles: [],
+      mechanics: onlyHit,
+      activeOrbits: [orbit],
+    })
+    expect(res.clashes.length).toBeGreaterThan(0)
+    const clash = res.clashes[0]
+    expect(clash.pos.x).toBeCloseTo(near.x, 6) // 最速点(far)ではなく最近接点(near)
+    expect(clash.pos.y).toBeCloseTo(near.y, 6)
+    // 破壊点も同じ最近接点になる（vMax=20 で確実に霧散する速度なので destroyed のはず）
+    expect(res.orbitBreaks['ring1']?.pos.x).toBeCloseTo(near.x, 6)
+  })
+
   it('AoE 圏外の結界は無傷で残る', () => {
     const orbit = ringAround({ x: 0, y: 22 }, 2, FIELD.zRef, 12) // 遠方（AoE 圏外）
     const res = resolveTurn({
@@ -909,5 +1044,66 @@ describe('ダメージ計算は術者の種別に依らない（#70）', () => {
     const hits = orbitSweep(ring, [{ id: 't', pos: { x: 0, y: 0 }, radius: 1, element: target }])
     expect(hits).toHaveLength(1)
     expect(hits[0].damage).toBeCloseTo(base, 9)
+  })
+})
+
+describe('ダメージ表示の発生時刻（#75：エンジンが t を確定して返す）', () => {
+  it('同じ対象への複数命中は、ポップの t が別々で昇順になる', () => {
+    // 原点から +x への直線弾（z=zRef 一定＝加減速なし）。x=5 と x=9 の敵を貫いて両方に当たる。
+    // 弧長順＝時間順で命中するので、後で当たる e2 の t が e1 より大きくなる。
+    const res = resolveTurn({
+      allies: [ally('a', { x: 0, y: 0 })],
+      casts: [cast('a', { mode: 'rotate', g: () => 0, angle: 0, origin: { x: 0, y: 0 }, z: zLightMid }, 10)],
+      enemies: [enemy('e1', { x: 5, y: 0 }, 'dark'), enemy('e2', { x: 9, y: 0 }, 'dark')],
+      castingEnemyIds: [],
+      obstacles: [],
+      mechanics: onlyHit,
+    })
+    const shot = res.allyShots[0]
+    expect(shot.hits.map((h) => h.targetId)).toEqual(['e1', 'e2']) // 弧長順に2体へ命中
+    const ts = res.popups
+      .filter((p) => p.trigger === 'flash')
+      .map((p) => ({ id: p.targetId, t: p.t }))
+    expect(ts).toHaveLength(2)
+    const tE1 = ts.find((x) => x.id === 'e1')!.t
+    const tE2 = ts.find((x) => x.id === 'e2')!.t
+    expect(tE1).not.toBeCloseTo(tE2, 6) // 別々の時刻
+    expect(tE1).toBeLessThan(tE2) // 手前の敵に先に当たる＝昇順
+  })
+
+  it('t は全ポップで有限な数になる（命中・暴発・回復すべて）', () => {
+    // 命中・暴発・回復が一通り混ざるよう、暴発する弾と光の周回回復を同時に起こす
+    const res = resolveTurn({
+      allies: [ally('a', { x: 0, y: 0 }), ally('heal', { x: 0, y: -8 }, 'light')],
+      casts: [
+        cast('a', { mode: 'rotate', g: (x) => 1 / (5 - x), angle: 0, origin: { x: 0, y: 0 }, z: zLightMid }, 8),
+        cast('heal', { mode: 'polar', f: () => 3, origin: { x: 0, y: -8 }, z: zLightMid }, 6),
+      ],
+      enemies: [enemy('e', { x: 8, y: 0 }, 'dark', 100, 6)],
+      castingEnemyIds: ['e'],
+      obstacles: [],
+      mechanics: withFire,
+    })
+    expect(res.popups.length).toBeGreaterThan(0)
+    for (const p of res.popups) expect(Number.isFinite(p.t)).toBe(true)
+  })
+
+  it('結界の掃射（軌道型）は、対象ごとにリングの粒が到達する時刻が別々になる（t=0固定の再発防止）', () => {
+    // 半径6の周回（減速しない z=-zRef）が θ=90°・θ=270° の2体を同時に掃射する。
+    // リング上の到達順（弧長順）が違うので、命中ポップの t も対象ごとに違うはず。
+    const res = resolveTurn({
+      allies: [ally('a', { x: 0, y: 0 })],
+      casts: [cast('a', { mode: 'polar', f: () => 6, origin: { x: 0, y: 0 }, z: zDarkMid })],
+      enemies: [enemy('e90', { x: 0, y: 6 }, 'light', 100, 0), enemy('e270', { x: 0, y: -6 }, 'light', 100, 0)],
+      castingEnemyIds: [],
+      obstacles: [],
+      mechanics: onlyHit,
+    })
+    const flashes = res.popups.filter((p) => p.trigger === 'flash')
+    expect(flashes).toHaveLength(2)
+    const t90 = flashes.find((p) => p.targetId === 'e90')!.t
+    const t270 = flashes.find((p) => p.targetId === 'e270')!.t
+    expect(t90).not.toBeCloseTo(t270, 6) // 別々の時刻
+    expect(flashes.some((p) => p.t > 0)).toBe(true) // 全部0に固まっていない
   })
 })

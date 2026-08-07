@@ -135,6 +135,36 @@ export interface OrbitHit {
   damage: number
   attr: Attribute
   strength: number
+  /** リングの粒がこの対象へ到達するゲーム秒（#75：ターン開始=0、周期で剰余を取った値） */
+  t: number
+}
+
+/**
+ * リング始点(index 0)から index idx までの到達時刻（Σ ds/v・台形則。physics.flightTimes と同じ考え方）。
+ * ring[i].speed が未計算/0 の区間は時間を進めない（=瞬時に通過扱い。速度0点は本来到達しない区間）。
+ */
+export function ringTimeToIndex(ring: RingPoint[], idx: number): number {
+  if (ring.length === 0) return 0
+  const clamped = Math.max(0, Math.min(idx, ring.length - 1))
+  let t = 0
+  for (let i = 1; i <= clamped; i++) {
+    const a = ring[i - 1]
+    const b = ring[i]
+    const vAvg = ((a.speed ?? 0) + (b.speed ?? 0)) / 2
+    if (vAvg > 1e-9) t += dist(a.pos, b.pos) / vAvg
+  }
+  return t
+}
+
+/** リング1周の周期（全周弧長÷区間ごとの速度の和・始点に戻る最後の区間も含む）。 */
+export function ringPeriod(ring: RingPoint[]): number {
+  if (ring.length < 2) return 0
+  let t = ringTimeToIndex(ring, ring.length - 1)
+  const last = ring[ring.length - 1]
+  const first = ring[0]
+  const vAvg = ((last.speed ?? 0) + (first.speed ?? 0)) / 2
+  if (vAvg > 1e-9) t += dist(last.pos, first.pos) / vAvg
+  return t
 }
 
 /**
@@ -148,12 +178,17 @@ export function orbitSweep(
 ): OrbitHit[] {
   const hits: OrbitHit[] = []
   if (ring.length === 0) return hits
+  // 永続結界は位相が不定なので、1周の周期で剰余を取り「今ターン内のいつか」に収める（#75）
+  const period = ringPeriod(ring)
   for (const t of targets) {
     const n = nearest(ring, t.pos)
     if (n.d <= t.radius + thickness) {
       // ダメージ式は発射魔法と完全に共有する（computeDamage）。速度だけがリング点の速度になる
       const d = computeDamage(ring[n.idx].speed ?? 0, ring[n.idx].z, t.element)
-      if (d.damage > 0) hits.push({ id: t.id, damage: d.damage, attr: d.attackAttr, strength: d.strength })
+      if (d.damage > 0) {
+        const raw = ringTimeToIndex(ring, n.idx)
+        hits.push({ id: t.id, damage: d.damage, attr: d.attackAttr, strength: d.strength, t: period > 1e-9 ? raw % period : raw })
+      }
     }
   }
   return hits

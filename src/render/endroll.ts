@@ -42,19 +42,23 @@ import {
   drawDarkVeil,
   drawLightAura,
   drawOrbitRing,
+  drawParryFlash,
   trailWidthPx,
   type DarkRing,
   type LightRing,
   type RingPhaseStore,
 } from './board'
+import { dot, dotPx, walkPath } from './pixelfx'
 import { ringPhaseKey } from './ringPhase'
 import { TOKENS } from './palette'
+import { ringVisible, ringBreakTime, lastEventTime } from './sceneTiming'
 
 const TAU = Math.PI * 2
-const MAX_LEVEL = 5
+/** 到達しうる最大 LVL＝本編の敵 LVL の上限（7）。ここまで上がってから両者 LVL1 へ戻る。 */
+export const MAX_LEVEL = 7
 const START_HP = 140
-const POS_A: Vec2 = { x: -16, y: -6 }
-const POS_B: Vec2 = { x: 15, y: 5 }
+export const POS_A: Vec2 = { x: -16, y: -6 }
+export const POS_B: Vec2 = { x: 15, y: 5 }
 /** 弾が飛ぶ見かけの秒数（実飛行秒 → 画面秒の倍率をここから決める） */
 const FLIGHT_SEC = 3.4
 const FIRE_AT = 0.45
@@ -86,13 +90,13 @@ interface Bolt {
 interface RingView {
   ring: ZPoint[]
   side: Side
-  /** 霧散したゲーム秒（エンジンの breakTime）。存続中は null */
+  /** 霧散したゲーム秒（エンジンの breakTime）。存続中／破壊時刻不明の2通りで null（後者は描き続ける） */
   breakT: number | null
   /** この幕で新しく張られたか（フェードインさせる） */
   fresh: boolean
 }
 
-/** ダメージ表示1件（時刻はエンジンの飛行時間から引く）。 */
+/** ダメージ表示1件（量・時刻ともエンジンの popups をそのまま使う）。 */
 interface DamageView {
   pos: Vec2
   amount: number
@@ -113,6 +117,11 @@ interface Bout {
   /** 決着した画面秒 */
   ko?: number
   koSide?: Side
+  /**
+   * 決着したときの「次の幕の盤面」（LVL 更新・全回復・組み直した壁）。KO の瞬間に確定させ、
+   * 幕の尻尾の先取り計画と幕の終わりの状態更新が**同じもの**を使う（壁の乱数を引き直さない）。
+   */
+  next?: Board
   /** 幕の終わりに反映する状態（次の幕の計画はこれを盤面として使う） */
   after: {
     hpA: number
@@ -134,6 +143,9 @@ interface Board {
   orbits: ActiveOrbit[]
   hpA: number
   hpB: number
+  /** その幕の LVL（決着後の幕を先取り計画するため、`EndrollState` ではなくここから読む） */
+  lvA: number
+  lvB: number
   /** 一つ前の幕で B が撃った手（A 側の読み・#75） */
   lastEnemyCasts: AllyCast[]
 }
@@ -178,10 +190,58 @@ function segHitsCircle(a: Vec2, b: Vec2, c: Vec2, r: number): boolean {
   return Math.hypot(a.x + dx * t - c.x, a.y + dy * t - c.y) <= r
 }
 
-/** 壁は決着ごとに引き直す。LVL が上がるほど本数が増え、直進では届かない配置にする。 */
-function makeObstacles(level: number): Obstacle[] {
-  const n = Math.min(8, level + 1)
-  const kinds: NonNullable<Obstacle['kind']>[] = ['normal', 'normal', 'fragile', 'tough']
+/**
+ * LVL ごとの壁の耐久（上がるほど硬い側へ寄る）。
+ * **`unbreakable` は使わない**：エンドロールは決着（KO）でしか LVL が進まないので、
+ * 削れない壁で道が完全に塞がると同じ LVL のまま延々と幕が繰り返して進行が止まる。
+ * 硬い壁でも毎幕の削りは持ち越される（`Bout.after.obstacles`）ため、いずれ必ず道が開く。
+ */
+export function kindPool(level: number): NonNullable<Obstacle['kind']>[] {
+  if (level <= 2) return ['fragile', 'fragile', 'normal']
+  if (level <= 4) return ['fragile', 'normal', 'normal', 'tough']
+  if (level <= 6) return ['normal', 'normal', 'tough', 'tough']
+  return ['tough', 'tough', 'tough']
+}
+
+/** 視線を塞ぐ壁の本数。増えるほど「一度曲がって戻る」だけでは届かない＝経路が複雑になる。 */
+export function blockerCount(level: number): number {
+  return level <= 3 ? 1 : level <= 5 ? 2 : level <= 6 ? 3 : 4
+}
+
+/** 壁の総数（置けた本数はこれ以下）。高 LVL ほど盤面が混み、通り道が細い折れ線になる。 */
+export function obstacleCount(level: number): number {
+  return Math.min(18, 2 + level * 2)
+}
+
+/**
+ * 壁の半径（ユニット）。**耐久の最大の効き所はここ**：1撃の削りは
+ * `carveMaxRadius(2) × tough(0.32) = 0.64` が上限なので、太い柱ほど抜くのに発数がかかる。
+ */
+function blockerRadius(level: number): number {
+  return 1.7 + rnd() * 0.9 + level * 0.13
+}
+
+/** 視線を塞ぐ壁を「厚い衝立」にする LVL（円を A→B 方向へ重ねて奥行きを増す）。 */
+const SLAB_MIN_LEVEL = MAX_LEVEL
+function scatterRadius(level: number): number {
+  return 1.3 + rnd() * 1.2 + level * 0.09
+}
+
+/**
+ * 術者の周囲に空ける余白（素材の縁までのユニット）。**術者の周りだけは障害物を少なめにする**
+ * ＝撃ち出しと着弾の周りが壁で埋まって「出た瞬間に自爆・何も起きない」絵にならないようにする。
+ * 視線を塞ぐ壁は A→B 線上に置く必要があるので控えめ、散らす壁は大きく空ける。
+ */
+export const MAGE_CLEAR = { blocker: 4.6, scatter: 7.4 } as const
+
+/**
+ * 壁は決着ごとに引き直す。**LVL が上がるほど本数が増え、太く硬くなり、視線を塞ぐ壁が増える**
+ * （＝直進では届かず、高 LVL ほど左右へ振る複雑な経路でしか通れない）。
+ * 術者の周囲（MAGE_CLEAR）だけは空けたままにする。
+ */
+export function makeObstacles(level: number): Obstacle[] {
+  const n = obstacleCount(level)
+  const kinds = kindPool(level)
   const out: Obstacle[] = []
   const mk = (x: number, y: number, r: number, i: number): Obstacle => ({
     id: `ew${level}-${i}-${Math.floor(rnd() * 1e6)}`,
@@ -190,35 +250,64 @@ function makeObstacles(level: number): Obstacle[] {
     solids: [{ x, y, r }],
     carves: [],
   })
-  const free = (x: number, y: number, r: number) =>
-    Math.hypot(x - POS_A.x, y - POS_A.y) > r + 4.5 &&
-    Math.hypot(x - POS_B.x, y - POS_B.y) > r + 4.5 &&
-    out.every((o) => Math.hypot(x - o.solids[0].x, y - o.solids[0].y) > r + o.solids[0].r + 1.4)
-  // 1本目：必ず視線の真ん中に置く（迂回か掘削でしか通れない）
+  // 衝立（複数の円のブロブ）も含めた外接半径。solids[0] を中心の円にそろえてあるので
+  // ここから測れば、厚い衝立でも間隔の判定が甘くならない
+  const reach = (o: Obstacle) =>
+    Math.max(...o.solids.map((sd) => Math.hypot(sd.x - o.solids[0].x, sd.y - o.solids[0].y) + sd.r))
+  const free = (x: number, y: number, r: number, clear: number) =>
+    Math.hypot(x - POS_A.x, y - POS_A.y) > r + clear &&
+    Math.hypot(x - POS_B.x, y - POS_B.y) > r + clear &&
+    // 柱どうしの間隔は詰めない：ここを縮めると findRoute は通るのに実弾（半径最大 1.5）が
+    // 抜けられない「見せかけの道」になる。複雑さは本数と折れの段数で出す
+    out.every((o) => Math.hypot(x - o.solids[0].x, y - o.solids[0].y) > r + reach(o) + 1.4)
+  // 視線を塞ぐ壁：必ず A→B の直線上に置く（迂回か掘削でしか通れない）。
+  // 2本以上のときは**左右交互**にずらす＝抜け道が左・右・左…と入れ替わり、
+  // 1回曲がって戻るだけの軌道では抜けられない（高次・多重の折れが要る経路になる）。
+  // 段数は blockerCount（最上位は4段）＝S字を2回描かないと通れない経路になる。
   const ux = POS_B.x - POS_A.x
   const uy = POS_B.y - POS_A.y
   const len = Math.hypot(ux, uy)
   const nx = -uy / len
   const ny = ux / len
-  for (let k = 0; k < 60; k++) {
-    const t = 0.34 + rnd() * 0.32
-    const r = 1.7 + rnd() * 1.1
-    const off = (rnd() * 2 - 1) * r * 0.55
-    const x = POS_A.x + ux * t + nx * off
-    const y = POS_A.y + uy * t + ny * off
-    if (free(x, y, r)) {
-      out.push(mk(x, y, r, 0))
-      break
+  const blockers = blockerCount(level)
+  for (let i = 0; i < blockers; i++) {
+    const side = blockers === 1 ? rnd() * 2 - 1 : i % 2 === 0 ? 1 : -1
+    for (let k = 0; k < 60; k++) {
+      // 多段のときは [0.28, 0.72] に収める＝端の段でも術者から MAGE_CLEAR.blocker 以上離れる
+      const t = blockers === 1 ? 0.34 + rnd() * 0.32 : 0.28 + (0.44 * i) / (blockers - 1) + (rnd() - 0.5) * 0.05
+      const r = blockerRadius(level)
+      const off = side * r * (0.35 + rnd() * 0.3)
+      const x = POS_A.x + ux * t + nx * off
+      const y = POS_A.y + uy * t + ny * off
+      // 高 LVL は A→B 方向に円を重ねて「厚い衝立」にする＝迂回路の形は変えずに、
+      // 掘って抜くのに必要な発数だけを増やす（削り半径の上限が小さいので奥行きがそのまま耐久）
+      const dz = level >= SLAB_MIN_LEVEL ? r * 0.6 : 0
+      const dx = (ux / len) * dz
+      const dy = (uy / len) * dz
+      if (free(x, y, r + dz, MAGE_CLEAR.blocker)) {
+        const w = mk(x, y, r, i)
+        // solids[0] は必ず中心の円のままにする（間隔判定・直線チェックがここを基準にする）
+        if (dz > 0)
+          w.solids = [
+            { x, y, r },
+            { x: x - dx, y: y - dy, r: r * 0.85 },
+            { x: x + dx, y: y + dy, r: r * 0.85 },
+          ]
+        out.push(w)
+        break
+      }
     }
   }
+  // 散らす壁：術者の周囲（MAGE_CLEAR.scatter）を避けて盤面いっぱいに撒く。
+  // 撒く範囲は術者の外側まで届かせる＝本数を増やしても「置けずに諦める」で頭打ちにならない
   for (let i = out.length; i < n; i++) {
-    for (let k = 0; k < 50; k++) {
+    for (let k = 0; k < 140; k++) {
       const a = rnd() * TAU
-      const d = 3 + rnd() * 10.5
+      const d = 3 + rnd() * 16
       const x = Math.cos(a) * d
-      const y = Math.sin(a) * d * 0.75
-      const r = 1.2 + rnd() * 1.5
-      if (free(x, y, r)) {
+      const y = Math.sin(a) * d * 0.7
+      const r = scatterRadius(level)
+      if (free(x, y, r, MAGE_CLEAR.scatter)) {
         out.push(mk(x, y, r, i))
         break
       }
@@ -231,37 +320,62 @@ function makeObstacles(level: number): Obstacle[] {
   return out
 }
 
-/** LVL ごとの同時発射数。 */
-const shotCount = (lv: number) => [1, 2, 2, 3, 3][Math.min(4, Math.max(0, lv - 1))]
+/** LVL ごとの同時発射数（LVL1〜MAX_LEVEL）。 */
+export const SHOTS = [1, 2, 2, 3, 3, 3, 4]
+const shotCount = (lv: number) => SHOTS[Math.min(SHOTS.length - 1, Math.max(0, lv - 1))]
+
+/** 暴発型は最上位でも1発まで（`MAX_RUPTORS`）。 */
+export const MAX_RUPTORS = 1
 
 /**
  * 戦い方の配分。低 LVL は火力型（直進で押す）と迂回型（曲げて回す）をぶつける。
  * 高 LVL は 1 発を結界（guardian）に回すので、攻めの手数はその分減る。
+ *
+ * **暴発型（ruptor）は最上位でも1発まで**：暴発のダメージは固定 180
+ * （`sMax(5) × maxFlightSpeed(24) × opposite(1.5)`・misfire.ts）で、HP140 を一撃で消し飛ばす。
+ * しかも AoE は距離だけで判定する（`resolveMisfire`）ので**壁では遮れない**。
+ * かつて最上位は2発とも暴発型だったため、壁をどれだけ厚くしても両陣営が初手で相打ちになり、
+ * LVL7 の幕が1ターンで終わっていた（実測：どちらか1ターンKO 73% / 相打ち 48%）。
  */
-function rolePool(side: Side, lv: number, bout: number): EnemyRole[] {
+export function rolePool(side: Side, lv: number, bout: number): EnemyRole[] {
   const aggro = (side === 'A') === (bout % 2 === 0)
   const r0: EnemyRole = aggro ? 'breaker' : 'attacker'
   const r1: EnemyRole = aggro ? 'attacker' : 'breaker'
   const n = shotCount(lv)
   const pool: EnemyRole[] = []
+  let ruptors = 0
   if (lv >= 4) pool.push('guardian')
-  while (pool.length < n) pool.push(pool.length % 2 ? (lv >= MAX_LEVEL ? 'ruptor' : r1) : r0)
+  while (pool.length < n) {
+    const odd = pool.length % 2 === 1
+    if (odd && lv >= MAX_LEVEL && ruptors < MAX_RUPTORS) {
+      pool.push('ruptor')
+      ruptors++
+    } else pool.push(odd ? r1 : r0)
+  }
   return pool.slice(0, n)
 }
 
-const FAMILY_TABLE: { A: EnemyFamily[]; B: EnemyFamily[] }[] = [
+/**
+ * LVL ごとの得意関数（LVL1〜MAX_LEVEL）。本編と同じ解禁順：
+ * 直線・弧 → 波・指数 → 渦・折れ・高次 → **多重サイン（`harmonic`）は終盤（LVL6以降）だけ**（05b §2）。
+ */
+export const FAMILY_TABLE: { A: EnemyFamily[]; B: EnemyFamily[] }[] = [
   { A: ['line', 'arc'], B: ['arc', 'line'] },
+  { A: ['arc', 'line'], B: ['arc', 'wave'] },
   { A: ['arc', 'wave'], B: ['wave', 'exp'] },
   { A: ['wave', 'exp'], B: ['spiral', 'arc'] },
   { A: ['spiral', 'poly34', 'abs'], B: ['abs', 'wave', 'exp'] },
+  { A: ['poly34', 'abs', 'harmonic'], B: ['abs', 'poly34', 'harmonic'] },
   { A: ['harmonic', 'wave', 'exp'], B: ['poly34', 'spiral', 'harmonic'] },
 ]
 
 /** LVL ごとの個体像。本番の敵と同じ形で組み、実際の敵AIへそのまま渡す。 */
-function makeMage(s: EndrollState, side: Side, bout: number, board: Board): Enemy {
-  const lv = side === 'A' ? s.lvA : s.lvB
-  const fam = FAMILY_TABLE[Math.min(4, Math.max(0, lv - 1))]
-  const mag = (2.7 + lv * 0.36) * (0.92 + rnd() * 0.18)
+function makeMage(side: Side, bout: number, board: Board): Enemy {
+  const lv = side === 'A' ? board.lvA : board.lvB
+  const fam = FAMILY_TABLE[Math.min(FAMILY_TABLE.length - 1, Math.max(0, lv - 1))]
+  // 最上位で |z| が zPeak（強度の山の頂点）へ届く配分。ばらつきを足しても zPeak は超えない
+  // （超えると強度が落ちるうえ減速する＝強くならない）
+  const mag = Math.min(FIELD.zPeak, (2.6 + lv * 0.34) * (0.92 + rnd() * 0.18))
   const fams = (side === 'A' ? fam.A : fam.B).slice().sort(() => rnd() - 0.5)
   const pool = rolePool(side, lv, bout)
   const el: Attribute = side === 'A' ? 'light' : 'dark'
@@ -281,15 +395,19 @@ function makeMage(s: EndrollState, side: Side, bout: number, board: Board): Enem
     castTrajectory: { mode: 'rotate', g: () => 0, angle: 0 },
     castInitialSpeed: FIELD.fixedSpeed,
     castZ: sg * mag,
-    // 結界は幕ごとに極性を入れ替える（張り替えで裏をかける＝結界が本当に弾を止める）
-    guardZSign: (bout % 2 === 0 ? sg : -sg) as 1 | -1,
+    // 結界の極性：LVL5 までは幕ごとに入れ替える（張り替えで裏をかける）。
+    // LVL6 以降は**指定せず読み（#76）に選ばせる**＝飛来弾の反対極を自分で選ぶ最上位の振る舞いになる
+    // （明示すると guardSign がそちらを優先するので、読みが働かない）
+    guardZSign: lv >= 6 ? undefined : ((bout % 2 === 0 ? sg : -sg) as 1 | -1),
     castCount: pool.length,
     patternPool: pool,
     // すり抜け（結界と同極に合わせて透過する高難度個体）は最上位だけ
     slipThrough: lv >= MAX_LEVEL,
     directedAura: lv >= MAX_LEVEL,
     species: side === 'A' ? 'wraith' : 'oni',
-    level: Math.min(7, lv + 2),
+    // 画面の LVL 表記＝本編の敵 LVL そのもの（1〜7）。式の複雑さ・係数の可動域・結界の
+    // 複雑さ（ENEMY_FIT_COMPLEXITY / ENEMY_GUARD_PLANNING の段階表）がそのまま段階的に上がる
+    level: lv,
   }
 }
 
@@ -307,8 +425,8 @@ function asAlly(e: Enemy): Ally {
 }
 
 /** 次の幕ぶんの「一手」リスト（A 側は1発ずつ計画、B 側は resolveTurn 内でまとめて計画される）。 */
-function makeJobs(s: EndrollState, bout: number): PlanJob[] {
-  return rolePool('A', s.lvA, bout).map((role) => ({ side: 'A' as const, role }))
+function makeJobs(board: Board, bout: number): PlanJob[] {
+  return rolePool('A', board.lvA, bout).map((role) => ({ side: 'A' as const, role }))
 }
 
 /**
@@ -320,14 +438,13 @@ function makeJobs(s: EndrollState, bout: number): PlanJob[] {
  * 「同じ AI 同士の撃ち合い」に見えて実は一方だけが鈍い、という不公平な絵になる。
  */
 function planOne(
-  s: EndrollState,
   job: PlanJob,
   bout: number,
   bucket: { casts: AllyCast[] },
   board: Board,
 ): boolean {
-  const me = makeMage(s, 'A', bout, board)
-  const foe = makeMage(s, 'B', bout, board)
+  const me = makeMage('A', bout, board)
+  const foe = makeMage('B', bout, board)
   const foeAlly = asAlly(foe)
   // 敵AIから見える結界＝相手（B側）が張っている持続結界
   const foeRings = board.orbits.filter((o) => o.owner === 'enemy').map((o) => o.ring)
@@ -415,6 +532,8 @@ function boardOf(s: EndrollState): Board {
     orbits: s.orbits,
     hpA: s.hpA,
     hpB: s.hpB,
+    lvA: s.lvA,
+    lvB: s.lvB,
     lastEnemyCasts: s.lastEnemyCasts,
   }
 }
@@ -426,14 +545,14 @@ function startBout(s: EndrollState, now: number): void {
   const board = s.pre?.board ?? boardOf(s)
   const bucket = s.pre ?? { casts: [], jobs: [], i: 0, roles: [], board }
   // 先取りが間に合っていない手はここで補う
-  const jobs = s.pre?.jobs ?? makeJobs(s, s.bout)
+  const jobs = s.pre?.jobs ?? makeJobs(board, s.bout)
   for (let i = s.pre?.i ?? 0, guard = 0; i < jobs.length && guard < 24; guard++) {
-    if (planOne(s, jobs[i], s.bout, bucket, board)) i++
+    if (planOne(jobs[i], s.bout, bucket, board)) i++
   }
   s.pre = null
 
-  const mageA = makeMage(s, 'A', s.bout, board)
-  const mageB = makeMage(s, 'B', s.bout, board)
+  const mageA = makeMage('A', s.bout, board)
+  const mageB = makeMage('B', s.bout, board)
   const allyA: Ally = asAlly(mageA)
   let res: ResolveResult
   try {
@@ -482,22 +601,25 @@ function startBout(s: EndrollState, now: number): void {
   // --- 結界（今ターン張った新規＋前ターンからの持続）---
   const rings: RingView[] = []
   for (const sh of res.allyShots) {
-    if (sh.kind !== 'orbit' || sh.path.length < 3) continue
-    rings.push({ ring: sh.path, side: 'A', breakT: sh.breakTime, fresh: true })
+    // bornBroken＝壁・失速で回り出す前に自壊した＝結界は一度も存在しなかった。描かない（sceneTiming）
+    if (sh.kind !== 'orbit' || sh.path.length < 3 || !ringVisible(sh)) continue
+    rings.push({ ring: sh.path, side: 'A', breakT: ringBreakTime(sh), fresh: true })
   }
   for (const er of res.enemyRings) {
-    if (er.ring.length < 3) continue
-    rings.push({ ring: er.ring, side: 'B', breakT: er.breakTime, fresh: true })
+    if (er.ring.length < 3 || !ringVisible(er)) continue
+    rings.push({ ring: er.ring, side: 'B', breakT: ringBreakTime(er), fresh: true })
   }
   for (const po of s.orbits) {
     const survived = res.orbits.some((o) => o.id === po.id)
     const brk = res.orbitBreaks[po.id]
     // 同じ場所へ張り直したぶんは新規側で描く（二重表示の防止）
     if (survived && rings.some((r) => r.ring === po.ring)) continue
+    // 破壊時刻が分からない（brk が無い＝暴発等の記録漏れ）ときは「発射直後に壊れた」と
+    // 捏造せず、時刻不明のまま null（＝存続中と同じ扱い）にする（#75。判断は sceneTiming に集約）
     rings.push({
       ring: po.ring,
       side: po.owner === 'player' ? 'A' : 'B',
-      breakT: survived ? null : (brk?.t ?? 0),
+      breakT: ringBreakTime({ broken: !survived, breakTime: brk?.t ?? null }),
       fresh: false,
     })
   }
@@ -511,37 +633,18 @@ function startBout(s: EndrollState, now: number): void {
     .filter((b) => b.misfirePos)
     .map((b) => ({ pos: b.misfirePos as Vec2, t: b.misfireT, r: FIELD.aoeRadius }))
 
-  // --- ダメージ表示：量はエンジンの popups、時刻は同じ対象への命中時刻から引く ---
-  const hitTimes: Record<string, number[]> = {}
-  const pushHit = (id: string, t: number) => {
-    if (!Number.isFinite(t)) return
-    ;(hitTimes[id] ??= []).push(t)
-  }
-  for (const sh of res.allyShots) {
-    if (!sh.flight) continue
-    for (const h of sh.hits) pushHit(h.targetId, timeToArc(sh.flight.samples, h.arcLen))
-  }
-  for (const sh of res.enemyShots) {
-    for (const h of sh.hits) pushHit(h.targetId, timeToArc(sh.flight.samples, h.arcLen))
-  }
-  for (const id in hitTimes) hitTimes[id].sort((a, b) => a - b)
-  const firstBlast = blasts.length ? Math.min(...blasts.map((b) => b.t)) : 0
-  const damages: DamageView[] = res.popups.map((p) => {
-    let t = 0
-    if (p.trigger === 'flash') t = hitTimes[p.targetId]?.shift() ?? 0
-    else if (p.trigger === 'misfire') t = firstBlast
-    return { pos: p.pos, amount: p.amount, kind: p.kind, t }
-  })
+  // --- ダメージ表示：量も時刻もエンジンの popups をそのまま使う（#75。以前は命中時刻を
+  // hitTimes から shift() で割り当て直す二重実装があり、対応がずれる余地があった） ---
+  const damages: DamageView[] = res.popups.map((p) => ({ pos: p.pos, amount: p.amount, kind: p.kind, t: p.t }))
 
-  // --- 画面時間へのスケール ---
-  const spans = [
-    ...bolts.map((b) => b.total),
-    ...res.clashes.map((c) => c.t),
-    ...rings.map((r) => r.breakT ?? 0),
-    ...damages.map((d) => d.t),
-  ].filter((x) => Number.isFinite(x) && x > 0)
-  const k = FLIGHT_SEC / Math.max(0.25, ...spans)
-  const lastGame = spans.length ? Math.max(...spans) : 0
+  // --- 画面時間へのスケール（尺の決定は sceneTiming.lastEventTime に集約・#75） ---
+  const lastGame = lastEventTime(
+    bolts.map((b) => ({ t: b.total })),
+    res.clashes,
+    rings.map((r) => ({ t: r.breakT ?? 0 })),
+    damages,
+  )
+  const k = FLIGHT_SEC / Math.max(0.25, lastGame)
   const last = FIRE_AT + lastGame * k
 
   s.round = {
@@ -587,6 +690,27 @@ export function createEndroll(now: number): EndrollState {
   return s
 }
 
+/**
+ * 決着（KO）が見えた瞬間に確定する「次の幕の盤面」。
+ * やられた側だけ LVL +1・全回復し、最大 LVL で決着したら両者 LVL1 へ戻る。壁は組み直し、
+ * 場の結界と「前の手の読み」は持ち越さない（仕切り直し）。
+ */
+function nextBoardAfterKo(s: EndrollState, R: Bout): Board {
+  const lv = R.koSide === 'A' ? s.lvA : s.lvB
+  const reset = lv >= MAX_LEVEL
+  const lvA = reset ? 1 : R.koSide === 'A' ? s.lvA + 1 : s.lvA
+  const lvB = reset ? 1 : R.koSide === 'B' ? s.lvB + 1 : s.lvB
+  return {
+    obstacles: makeObstacles(Math.max(lvA, lvB)),
+    orbits: [],
+    hpA: reset || R.koSide === 'A' ? START_HP : R.after.hpA,
+    hpB: reset || R.koSide === 'B' ? START_HP : R.after.hpB,
+    lvA,
+    lvB,
+    lastEnemyCasts: [],
+  }
+}
+
 /** 幕を進める。やられた側だけが LVL を上げて全回復し、壁は別配置に組み直す。 */
 function tick(s: EndrollState, now: number): number {
   const R = s.round
@@ -614,23 +738,30 @@ function tick(s: EndrollState, now: number): number {
     R.duration = Math.min(R.duration, lt + 3.0)
     const lv = R.koSide === 'A' ? s.lvA : s.lvB
     s.banner = lv >= MAX_LEVEL ? 'reset' : 'lvup'
+    // 決着が見えた時点で「次の幕の盤面」（LVL・全回復・組み直した壁）を確定させる。
+    // 以前はここで先取りを捨てていたため、**決着の次の幕だけ計画が全部同期で走って画面が固まった**
+    // （LVL が上がるほど castCount も壁も増えるので、最悪のフレームがちょうど LVL 更新時に来る）。
+    R.next = nextBoardAfterKo(s, R)
     s.pre = null
   }
   // 幕の尻尾で次の幕の計画を 1 フレーム 1 手ずつ進めておく（切り替わりで描画が止まらない）。
-  // 盤面は**この幕を解決し終えた後の状態**（R.after）＝次の幕の開始時点。
+  // 盤面は**この幕を解決し終えた後の状態**（決着していれば R.next＝LVL 更新後）＝次の幕の開始時点。
   // B 側は resolveTurn の中で最新の盤面を見るので、ここを今の s のままにすると A 側だけが
   // 「削れる前の壁・古い結界・古い HP」で計画することになる（不公平な非対称）。
-  if (lt > R.duration - 2.4 && R.ko === undefined) {
-    const board: Board = {
-      obstacles: R.after.obstacles,
-      orbits: R.after.orbits,
-      hpA: R.after.hpA,
-      hpB: R.after.hpB,
-      lastEnemyCasts: R.after.enemyCasts,
-    }
-    if (!s.pre) s.pre = { jobs: makeJobs(s, s.bout + 1), i: 0, casts: [], roles: [], board }
+  if (lt > R.duration - 2.4) {
+    const board: Board =
+      R.next ?? {
+        obstacles: R.after.obstacles,
+        orbits: R.after.orbits,
+        hpA: R.after.hpA,
+        hpB: R.after.hpB,
+        lvA: s.lvA,
+        lvB: s.lvB,
+        lastEnemyCasts: R.after.enemyCasts,
+      }
+    if (!s.pre) s.pre = { jobs: makeJobs(board, s.bout + 1), i: 0, casts: [], roles: [], board }
     else if (s.pre.i < s.pre.jobs.length) {
-      if (planOne(s, s.pre.jobs[s.pre.i], s.bout + 1, s.pre, s.pre.board)) s.pre.i++
+      if (planOne(s.pre.jobs[s.pre.i], s.bout + 1, s.pre, s.pre.board)) s.pre.i++
     }
   }
   if (lt >= R.duration) {
@@ -640,27 +771,19 @@ function tick(s: EndrollState, now: number): number {
     s.hpA = R.after.hpA
     s.hpB = R.after.hpB
     s.lastEnemyCasts = R.after.enemyCasts
-    if (R.ko !== undefined) {
-      const lv = R.koSide === 'A' ? s.lvA : s.lvB
-      if (lv >= MAX_LEVEL) {
-        s.lvA = 1
-        s.lvB = 1
-        s.hpA = START_HP
-        s.hpB = START_HP
-      } else if (R.koSide === 'A') {
-        s.lvA += 1
-        s.hpA = START_HP
-      } else {
-        s.lvB += 1
-        s.hpB = START_HP
-      }
-      s.obstacles = makeObstacles(Math.max(s.lvA, s.lvB))
-      s.orbits = [] // 決着で場の結界は消える
+    if (R.next) {
+      // 決着後の状態は KO の瞬間に確定させたもの（＝先取り計画がその盤面で進んでいる）を必ず使う。
+      // ここで作り直すと、壁の乱数が引き直されて「計画した盤面」と「実際に撃つ盤面」がズレる
+      s.lvA = R.next.lvA
+      s.lvB = R.next.lvB
+      s.hpA = R.next.hpA
+      s.hpB = R.next.hpB
+      s.obstacles = R.next.obstacles
+      s.orbits = R.next.orbits // 決着で場の結界は消える
       // 決着＝仕切り直しなので、両陣営の「前の手の読み」も持ち越さない（#75）
       s.lastCasts = []
-      s.lastEnemyCasts = []
+      s.lastEnemyCasts = R.next.lastEnemyCasts
       s.banner = null
-      s.pre = null
     }
     s.round = null
     startBout(s, now)
@@ -684,8 +807,11 @@ export function drawEndroll(
   const R = s.round
   if (!R) return
   ctx.clearRect(0, 0, w, h)
-  const UR = FIELD.rField * 0.8
-  const vp: Viewport = { width: w, height: h, unitsRadius: UR, zoom: 1, pan: { x: 0, y: -8 } }
+  // 本編（BattleCanvas）と同じ倍率にする（#75）：unitsRadius は props.rField（未指定は FIELD.rField）。
+  // エンドロールの盤面は常に FIELD.rField の広さで生成している（makeObstacles・planOne が渡す rField も同じ）
+  // ので、ここも FIELD.rField をそのまま使う。かつては *0.8 で縮めていたため弾が本編より 1.25 倍大きく見えていた
+  const UR = FIELD.rField
+  const vp: Viewport = { width: w, height: h, unitsRadius: UR, zoom: 1, pan: { x: 0, y: -UR / 3 } }
   const S = (p: Vec2) => toScreen(p, vp)
   const scale = Math.min(w, h) / 2 / UR
   const phase = (now / 1000) * 3
@@ -775,25 +901,26 @@ export function drawEndroll(
     const fade = done ? Math.max(0, 1 - (lt - at(b.total)) / 1.2) : 1
     if (fade <= 0) continue
     ctx.save()
-    ctx.lineCap = 'round'
-    ctx.globalCompositeOperation = 'lighter'
+    // 軌跡は本編（board.drawFlightPath）と同じドット絵の文法で描く（#74）：
+    // 大きさ＝属性強度（trailWidthPx・格子へ量子化済み）、濃さは頭に近いほど濃い段。
+    // サンプル間隔は速度でばらつくので、**弧長で等間隔に**打ち直す（walkPath）＝
+    // 速い区間で軌跡が途切れない。
     const back = Math.min(i, 44)
-    for (let n = 0; n < back; n++) {
+    const trail: { pos: Vec2; z: number }[] = []
+    for (let n = back; n >= 0; n--) {
       const p = b.samples[i - n]
-      const q = b.samples[i - n - 1]
-      if (!q) break
-      const a = (1 - n / back) * (1 - n / back) * 0.6 * fade
-      const zn = b.zs[i - n] ?? 0
-      ctx.strokeStyle = col(attributeOf(zn), a)
-      // 太さ＝属性強度。本編（board.drawFlightPath）と同じ規則を共有する（#74）
-      ctx.lineWidth = trailWidthPx(zn, vp)
-      const P = S(p.pos)
-      const Q = S(q.pos)
-      ctx.beginPath()
-      ctx.moveTo(P.x, P.y)
-      ctx.lineTo(Q.x, Q.y)
-      ctx.stroke()
+      if (p) trail.push({ pos: p.pos, z: b.zs[i - n] ?? 0 })
     }
+    let lx = NaN
+    let ly = NaN
+    walkPath(trail, trail.length - 1, (t) => S(t.pos), Math.max(2, dotPx(vp)), (x, y, src, _n, head) => {
+      const w = trailWidthPx(src.z, vp)
+      // 間隔はその場の大きさに合わせる（固定歩幅だと太い所がのっぺりした帯になる）
+      if (!Number.isNaN(lx) && Math.hypot(x - lx, y - ly) < w * 0.8) return
+      lx = x
+      ly = y
+      dot(ctx, x, y, w, col(attributeOf(src.z), 1), head * head * 0.7 * fade)
+    })
     ctx.restore()
     if (!done) drawBullet(ctx, b.samples[i].pos, b.zs[i] ?? 0, vp, phase, b.samples[i].speed)
     for (const c of b.carves) {
@@ -802,35 +929,12 @@ export function drawEndroll(
     }
   }
 
-  // 相殺・迎撃の火花（時刻はエンジンの clashes[].t）
+  // 相殺・迎撃の火花（時刻はエンジンの clashes[].t）。
+  // 絵は本編と共有する（board.drawParryFlash）＝「相殺」の文字だけがエンドロールに無い。
   for (const cl of R.clashes) {
     const dt = (lt - at(cl.t)) / 0.95
     if (dt < 0 || dt >= 1) continue
-    const P = S(cl.pos)
-    const pw = Math.min(1, cl.power / 140)
-    ctx.save()
-    ctx.globalCompositeOperation = 'lighter'
-    ctx.lineCap = 'round'
-    for (let j = 0; j < 2; j++) {
-      const q = Math.min(1, Math.max(0, (dt - j * 0.16) / 0.84))
-      if (q <= 0) continue
-      ctx.strokeStyle = `rgba(255,246,224,${((1 - q) * (1 - q) * 0.9).toFixed(3)})`
-      ctx.lineWidth = (5 - j * 2.2) * (1 - q) + 0.8
-      ctx.beginPath()
-      ctx.arc(P.x, P.y, 9 + pw * 20 + q * (40 + pw * 50), 0, TAU)
-      ctx.stroke()
-    }
-    for (let j = 0; j < 12; j++) {
-      const aa = (j / 12) * TAU + 0.25
-      const len = (18 + pw * 44) * Math.pow(dt, 0.55)
-      ctx.strokeStyle = col(j % 2 ? 'light' : 'dark', 0.8 * (1 - dt))
-      ctx.lineWidth = 2.2 * (1 - dt) + 0.4
-      ctx.beginPath()
-      ctx.moveTo(P.x + Math.cos(aa) * len * 0.3, P.y + Math.sin(aa) * len * 0.3)
-      ctx.lineTo(P.x + Math.cos(aa) * len, P.y + Math.sin(aa) * len)
-      ctx.stroke()
-    }
-    ctx.restore()
+    drawParryFlash(ctx, vp, cl.pos, cl.power, dt)
   }
 
   // 暴発

@@ -47,6 +47,14 @@ import {
 } from '../render/board'
 import { seedRingPhases } from '../render/ringPhase'
 import { gameTimeAtArcLen } from '../render/effectTiming'
+import {
+  activeDeathIds,
+  animationEndTime,
+  deathTime,
+  ringBreakTime,
+  ringVisible,
+  timedOnly,
+} from '../render/sceneTiming'
 import { ringAverageAttr, ringEncloses, ringRadius, type RingPoint } from '../game/orbit'
 import { COLORS } from '../render/theme'
 import { COMBAT, FIELD, GAME } from '../data/constants'
@@ -117,6 +125,8 @@ export interface AnimOrbit {
   breakT?: number | null
   /** 所有者（#61/#72）。粒の流れる向き・闇幕の扱いに使う */
   owner?: 'player' | 'enemy'
+  /** 壁・失速で回り出す前に自壊した＝結界は一度も存在しなかった（#75）。true ならリングも霧散演出も描かない */
+  bornBroken?: boolean
 }
 
 /** 被弾フラッシュの減衰時間（ms）。一瞬赤く光って揺れて戻る（#20） */
@@ -508,15 +518,23 @@ export default function BattleCanvas(props: Props) {
     const timelines = anim.bullets.map((b) => buildTimeline(b.samples))
     // エンジンが返すイベント時刻（相殺・結界の霧散）も時間窓に含める＝弾が居ないターンでも
     // 演出が窓の外へはみ出さない（#72）
+    const popups = timedOnly(anim.popups ?? [])
     const eventTimes: number[] = [
       ...(anim.clashes ?? []).map((c) => c.t),
       ...anim.orbits.map((o) => o.breakT ?? 0),
+      ...popups.map((p) => p.t),
     ].filter((t) => Number.isFinite(t))
     const maxTotal = Math.max(0.001, ...timelines.map((t) => t.total), ...eventTimes)
     // 軌道型がある時は周回が見えるよう窓を長めに確保（#24）
     const hasOrbit = anim.orbits.length > 0
     const floorMs = hasOrbit ? 1600 : MIN_MS
     const flightMs = Math.min(MAX_MS, Math.max(floorMs, maxTotal * MS_PER_GAMESEC))
+
+    /** ゲーム秒（エンジンのイベント時刻）→ アニメの実時間 ms（#72）。 */
+    const msOfGameTime = (t: number): number =>
+      Math.max(0, Math.min(flightMs, (t / maxTotal) * flightMs))
+
+    // ダメージ／回復の数値（#42）：発生ゲーム秒 p.t をそのまま実時間へ写す（#75）
     // 弾の到達後に演出を見せる余韻：暴発は大きく、命中は短く確保する（#9/#29/#20）
     const hasMisfire = anim.bullets.some((b) => b.misfirePos)
     const hasImpact =
@@ -532,21 +550,22 @@ export default function BattleCanvas(props: Props) {
         : hasImpact || hasClash
           ? IMPACT_TAIL_MS
           : 0
-    // ダメージ／回復の数値を最後まで見せる余韻を確保する（#42）
-    const hasPopups = (anim.popups?.length ?? 0) > 0
-    const popupTail = hasPopups ? Math.max(baseTail, POPUP_MS + 300) : baseTail
+    // ダメージ／回復の数値を最後まで見せる余韻を確保する（#42/#75）：最後のポップの開始時刻＋表示時間で決める
+    const popupStartMs = popups.map((p) => msOfGameTime(p.t))
     // 撃破演出（#46/#51）の余韻：フラッシュ（余韻の頭）に続けて消滅アニメを見せる。
     const deaths = anim.deaths ?? []
-    const hasBossDeath = deaths.some((d) => d.boss)
-    const deathTail = deaths.length
-      ? Math.max(popupTail, IMPACT_TAIL_MS + (hasBossDeath ? BOSS_COLLAPSE_MS : DEATH_MS))
-      : popupTail
-    const tailMs = deathTail
-    const realMs = flightMs + tailMs
-
-    /** ゲーム秒（エンジンのイベント時刻）→ アニメの実時間 ms（#72）。 */
-    const msOfGameTime = (t: number): number =>
-      Math.max(0, Math.min(flightMs, (t / maxTotal) * flightMs))
+    const deathStartMs = deaths.map((d) => {
+      const lastHitT = deathTime(popups, d.id)
+      return lastHitT === null ? 0.9 * flightMs : msOfGameTime(lastHitT)
+    })
+    const realMs = animationEndTime({
+      flightMs,
+      baseTailMs: baseTail,
+      popupStartMs,
+      popupDurationMs: POPUP_MS,
+      popupPaddingMs: 300,
+      deathEndMs: deaths.map((d, i) => deathStartMs[i] + (d.boss ? BOSS_COLLAPSE_MS : DEATH_MS)),
+    })
 
     /**
      * 弾 i がその弧長へ届く実時間 ms（#70）。演出の開始時刻を「経過時刻から引ける値」にするための要。
@@ -559,7 +578,8 @@ export default function BattleCanvas(props: Props) {
       return msOfGameTime(gameTimeAtArcLen(b.samples, timelines[i].tCum, arcLen))
     }
 
-    // 被弾フラッシュ：対象IDごとに「反応を開始した実時刻」を記録し、以後減衰させる（#20）
+    // 被弾フラッシュ：対象IDごとに「反応を開始した実時刻」を記録し、以後減衰させる（#20）。
+    // ※ ダメージ数値のポップはここに依らず p.t を直接使う（#75。1体に2発当たった時のズレ対策）
     const flashStartByTarget: Record<string, number> = {}
     // 衝突火花：clash ごとに「弾がその点へ到達した実時刻」を記録し、その瞬間から弾けさせる（#20）
     const clashStartByIdx: Record<number, number> = {}
@@ -572,7 +592,6 @@ export default function BattleCanvas(props: Props) {
     const deathStartById: Record<string, number> = {}
 
     // ダメージ／回復の数値（#42）：同じ対象・契機のポップは縦に積む（重なり防止）
-    const popups = anim.popups ?? []
     const popupOrd: number[] = []
     const ordCount: Record<string, number> = {}
     for (const p of popups) {
@@ -581,13 +600,6 @@ export default function BattleCanvas(props: Props) {
       ordCount[k] = o + 1
       popupOrd.push(o)
     }
-    // 暴発の爆発開始時刻（misfire ポップの基準）
-    let misfireArrivalMs = Infinity
-    anim.bullets.forEach((b, i) => {
-      if (!b.misfirePos) return
-      const arr = maxTotal > 0 ? (timelines[i].total / maxTotal) * flightMs : 0
-      misfireArrivalMs = Math.min(misfireArrivalMs, arr)
-    })
 
     let raf = 0
     let finished = false
@@ -681,16 +693,17 @@ export default function BattleCanvas(props: Props) {
         if (t >= 0 && t < 1) flash[id] = 1 - t
       }
 
-      // 撃破演出（#46/#51）：致命弾が届いた瞬間（フラッシュ開始）に消滅アニメを開始する。
-      // フラッシュが取れない（掃射など）撃破は、飛行終盤（e>=0.9）を保険に開始する。
+      // 撃破演出（#46/#51）：**その敵への最後のダメージポップの時刻**（＝致命打）に消滅アニメを開始する（#75）。
+      // フラッシュ開始（＝最初の被弾）だと、2発当てて倒したときに1発目のタイミングで消滅が始まってしまう。
+      // 該当ポップが無い（掃射など数値を出さない撃破）ときだけ、飛行終盤（e>=0.9）を保険に開始する。
       for (const d of deaths) {
         if (deathStartById[d.id] !== undefined) continue
-        const flashStart = flashStartByTarget[d.id]
-        if (flashStart !== undefined) deathStartById[d.id] = flashStart
+        const lastHitT = deathTime(popups, d.id)
+        if (lastHitT !== null) deathStartById[d.id] = msOfGameTime(lastHitT)
         else if (e >= 0.9) deathStartById[d.id] = 0.9 * flightMs
       }
       // 消滅が始まった敵は生存スプライトを隠す（消滅アニメへ譲る・#46）
-      const hideEnemyIds = new Set<string>(Object.keys(deathStartById))
+      const hideEnemyIds = activeDeathIds(deathStartById, elapsed)
 
       // 暴発のステージ全体演出（#41）：揺れの強さ（爆発直後が最強→減衰）と破片の落下進行
       let mfShake = 0
@@ -752,17 +765,19 @@ export default function BattleCanvas(props: Props) {
         const ring = o.ring
         const len = ring.length
         if (len < 2) continue
+        // 一度も存在しなかった結界（壁・失速で回り出す前に自壊・#75）：リングも霧散演出も描かない
+        if (!ringVisible(o)) continue
 
         // 霧散する周回：**エンジンが返した破壊時刻**ちょうどから散り始める（#72）。
         // 旧実装は「どれかの弾が破壊点へ近づいたか」で推定し、近づかない場合は飛行の40%で
         // 強制発火していたため、パリィで弾が消えた／暴発で壊れた結界が実際より早く散っていた。
+        // 破壊時刻が取れないとき（#75）は、時刻をでっち上げず霧散演出そのものを出さない
+        // （下の「接触前」経路へ流れ、周回している見た目のまま留まる）。
         if (o.broken) {
           if (dissipateStartByIdx[oi] === undefined) {
-            const bt = o.breakT
-            if (bt !== null && bt !== undefined && Number.isFinite(bt)) {
+            const bt = ringBreakTime({ broken: o.broken, breakTime: o.breakT, bornBroken: o.bornBroken })
+            if (bt !== null) {
               if (elapsed >= msOfGameTime(bt)) dissipateStartByIdx[oi] = msOfGameTime(bt)
-            } else if (e >= 0.4) {
-              dissipateStartByIdx[oi] = 0.4 * flightMs // 時刻が取れない結界（術者の死亡等）の保険
             }
           }
           const dStart = dissipateStartByIdx[oi]
@@ -888,11 +903,11 @@ export default function BattleCanvas(props: Props) {
       const placedPops: { x: number; y: number; w: number; h: number }[] = []
       for (let i = 0; i < popups.length; i++) {
         const p = popups[i]
-        let start: number | undefined
-        if (p.trigger === 'flash') start = flashStartByTarget[p.targetId]
-        else if (p.trigger === 'misfire') start = Number.isFinite(misfireArrivalMs) ? misfireArrivalMs : undefined
-        else start = flightMs * 0.5 // 回復は固定タイミング
-        if (start === undefined) continue
+        // ポップの開始時刻はエンジンが返した発生ゲーム秒 p.t をそのまま使う（#75）。
+        // trigger による分岐（flash/misfire/heal）はもう不要：flashStartByTarget は
+        // 同じ敵への2発目以降が1発目の時刻に引きずられる（1回しか代入しない）ため、
+        // ポップの時刻源としては使わない（被弾フラッシュ本体の用途では引き続き使う）。
+        const start = msOfGameTime(p.t)
         const t = (elapsed - start) / POPUP_MS
         if (t < 0 || t >= 1) continue
         const sp = toScreen(p.pos, vp)

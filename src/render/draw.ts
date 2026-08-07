@@ -3,8 +3,17 @@ import type { Ally, Attribute, Enemy, EnemySpecies, Obstacle, ObstacleKind, Vec2
 import { FIELD } from '../data/constants'
 import { toScreen, scaleOf, type Viewport } from '../game/coords'
 import { attributeOf, strengthOf } from '../game/attribute'
-import { bulletRadius, powerFraction } from '../game/collision'
+import { powerFraction } from '../game/collision'
 import { COLORS } from './theme'
+import {
+  bulletDotTier,
+  dot,
+  dotPx,
+  pixelDisc,
+  pixelRing,
+  quantAlpha,
+  snapAngle,
+} from './pixelfx'
 import { getWallTexture } from './textures'
 import {
   drawBoardAxes,
@@ -1634,8 +1643,14 @@ export function bulletColorOf(z: number): string {
 export const powerSizeFrac = powerFraction
 
 /**
- * 飛行中の弾（多層グロー＋脈動コア＋回転スパーク・#11/#21）。
- * 発射されると z 場の値で色と形が変わる：属性で色、強度(|z|→V付近で最大)でグロー半径・スパーク数が増える。
+ * 飛行中の弾（ドット絵の核＋離散ハロー＋16 方位スナップの棘・#11/#21/#74）。
+ * 属性で色、強度(|z|→V付近で最大)で棘の本数とハローが増える。
+ *
+ * **外縁（＝一番外側のドット）が当たり半径ちょうどに一致する**（#72：見えている大きさ＝ぶつかる大きさ）。
+ * `bulletDotTier` が `bulletRadius × scale ÷ ドット幅` を丸めた値＝外縁の上限で、これを超えて
+ * ドットを置かない：芯（③）は `tier-2` ドットへ縮め、棘（②）は `tier-1〜tier` の間だけに留め、
+ * ハロー（①）は `tier+1.5`／`tier+3` の外側リングをやめて `tier` ドットの1本に統合する。
+ * 威力・脈動は大きさではなく**リングの明るさ／アルファの段**（`quantAlpha`）で語る。
  */
 export function drawBullet(
   ctx: CanvasRenderingContext2D,
@@ -1647,64 +1662,32 @@ export function drawBullet(
 ): void {
   const c = toScreen(pos, vp)
   const color = bulletColorOf(z)
-  const strength = strengthOf(z) // 0..sMax
-  const sFrac = Math.min(1, strength / FIELD.sMax) // 0..1
-  const pulse = 1 + Math.sin(phase * 1.7) * 0.25
+  const sFrac = Math.min(1, strengthOf(z) / FIELD.sMax) // 0..1
+  const unit = dotPx(vp)
+  const tier = bulletDotTier(speed, z, vp)
   // 強いほど棘が多い（#21：形が z で変わる）
   const spikes = 4 + Math.round(sFrac * 4)
-  // **本体（属性色の円）が当たり判定の半径そのもの**（#72：見えている大きさ＝ぶつかる大きさ）。
-  // 威力（速度×強度）で大きさが決まるので、本体の直径がそのまま「この魔法の重さ」を語る。
-  // 脈動は当たり判定を動かさない見た目だけの揺らぎなので、平均が判定半径になるよう ±0 で振らせる。
-  const bodyR = bulletRadius(speed, z) * scaleOf(vp) * pulse
-  // 白い芯は「そこに核がある」ことを示すだけの小さなハイライト。
-  // 本体（属性色＝威力）を覆い隠さないよう、本体の 1/3 以下に抑える。
-  const coreR = Math.max(1, bodyR * 0.3)
-  const glowR = bodyR * 1.7 + 3 // グローは本体を包む輪（軌跡を主役にするため控えめ・#74）
   ctx.save()
-  const glow = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, glowR)
-  glow.addColorStop(0, color)
-  glow.addColorStop(1, 'rgba(0,0,0,0)')
-  ctx.globalAlpha = 0.34 + sFrac * 0.2
-  ctx.fillStyle = glow
-  ctx.beginPath()
-  ctx.arc(c.x, c.y, glowR, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.globalAlpha = 1
-  ctx.shadowColor = color
-  ctx.shadowBlur = 12 + sFrac * 10
-  // 回転スパーク（強度で本数が増える）
-  ctx.strokeStyle = color
-  ctx.lineWidth = 2
-  const len = 6 + sFrac * 5 + Math.sin(phase) * 2.5
+  // ② 回転スパーク：16 方位にスナップしてカクカク回す（tier-1〜tier の間だけ＝外縁を超えない）
   for (let i = 0; i < spikes; i++) {
-    const a = phase * 0.5 + (i * Math.PI * 2) / spikes
-    ctx.beginPath()
-    ctx.moveTo(c.x, c.y)
-    ctx.lineTo(c.x + Math.cos(a) * len, c.y + Math.sin(a) * len)
-    ctx.stroke()
+    const a = snapAngle(phase * 0.5 + (i * Math.PI * 2) / spikes)
+    for (let d = Math.max(0, tier - 1); d <= tier; d++) {
+      dot(ctx, c.x + Math.cos(a) * d * unit, c.y + Math.sin(a) * d * unit, unit, color, 0.75)
+    }
   }
-  // 本体：属性色の円＝当たり判定そのもの。縁を一段明るくして輪郭を立てる
-  ctx.fillStyle = color
-  ctx.beginPath()
-  ctx.arc(c.x, c.y, bodyR, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.shadowBlur = 0
-  ctx.strokeStyle = 'rgba(255,248,225,0.75)'
-  ctx.lineWidth = 1.2
-  ctx.beginPath()
-  ctx.arc(c.x, c.y, bodyR, 0, Math.PI * 2)
-  ctx.stroke()
-  // 白い芯（小さなハイライト）
-  ctx.fillStyle = '#fff8e1'
-  ctx.beginPath()
-  ctx.arc(c.x, c.y, coreR, 0, Math.PI * 2)
-  ctx.fill()
+  // ③ 本体：ドットの円盤。芯は白熱（COLORS.light2）。外縁 tier より内側（tier-2）に縮める
+  pixelDisc(ctx, c.x, c.y, Math.max(1, tier - 2), unit, color, COLORS.light2)
+  // ① ハロー＋④ 縁の明滅：外縁 tier ドットに1本の輪へ統合。威力は明るさの段、脈動はアルファ2段
+  const bright = Math.sin(phase * 1.7) > 0
+  const haloAlpha = quantAlpha(0.3 + sFrac * 0.4)
+  pixelRing(ctx, c.x, c.y, tier * unit, 8 + spikes, unit, bright ? COLORS.light2 : color, bright ? 0.9 : haloAlpha)
   ctx.restore()
 }
 
 /**
- * 小さな周回パーティクル（軌道型魔法・#24）。グロー＋白コア。
- * sizeScale（0..1＝威力）で粒の大きさが変わる。威力が高い周回ほど太く見える（#21）。
+ * 小さな周回パーティクル（軌道型魔法・#24）。ドットの円盤＋白熱の芯。
+ * sizeScale（0..1＝威力）で粒の階数が 1〜3 ドットに変わる（#21：威力は段で読む）。
+ * 明滅は大きさではなく芯の有無で語る＝滑らかに膨らまない。
  */
 export function drawParticle(
   ctx: CanvasRenderingContext2D,
@@ -1715,20 +1698,10 @@ export function drawParticle(
   sizeScale = 0.5,
 ): void {
   const c = toScreen(pos, vp)
-  const r = 1.8 + sizeScale * 2.6 + Math.sin(phase) * 0.7
+  const unit = dotPx(vp)
+  const tier = 1 + Math.round(sizeScale * 2)
   ctx.save()
-  ctx.shadowColor = color
-  ctx.shadowBlur = 8 + sizeScale * 8
-  ctx.globalAlpha = 0.9
-  ctx.fillStyle = color
-  ctx.beginPath()
-  ctx.arc(c.x, c.y, r, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.globalAlpha = 1
-  ctx.fillStyle = '#fff8e1'
-  ctx.beginPath()
-  ctx.arc(c.x, c.y, r * 0.45, 0, Math.PI * 2)
-  ctx.fill()
+  pixelDisc(ctx, c.x, c.y, tier, unit, color, Math.sin(phase) > 0 ? COLORS.light2 : undefined, 0.9)
   ctx.restore()
 }
 
@@ -1748,37 +1721,18 @@ export function drawBulletDissipation(
   const c = toScreen(pos, vp)
   const col = bulletColorOf(z)
   const s = scaleOf(vp)
-  // 縮む核（progress とともに小さくなる）
-  const coreR = (2 + sizeFrac * 4) * (1 - progress)
-  if (coreR > 0.3) {
-    ctx.save()
-    ctx.globalAlpha = (1 - progress) * 0.9
-    ctx.shadowColor = col
-    ctx.shadowBlur = 10
-    ctx.fillStyle = col
-    ctx.beginPath()
-    ctx.arc(c.x, c.y, coreR, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.fillStyle = '#fff8e1'
-    ctx.beginPath()
-    ctx.arc(c.x, c.y, coreR * 0.4, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.restore()
-  }
-  // 外へ散る粒（周回の霧散と同じ質感）
+  const unit = dotPx(vp)
   ctx.save()
+  // 縮む核：階数を段で落とす（連続的に縮めず、ドットが 1 段ずつ欠ける）
+  const tier = Math.round((1 + sizeFrac * 3) * (1 - progress))
+  if (tier >= 1) pixelDisc(ctx, c.x, c.y, tier, unit, col, COLORS.light2, 1 - progress)
+  // 外へ散る粒（周回の霧散と同じ質感）：散る距離も 1 ドット刻みに丸める
   const N = 12
-  const out = progress * (3 + sizeFrac * 3) * s
+  const out = Math.round((progress * (3 + sizeFrac * 3) * s) / unit) * unit
   for (let i = 0; i < N; i++) {
-    const a = (i / N) * Math.PI * 2 + i * 0.7
-    ctx.globalAlpha = Math.max(0, 1 - progress) * 0.8
-    ctx.fillStyle = col
-    ctx.shadowColor = col
-    ctx.shadowBlur = 8
-    const rr = (1.5 + sizeFrac * 1.5) * (1 - progress)
-    ctx.beginPath()
-    ctx.arc(c.x + Math.cos(a) * out, c.y + Math.sin(a) * out, Math.max(0.4, rr), 0, Math.PI * 2)
-    ctx.fill()
+    const a = snapAngle((i / N) * Math.PI * 2 + i * 0.7)
+    const size = unit * (1 - progress > 0.5 ? 2 : 1)
+    dot(ctx, c.x + Math.cos(a) * out, c.y + Math.sin(a) * out, size, col, (1 - progress) * 0.8)
   }
   ctx.restore()
 }
@@ -1812,8 +1766,9 @@ export function drawOrbitDissipation(
     strokeZPath(ctx, ring, vp)
     ctx.restore()
   }
-  // 外向きに散る粒（霧散）
+  // 外向きに散る粒（霧散）：属性色の四角ドットが外へ 1 ドットずつ離れていく
   ctx.save()
+  const unit = dotPx(vp)
   const N = 28
   for (let n = 0; n < N; n++) {
     const idx = Math.floor((n / N) * (len - 1))
@@ -1824,15 +1779,7 @@ export function drawOrbitDissipation(
     const dl = Math.hypot(dx, dy) || 1
     const out = progress * 5
     const c = toScreen({ x: p.pos.x + (dx / dl) * out, y: p.pos.y + (dy / dl) * out }, vp)
-    const col = trailColorOf(p.z)
-    ctx.globalAlpha = Math.max(0, 1 - progress) * 0.85
-    ctx.fillStyle = col
-    ctx.shadowColor = col
-    ctx.shadowBlur = 9
-    const rr = 2.4 + (1 - progress) * 1.6
-    ctx.beginPath()
-    ctx.arc(c.x, c.y, rr, 0, Math.PI * 2)
-    ctx.fill()
+    dot(ctx, c.x, c.y, unit * (progress < 0.5 ? 2 : 1), trailColorOf(p.z), (1 - progress) * 0.85)
   }
   ctx.restore()
 }

@@ -10,12 +10,13 @@ import { varianceOf } from '../misfireInstability'
 import { COMBAT, FIELD, GAME, RUPTOR, ENEMY_ROUTE_PLANNING as RP } from '../../data/constants'
 import { AVOIDER_FAMILIES, ABS_H_RATIO, aimAt, familyTrajectories } from './trajectories'
 import { perceivedPos, threatScore, avoiderFamiliesOf } from './perception'
-import { buildPlanningEnv } from './planningEnv'
+import { buildPlanningEnv, type PlanningEnv } from './planningEnv'
 import { findRoute, type RouteMode } from './routeSearch'
 import { fitRouteToFamilies } from './routeFit'
+import { fitCleanRoute } from './routeRepair'
 import { fitComplexityFor } from './fitComplexity'
 import { evaluateEnemyShot, compareRank } from './evaluate'
-import { foreseeInterception, type PredictedShot } from './foresight'
+import { foreseeInterception, threatCorridorObstacle, type PredictedShot } from './foresight'
 import { zfieldAt } from '../attribute'
 import type { EnemyPlan } from '../enemyAI'
 
@@ -57,6 +58,8 @@ interface RuptorCandidate {
   selfInAoE: boolean
   /** 巻き込む味方（敵チーム）の数（#65） */
   matesInAoE: number
+  /** 予測した味方弾との相殺で、暴発点へ届く前に消滅する。 */
+  shotDown: boolean
 }
 
 /**
@@ -123,6 +126,9 @@ export function planRuptorShot(
   // 「上振れ込みの最大半径」より内側に極を置く計画は自爆と見なして避ける
   const selfDanger = FIELD.aoeRadius * (1 + varianceOf(instability))
   const env = obstacles.length > 0 ? buildPlanningEnv(obstacles, fieldR) : null
+  // 読み（#76）：予測弾の走る回廊を仮想障害物として足した経路探索用の空間（本番判定には使わない）
+  const threatOb = threatCorridorObstacle(predicted, [enemy.pos])
+  const threatEnv = threatOb ? buildPlanningEnv([...obstacles, threatOb], fieldR) : null
   const allyTargets = alive.map((a) => ({ id: a.id, pos: a.pos, radius: GAME.allyHitbox }))
   // 反対極の持続結界の迎撃圏（中心・半径＋手前マージン）。この圏内に極を置く計画は
   // 「際どすぎて不発リスクが高い」として暴発採用しない＝リング半径を広げる防御側の
@@ -175,11 +181,11 @@ export function planRuptorShot(
     const shotDown = icp !== null && icp.speedRatio <= 0
     const rank = [
       misfire ? 0 : 1,
-      // ユニット狙い（点被覆）を壁削り狙い（素材被覆）より常に優先する（§14.2 の採用順）
-      misfire && cover.kind === 'point' ? 0 : 1,
       selfInAoE ? 1 : 0, // 自爆回避は被覆より優先（#65：自爆しない場所を選ぶ）
       matesInAoE,
       shotDown ? 1 : 0, // 読み（#75）：撃ち落とされる経路は避ける（暴発が起きない）
+      // 安全性が同じなら、ユニット狙い（点被覆）を壁削り狙い（素材被覆）より優先する（§14.2）
+      misfire && cover.kind === 'point' ? 0 : 1,
       inGuaranteed ? 0 : 1, // 下振れ込みで巻き込める（本命・§12.6）
       inExpected ? 0 : 1, // 期待半径でなら巻き込める（次点）
       hitBeforePole ? 1 : 0,
@@ -202,6 +208,7 @@ export function planRuptorShot(
       noRingBlock: ev.oppositeRingArcs.length === 0,
       selfInAoE,
       matesInAoE,
+      shotDown,
     }
   }
 
@@ -221,21 +228,29 @@ export function planRuptorShot(
         }
       }
     }
-    const tryRoute = (mode: RouteMode) => {
-      if (!env) return
-      const route = findRoute(env, enemy.pos, aim, mode)
+    // clean 経路は routeRepair（#76）でフィットする＝式が経路の余白からはみ出して壁を舐めたら、
+    // 触れた点を通過点に足して組み直す。wallTunnel は壁を掘る前提なので従来どおり素のフィット。
+    const tryRoute = (routeEnv: PlanningEnv | null, mode: RouteMode) => {
+      if (!routeEnv) return
+      const route = findRoute(routeEnv, enemy.pos, aim, mode)
       if (!route) return
-      for (const fit of fitRouteToFamilies(route.points, enemy.pos, AVOIDER_FAMILIES, fitCx)) {
+      const fits =
+        mode === 'clean'
+          ? fitCleanRoute(route.points, enemy.pos, AVOIDER_FAMILIES, fitCx, routeEnv)
+          : fitRouteToFamilies(route.points, enemy.pos, AVOIDER_FAMILIES, fitCx)
+      for (const fit of fits) {
         const traj: Trajectory = { mode: 'rotate', g: fit.g, angle: fit.angle, origin: enemy.pos, z, fieldR }
         consider(evalTraj(traj, aim, cover, fams.includes(fit.family), fit.turnXs))
       }
     }
     tryFams(fams, true)
     const good = (c: RuptorCandidate | null): boolean =>
-      c !== null && c.misfire && c.inExpected && c.noMaterial // 暴発成立・AoE 圏内・クリーン
-    if (!good(best)) tryRoute('clean')
+      c !== null && c.misfire && c.inExpected && c.noMaterial && !c.shotDown // 暴発成立・AoE 圏内・クリーン・迎撃されない
+    if (!good(best)) tryRoute(env, 'clean')
+    // 読み（#76）：予測弾の回廊も避けた経路を探す（壁が無い面でも効く＝撃ち落とされない道を通る）
+    if (!good(best)) tryRoute(threatEnv, 'clean')
     if (!good(best) && wide.length > 0) tryFams(wide, false)
-    if (!good(best)) tryRoute('wallTunnel')
+    if (!good(best)) tryRoute(env, 'wallTunnel')
     return best
   }
 

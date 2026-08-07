@@ -24,6 +24,7 @@
 | `Disc` / `Rect` / `Obstacle` / `ObstacleKind` | 障害物（素材＝solids（円）＋rects（四角・#56）− carves・耐久種別） |
 | `CarveBurst` | 削る瞬間の演出データ |
 | `ActiveOrbit` | 永続する周回結界（#39） |
+| `DamagePopup` | 浮かび上がるダメージ／回復の数値表示（#42）。`{pos, amount, kind, targetId, trigger, t}`。`t`＝発生ゲーム秒（#75・ターン開始=0）。命中＝飛行サンプルの到達時刻、掃射＝リング到達時刻、暴発＝爆発時刻、回復＝固定0。描画側はこの `t` だけを見て発火時刻を決め、`trigger` は色・被弾フラッシュ本体との対応づけにのみ使う |
 | `Mechanics` | `{ obstacles, enemyFire }`（段階的解禁） |
 | `BossPhase` | ボスの HP フェーズ（#45）：`{ hpBelow, castCount, obstacles, cullMinions?, rField? }`（`rField`＝崩落後の場半径・`applyBossPhases` が `BattleState.rField` へ反映・#49） |
 | `Stage` | ステージ定義（enemies/obstacles/introText/clearText/mechanics/boss?/bossPhases?/rField?（面ごとの場半径・`createBattleState` が `BattleState.rField` へ取り込む・#49）/allyPositions?（面ごとの味方初期位置の上書き・#64。`party.ts` の並び順に対応し `createBattleState` が適用。未指定の面は既定位置。現状は第4面のみ使用）） |
@@ -98,12 +99,13 @@ resolveAllyCasts(state, casts, castingEnemyIds, { instability?, misfireRoll? })
    これにより「先に相殺されて消えたはずの弾が後方の結界を壊す」因果の逆転が起きない（旧 §3a は結界の迎撃を幾何交差でパリィより先に全部解いていた）。
    減衰イベントを蓄積し、毎回「元初速＋全減衰」で再シミュレートする。
    解決した各イベントは**ゲーム秒の時刻つき**で返る（`clashes[].t`／`enemyRings[].breakTime`／`orbitBreaks[id].t`／`allyShots[].breakTime`）。
+   壁・失速で**回り出す前に自壊した**結界は `bornBroken=true` で区別し、`breakTime` は「存続中」と同じ `null` のまま持たせる（実際に破壊された時刻ではないため・#75）。
 5. **障害物（味方弾）** … 味方の発射型を削りながら遮る。
-6. **攻撃** … 発射型は**貫通**：経路上の全ヒットへ弧長順にダメージ（命中で減速しない・敵結界の減速は 4.5 で反映済み）／軌道型は掃射／invalid まで届けば暴発（命中と両立。半径は instability でばらつく・04b §4b.3）。暴発は AoE 内の壁に加え**結界（味方・敵とも）も最大威力でパリィ相当に削る**（`blastOrbits`・速度0で霧散）。
+6. **攻撃** … 発射型は**貫通**：経路上の全ヒットへダメージ（命中で減速しない・敵結界の減速は 4.5 で反映済み）／軌道型は掃射／invalid まで届けば暴発（命中と両立。半径は instability でばらつく・04b §4b.3）。この3種を `AttackEvent`（物理時刻 `t`・安定キー・適用処理）として集め、**物理時刻→安定キー順**に適用するため、味方や詠唱の入力配列順には依存しない。候補はこの区分開始時に生存している敵から作り、適用時点ですでに撃破済みの対象へのイベントは無効になる。掃射のダメージ発生時刻（`OrbitHit.t`）は対象に最も近いリング点の到達時刻＝`orbit.ringTimeToIndex(ring, idx)`（リング始点から index までの Σ dist/v̄・台形則。速度0の区間は時間を進めない）。永続結界は位相が不定なので、1周の周期 `orbit.ringPeriod(ring)`（全区間＋始点に戻る最後の区間を含む Σ dist/v̄）で剰余を取り「今ターン内のいつか」に収める（#75）。暴発は AoE 内の壁に加え**結界（味方・敵とも）も最大威力でパリィ相当に削る**（`blastOrbits`・速度0で霧散）。
 7. **5.5 周回オーラ** … 囲んだ味方へ光=固定回復/闇=隠蔽（内側優先で最大 2 つ）。
 8. **5.6 敵結界のオーラ** … 光の敵リング（新規＋持続）は囲んだ敵陣を回復（05b §5.4/#61）。
-9. **敵弾が味方へ命中** … **貫通**：パス上で触れた全味方へダメージ＋状態異常（ruptor の弾は除く）。
-10. **6b 崩し手の暴発** … 迎撃されず極まで届いた ruptor 弾は暴発 AoE（敵味方無差別・壁も結界も削る）。`misfires` に計上。
+9. **敵弾が味方へ命中** … **貫通**：パス上で触れた全味方へダメージ＋状態異常（ruptor の弾は除く）。通常命中と次項の崩し手の暴発を同じ敵側 `AttackEvent` 列に集め、**物理時刻→安定キー順**に適用するため、敵弾の入力配列順には依存しない。通常命中の候補はこの区分開始時に生存している味方から作り、適用時点ですでに撃破済みなら無効になる。
+10. **6b 崩し手の暴発** … 迎撃されず極まで届いた ruptor 弾は暴発 AoE（敵味方無差別・壁も結界も削る）。暴発の適用時点で生存している敵味方を対象に解決し、`misfires` に計上。味方攻撃→周回オーラ→敵攻撃という大区分の順序は変わらない。
 11. **永続周回の更新** … 相殺されず生き残った既存（味方＝`owner='player'`／敵＝`owner='enemy'` とも）＋今ターン新規（壊れていない・所有者生存）を次ターンへ持ち越し。同IDの張り直しは新リング側の結果で置き換える。
 
 ### `ResolveResult`
@@ -111,19 +113,23 @@ resolveAllyCasts(state, casts, castingEnemyIds, { instability?, misfireRoll? })
 ```ts
 {
   allies, enemies, obstacles, log,
-  allyShots[],     // 味方の発射（描画・命中情報）
+  allyShots[],     // 味方の発射（描画・命中情報）。軌道型は breakTime/bornBroken を持つ（下記・#75）
   enemyShots[],    // 敵弾（描画・命中情報・misfirePos/misfired）
-  enemyRings[],    // guardian の防御リング（描画用）。{ring, broken, ringSpeed, breakPos}
+  enemyRings[],    // guardian の防御リング（描画用）。{ring, broken, ringSpeed, breakPos, breakTime, bornBroken}
                    //   breakPos＝破壊された点（#64・霧散演出の同期用。破壊されていなければ null）
+                   //   breakTime＝破壊されたゲーム秒。null＝存続中 or bornBroken（#75。下記）
+                   //   bornBroken＝壁・失速で回り出す前に自壊した＝結界は一度も存在しない（#75）
   orbitBreaks,     // 破壊された持続結界の破壊点（#64）。Record<orbit id, Vec2>（演出同期用）
   clashes[],       // 弾/結界の衝突点と威力（火花演出）
   orbits[],        // 次ターンへ持ち越す永続周回
-  popups[],        // ダメージ／回復の数値表示（#42）
+  popups[],        // ダメージ／回復の数値表示（#42）。各要素は発生ゲーム秒 t を持つ（#75。DamagePopup 参照）
   misfires[]       // このターン解決した暴発 {pos, owner}（instability の加算用・04b）
 }
 ```
 
 > **結界破壊点の演出同期（#64）**：`App.tsx` が `enemyRings[].breakPos` と `orbitBreaks` を `AnimOrbit.carves` の同期点として渡し、`BattleCanvas` の霧散演出は「弾がその点へ到達した瞬間」から始まる（従来はアニメ窓の 40% 固定時刻で開始しズレていた）。ロジックには影響しない（描画タイムラインのみ）。
+
+> **回り出す前の自壊と破壊時刻の区別（#75）**：`breakTime` は「存続中」と「そもそも回り出していない（`bornBroken=true`）」のどちらでも `null` になる。`bornBroken` の結界は一度も存在しなかったものとして扱い、描画（`ringVisible`／`ringBreakTime`・`render/sceneTiming.ts`）はリングも霧散演出も出さない。以前は回り出す前の自壊を `breakTime: 0` で表しており、描画側の「時刻不明を 0 とみなすフォールバック」と衝突して**何も当たっていない結界が発射直後に崩壊して見える**バグになっていた。
 
 `App.tsx` はこれを `ResolveAnimation`（`AnimBullet[]` / `AnimOrbit[]` / `clashes` / `popups` / **`deaths`** / **`bossView`**）に変換して `BattleCanvas` に渡す。`deaths[]`（`EnemyDeath = {id,pos,species,element,tier,hitboxRadius,boss}`）は「このターン hp>0→hp≤0 になった敵」を撃破前の敵から作り、`BattleCanvas` が種族別の消滅アニメ（`drawEnemyDeath`／ボスは `drawBossCollapse`）を再生する（05c §6.5・#46/#51）。`bossView = {phase,finale,outcome}` はボスの多段外見（`drawBossSprite`）に渡す描画専用の状態。**いずれも当たり判定・ダメージ計算には影響しない**（描画タイムラインのみ）。
 
@@ -157,13 +163,17 @@ src/
 │  │  ├ planningEnv.ts        本番と同一ジオメトリの空間クエリ・clearance
 │  │  ├ routeSearch.ts        グリッド A*＋見通し線平滑化（clean/wallTunnel）
 │  │  ├ routeFit.ts           経路→family（abs/arc/poly34/harmonic）フィット（自由度は fitComplexity 依存）
-│  │  ├ fitComplexity.ts      敵 LVL→最適化できる式の複雑さ（次数・折れ枚数・積の因子・#70）
+│  │  ├ routeRepair.ts        素材へ食い込む式の再フィット（違反点を通過点に足す制約投影・#76）
+│  │  ├ fitMath.ts            フィットの下請け数学（等間隔化・最小二乗・リッジ・包絡・折れ点検出）
+│  │  ├ fitComplexity.ts      敵 LVL→最適化できる式の複雑さ（次数・折れ枚数・積の因子・係数の可動域・#70/#76）
 │  │  ├ evaluate.ts           候補軌道の本番物理検証（carveAlong 共有・辞書式 rank 比較）
 │  │  ├ ruptorPlanner.ts      暴発型（ruptor）の計画・z 場の極（`buildRuptorZField`）
 │  │  ├ guardianPlanner.ts    守護型（guardian）の結界計画（候補の組み立て・順位づけ・最終検証・#71）
 │  │  ├ guardianShape.ts      結界の外形（自由半径プロファイル→フーリエ級数フィット・素材接触の検証）
 │  │  ├ guardianZ.ts          結界の z 場候補（一様/余弦/多重余弦/exp×余弦・過励起）と本番物理での採点
 │  │  ├ guardianTier.ts       敵 LVL→結界の複雑さ（外形項数・z 場の式・重ね張り枚数・#71）
+│  │  ├ guardianThreat.ts     守護型の読み（飛来弾の方角・属性・結界が止められるかの採点・#76）
+│  │  ├ foresight.ts          前ターンの味方の手の予測・相殺の読み・予測弾の回廊（#75/#76）
 │  │  ├ trajectories.ts       family→軌道の組み立て（attacker/ruptor 共有）
 │  │  └ perception.ts         隠蔽時の見かけ位置・脅威優先度（attacker/ruptor 共有）
 │  ├ recommend.ts           おすすめ術式の探索
@@ -176,7 +186,7 @@ src/
 │  ├ party.ts               自陣営 3 人
 │  └ story.ts               世界観テキスト
 ├ components/               React UI（BattleCanvas/FunctionPanel/Hud/Codex/Guide/screens/composer）
-├ render/                   draftpad.ts（作図台の方眼紙。軌道/z は距離軸・結界は極座標・#67/#69）・ringPhase.ts（結界リングの粒の位相＝経過時刻の関数・#69）・effectTiming.ts（演出の発生時刻を弧長/衝突時刻から引く・#70）・board.ts（盤面プリミティブ＝方眼/z場の同心円/射線/結界/闇幕・DCプロトタイプv3）・draw.ts（スプライトとエフェクト）・theme.ts（配色）・species.ts（種族→パレット/装飾の純粋関数・05c §0/§6・#46）・textures.ts（壁タイル）
+├ render/                   draftpad.ts（作図台の方眼紙。軌道/z は距離軸・結界は極座標・#67/#69）・ringPhase.ts（結界リングの粒の位相＝経過時刻の関数・#69）・effectTiming.ts（演出の発生時刻を弧長/衝突時刻から引く・#70）・sceneTiming.ts（演出の「いつ・描くか描かないか」の純粋関数。本編とエンドロールが共有・#75）・pixelfx.ts（ドット絵の描画プリミティブ＝ドット/円盤/輪/量子化アルファ、弾の当たり半径から段数を引く・#77）・board.ts（盤面プリミティブ＝方眼/z場の同心円/射線/結界/闇幕・DCプロトタイプv3）・draw.ts（スプライトとエフェクト）・theme.ts（配色）・species.ts（種族→パレット/装飾の純粋関数・05c §0/§6・#46）・textures.ts（壁タイル）
 ├ audio/sound.ts            Web Audio 合成の効果音・BGM
 └ styles/                   CSS・フォント
 ```
@@ -205,6 +215,7 @@ src/
 | `components/ZPlot.tsx` | 右レールの z(t) 断面（描画は `render/zplot.ts`） |
 | `components/CasterCards.tsx` | 右レールの術者カード（HP・式・読み出しの一行） |
 | `render/board.ts` | 盤面の見せ方（DC プロトタイプ v3）：方眼・軸・**z 場の同心円**・射線のローカル軸・狙いの矢印・プレビュー帯・結界リング・闇幕・飛翔の残光/閃光/火花・衝撃波・相殺・敵頭上 HP バー・ダメージ数値。属性/強度/加速度は `src/game/` の純粋関数を読むだけで、ロジックは持たない |
+| `render/sceneTiming.ts` | 演出の「いつ・描くか描かないか」の判定を1か所に集約（`timedOnly`/`ringVisible`/`ringBreakTime`/`deathTime`/`lastEventTime`）。本編（`BattleCanvas`）とエンドロール（`endroll.ts`）が共有する。時刻はエンジンが返すゲーム秒のまま扱い、実時間へは写さない（#75） |
 | `render/tutorialFigures.ts` | 手引き（8 枚）の canvas 図版 |
 | `render/titleScreen.ts` | タイトル背景（式が動くループアニメーション） |
 | `components/AnomalyOverlay.tsx` | 膜の摩耗の全画面演出（描画は `render/anomaly.ts`） |

@@ -90,6 +90,60 @@ describe('敵の読み：前ターンと同じ魔法が飛んでくると仮定�
     expect(wary.expectedDamage).toBeCloseTo(naive.expectedDamage, 5)
   })
 
+  it('撃ち落とされる通路を捨てて、別の通路から回り込む（#76）', () => {
+    // 壁（unbreakable）に通路が2本：中央（|x|<2）と右（7.5<x<12.5）。
+    // 味方は中央の通路を真っ直ぐ上って撃ち返してくる＝中央を通る一撃は必ず消される。
+    const A = ally('A', { x: 0, y: -16 })
+    const e = { ...enemy({ x: 0, y: 16 }, 'arc'), families: ['arc', 'abs', 'poly34'] as EnemyFamily[], level: 6 }
+    const walls = [
+      {
+        id: 'W', element: 'neutral' as const, carves: [], solids: [], kind: 'unbreakable' as const,
+        rects: [
+          { x: -30, y: -3, w: 28, h: 6 },
+          { x: 2, y: -3, w: 5.5, h: 6 },
+          { x: 12.5, y: -3, w: 17.5, h: 6 },
+        ],
+      },
+    ]
+    const predicted = predictAllyShots([straightCast('A', A.pos, e.pos, -FIELD.zRef, 12)], [A])
+    const plan = (opts: { predicted?: PredictedShot[] }) =>
+      planEnemyShot(e, [A], walls, [], [], FIELD.rField, 0, [], opts)!
+
+    // 読み無し：最短の中央通路を撃ち、その一撃は撃ち返しに完全に消される
+    const naive = plan({})
+    expect(interceptOf(naive.trajectory, e.castInitialSpeed, predicted)?.speedRatio).toBe(0)
+
+    // 読みあり：右の通路へ回り込み、消されずに同じだけの威力で当てる
+    const wary = plan({ predicted })
+    expect(interceptOf(wary.trajectory, e.castInitialSpeed, predicted)).toBeNull()
+    expect(wary.expectedDamage).toBeGreaterThan(0)
+  })
+
+  it('暴発型も迎撃確定の直通候補を成功扱いせず、予測弾を避ける経路を探す', () => {
+    const A = ally('A', { x: 0, y: -16 })
+    const e = {
+      ...enemy({ x: 0, y: 16 }, 'arc'),
+      role: 'ruptor' as const,
+      families: ['arc', 'abs', 'poly34'] as EnemyFamily[],
+      level: 6,
+    }
+    const naive = planEnemyShot(e, [A], [], [], [], FIELD.rField)!
+    const { flight } = enemyFlight(naive.trajectory, e.castInitialSpeed)
+    const total = flight.samples[flight.samples.length - 1].arcLen
+    const predicted: PredictedShot[] = [{
+      samples: [...flight.samples].reverse().map((s) => ({
+        ...s,
+        arcLen: total - s.arcLen,
+        speed: 12,
+      })),
+      zAt: () => FIELD.zRef,
+    }]
+    const wary = planEnemyShot(e, [A], [], [], [], FIELD.rField, 0, [], { predicted })!
+
+    expect(interceptOf(naive.trajectory, e.castInitialSpeed, predicted)?.speedRatio).toBe(0)
+    expect(interceptOf(wary.trajectory, e.castInitialSpeed, predicted)).toBeNull()
+  })
+
   it('逃げ場が無ければ期待ダメージが相殺ぶん割り引かれる（見込みを偽らない）', () => {
     const A = ally('A', { x: 0, y: -9 })
     const e = enemy({ x: 0, y: 9 }, 'line')

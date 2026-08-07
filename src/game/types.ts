@@ -374,6 +374,8 @@ export interface DamagePopup {
   targetId: string
   /** 出すタイミング：被弾フラッシュ／暴発の爆発／回復（固定） */
   trigger: 'flash' | 'misfire' | 'heal'
+  /** 発生ゲーム秒（#75）。ターン開始を 0 とする。描画側はこの値だけを見る */
+  t: number
 }
 
 /** 戦闘ログの1エントリ */

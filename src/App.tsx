@@ -691,6 +691,7 @@ export default function App() {
           speed: s.ringSpeed,
           breakT: s.breakTime, // 霧散のゲーム時刻（#72）
           owner: 'player',
+          bornBroken: s.bornBroken, // 回り出す前に自壊した結界は描かない（#75）
         })
       } else if (s.flight) {
         bullets.push({
@@ -722,6 +723,7 @@ export default function App() {
         speed: er.ringSpeed,
         breakT: er.breakTime,
         owner: 'enemy',
+        bornBroken: er.bornBroken, // 回り出す前に自壊した結界は描かない（#75）
       })
     }
     // 持続周回（#39）：前ターンから残っている結界も回転表示。今ターン相殺で消えたら霧散させる

@@ -11,6 +11,8 @@ import { strengthOf } from '../attribute'
 import { constZField } from '../zfields'
 import { ENEMY_GUARD_PLANNING as GP, FIELD } from '../../data/constants'
 import type { GuardTier } from './guardianTier'
+import type { PredictedShot } from './foresight'
+import { predictedBlock, type BlockScore } from './guardianThreat'
 
 /** z 場の候補（label は挙動の説明・デバッグ用）。 */
 export interface GuardZCandidate {
@@ -85,6 +87,8 @@ export interface GuardZChoice {
   ring: RingPoint[]
   /** 脅威方向の扇で最も弱い迎撃威力（強度×速度）＝この結界の「抜かれにくさ」 */
   power: number
+  /** 読んだ飛来弾（#76）を実際に止められるか＝[消滅させる本数, 削れる威力]。読みが無ければ 0 */
+  block: BlockScore
   label: string
 }
 
@@ -108,9 +112,12 @@ function interceptPower(ring: RingPoint[], origin: { x: number; y: number }, thr
 }
 
 /**
- * 外形 f(θ) が決まった結界に対し、最良の z 場を選ぶ（#71）。
+ * 外形 f(θ) が決まった結界に対し、最良の z 場を選ぶ（#71/#76）。
  * 候補は本番と同じ物理で回し、**失速して霧散する場（速度0の点がある／end='vanished'）は捨てる**。
- * 残った中から脅威方向の最小迎撃威力が最大のものを選ぶ。
+ * 残った中から辞書式で選ぶ（大きいほど良い）：
+ *   ① 読んだ飛来弾を**消滅させられる本数**（属性が合っていなければ 0＝同極は透過する）
+ *   ② 読んだ飛来弾から削り取れる威力
+ *   ③ 脅威方向の扇での最小迎撃威力（読みが無いときは従来どおりこれだけで決まる）
  */
 export function pickGuardZ(
   f: (theta: number) => number,
@@ -119,6 +126,7 @@ export function pickGuardZ(
   candidates: GuardZCandidate[],
   threatPhi: number | null,
   fieldR?: number,
+  predicted: readonly PredictedShot[] = [],
 ): GuardZChoice | null {
   let best: GuardZChoice | null = null
   for (const c of candidates) {
@@ -128,9 +136,18 @@ export function pickGuardZ(
     const ring = attachRingSpeeds(buildRing(traj), initialSpeed)
     if (ring.length < 3 || ring.some((rp) => (rp.speed ?? 0) <= 0)) continue
     const power = interceptPower(ring, origin, threatPhi)
-    if (!best || power > best.power) best = { z: c.z, ring, power, label: c.label }
+    const block = predicted.length > 0 ? predictedBlock(ring, predicted) : { stopped: 0, power: 0 }
+    const cand: GuardZChoice = { z: c.z, ring, power, block, label: c.label }
+    if (!best || betterGuardZ(cand, best)) best = cand
   }
   return best
+}
+
+/** a が b より良い z 場か（①止めた本数 ②削れる威力 ③扇の最小迎撃威力の順・大きいほど良い）。 */
+function betterGuardZ(a: GuardZChoice, b: GuardZChoice): boolean {
+  if (a.block.stopped !== b.block.stopped) return a.block.stopped > b.block.stopped
+  if (Math.abs(a.block.power - b.block.power) > 1e-9) return a.block.power > b.block.power
+  return a.power > b.power
 }
 
 /** 候補が全滅したときの安全な既定（一様 sign·zRef＝加速度0で決して失速しない）。 */
