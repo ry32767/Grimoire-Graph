@@ -80,7 +80,9 @@ describe('エンドロールの自動対戦（#72）', () => {
     })
     const orb = res.allyShots.find((s) => s.kind === 'orbit')
     expect(orb?.broken).toBe(true)
-    expect(orb?.breakTime).toBe(0) // 壁による自壊は「回り始める前」＝時刻0
+    // 壁による自壊は「回り始める前」＝結界は一度も存在しない（breakTime は時刻を持たず null・#75）
+    expect(orb?.breakTime).toBe(null)
+    expect(orb?.bornBroken).toBe(true)
     expect(res.orbits.length).toBe(0) // 次の幕へ持ち越さない
   })
 
@@ -101,6 +103,47 @@ describe('エンドロールの自動対戦（#72）', () => {
     expect(pre.board.obstacles).toBe(round.after.obstacles)
     expect(pre.board.orbits).toBe(round.after.orbits)
     expect(pre.board.lastEnemyCasts).toBe(round.after.enemyCasts)
+  })
+
+  it('時刻が不明な破壊・命中はゼロ（発射直後）を捏造しない（#75）', () => {
+    // かつては「破壊時刻が分からない結界は 0（発射直後）とみなす」実装になっていて、
+    // まだ何も当たっていない結界が張った瞬間に霧散して見えるバグがあった。
+    // 何幕も進めて、実際に破壊イベントが起きたケースでも breakT===0 が出ないことを固定する。
+    // 幕をまたいで壁（障害物）ありのまま描くので、drawObstacles が使うオフスクリーン
+    // Canvas 生成用に最小の document スタブを用意する（このテストの間だけ）。
+    type FakeCanvas = { width: number; height: number; getContext: (t: string) => CanvasRenderingContext2D | null }
+    const fakeDocument = {
+      createElement: (): FakeCanvas => ({ width: 0, height: 0, getContext: () => stubCtx() }),
+    } as unknown as Document
+    const g = globalThis as typeof globalThis & { document?: Document }
+    const prevDocument = g.document
+    g.document = fakeDocument
+    try {
+      const s = createEndroll(0)
+      let sawBreak = false
+      // LVL が上がるほど壁・計画が重くなるので、破壊イベントを見つけたら早めに切り上げる
+      // （幕を進めるほど盤面が複雑化しテストが際限なく重くなるのを避ける）
+      for (let i = 0; i < 24 && !(sawBreak && i >= 4); i++) {
+        drawEndroll(stubCtx(), s, 800, 600, i * 15000)
+        const round = s.round
+        if (!round) continue
+        for (const r of round.rings) {
+          if (r.breakT !== null) {
+            sawBreak = true
+            // ターン開始時刻に本当に壊れたのでない限り、破壊時刻がちょうど0になることはない
+            expect(r.breakT).not.toBe(0)
+          }
+        }
+        for (const d of round.damages) {
+          // マイナスや非数（時刻の捏造・取り違え）が混ざっていないことも併せて確認する
+          expect(Number.isFinite(d.t)).toBe(true)
+          expect(d.t).toBeGreaterThanOrEqual(0)
+        }
+      }
+      expect(sawBreak).toBe(true) // このテスト自体が破壊イベントを一度も観測できていなければ無意味
+    } finally {
+      g.document = prevDocument
+    }
   })
 
   it('結界の粒は「その場のリング速度」で流れる（本編 drawOrbitRing と同じ規則）', () => {

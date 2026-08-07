@@ -113,6 +113,30 @@ describe('敵の強さ＝最適化できる式の複雑さ（#70）', () => {
     }
   })
 
+  it('係数の可動域：強い敵ほど大きな係数まで振り切って経路へ密着できる（#76）', () => {
+    // 多重サインの係数（sin の前の数）の最大絶対値＝「どこまで大きな係数を使えたか」
+    const coefOf = (expr: string): number =>
+      Math.max(...(expr.match(/-?[\d.]+(e[-+]?\d+)?\*sin/g) ?? ['0*sin']).map((s) => Math.abs(parseFloat(s))))
+    const widest = (fits: FitResult[]): number => Math.max(...fits.map((f) => coefOf(f.expr)))
+    const harmonics = (level: number, ridgeScales?: number[]): FitResult[] => {
+      const cx = fitComplexityFor(level)
+      return fitRouteToFamilies(zigzag, origin, ['harmonic'], ridgeScales ? { ...cx, ridgeScales } : cx)
+    }
+    // LVL が上がるほど、使える係数の桁そのものが広がる
+    const byLevel = [2, 3, 6, 7].map((lv) => widest(harmonics(lv)))
+    for (let i = 1; i < byLevel.length; i++) expect(byLevel[i]).toBeGreaterThan(byLevel[i - 1])
+    // 同じ段でも可動域を従来（ridgeScales=[1]）に絞ると係数は縮み、経路への密着も落ちる
+    const wide = harmonics(7)
+    const narrow = harmonics(7, [1])
+    expect(widest(wide)).toBeGreaterThan(widest(narrow) * 3)
+    expect(Math.min(...wide.map(routeRmse))).toBeLessThan(Math.min(...narrow.map(routeRmse)))
+    // 可動域を広げても狙点（両端）は必ず通る（#69 の不変条件を壊さない）
+    for (const f of wide) {
+      expect(Math.abs(f.g(0))).toBeLessThan(1e-9)
+      expect(Math.abs(f.g(f.goalX))).toBeLessThan(1e-9)
+    }
+  })
+
   it('返す式（自由入力へ転記する形）は g と一致する＝評価した軌道と食い違わない', () => {
     for (const level of [2, 3, 6, 7]) {
       const fits = fitRouteToFamilies(zigzag, origin, ['arc', 'abs', 'poly34', 'harmonic'], fitComplexityFor(level))

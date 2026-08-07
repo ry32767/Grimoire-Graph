@@ -24,6 +24,8 @@ import {
   type CoverTarget,
 } from './guardianShape'
 import { guardZCandidates, pickGuardZ, uniformGuardZ } from './guardianZ'
+import { counterSign, incomingThreat, type IncomingThreat } from './guardianThreat'
+import type { PredictedShot } from './foresight'
 import type { EnemyPlan } from '../enemyAI'
 
 /** 守護型が結界を組むのに要る周辺情報。 */
@@ -35,6 +37,11 @@ export interface GuardianContext {
   teammates: { id: string; pos: Vec2; hp: number; hitboxRadius?: number }[]
   /** 自分が既に展開している結界（#71 ③：同じ結界の重ね張りを避ける） */
   ownRings?: RingPoint[][]
+  /**
+   * 読み（#76）：前ターンと同じ味方の魔法が飛んでくると仮定した予測弾。
+   * 守護型はこれを見て「どの方角へ・どの極性で・どれだけ強く」張るかを決める。
+   */
+  predicted?: PredictedShot[]
   fieldR?: number
 }
 
@@ -48,15 +55,28 @@ interface ShapeCandidate {
 }
 
 /**
- * 脅威方向 φ_threat（05b §5.4・#47）：見えている味方のうち最も脅威度の高い者の方向。
- * 方向づけられた場（directedAura）を持たない個体は方向を持たない＝一様な場を張る。
+ * 脅威方向 φ_threat（05b §5.4・#47/#76）。方向づけられた場（directedAura）を持たない個体は
+ * 方向を持たない＝一様な場を張る。方向は次の順に決める：
+ *   ① 読み（#76）：前ターンと同じ魔法が飛んでくるなら、その弾が結界へ**入ってくる方角**
+ *   ② 読みが無い（初手・全弾が届かない）なら従来どおり、最も脅威度の高い味方の方向
  */
-function threatDirection(enemy: Enemy, allies: Ally[]): number | null {
+function threatDirection(enemy: Enemy, allies: Ally[], incoming: IncomingThreat | null): number | null {
   if (!enemy.directedAura) return null
+  if (incoming) return incoming.phi
   const visible = allies.filter((a) => a.hp > 0 && (a.concealed ?? 0) < COMBAT.orbitConcealFull)
   if (visible.length === 0) return null
   const t = visible.reduce((best, a) => (threatScore(a) > threatScore(best) ? a : best))
   return aimAt(enemy.pos, t.pos)
+}
+
+/**
+ * 結界の極性（#76）：相殺は**反対極でしか起きない**（同極・中立は透過）ので、
+ * 読んだ飛来弾の支配的な属性の反対極を張る。stage 側で極性を指定された個体（guardZSign）は
+ * その指定を優先し、読みも無ければ従来どおり自分の属性から決める。
+ */
+function guardSign(enemy: Enemy, incoming: IncomingThreat | null): 1 | -1 {
+  if (enemy.guardZSign) return enemy.guardZSign
+  return (incoming ? counterSign(incoming.attr) : null) ?? (enemy.element === 'dark' ? -1 : 1)
 }
 
 /** 半径関数を角度サンプル上で評価する。 */
@@ -150,10 +170,13 @@ function buildShapeCandidates(
  */
 export function planGuardianBarrier(enemy: Enemy, ctx: GuardianContext): EnemyPlan | null {
   const tier = guardTierFor(enemy.level)
-  const sign: 1 | -1 = enemy.guardZSign ?? (enemy.element === 'dark' ? -1 : 1)
   const origin = enemy.pos
   const angles = guardAngles()
   const maxR = GAME.enemyGuardRadius * Math.max(...GP.radiusScales)
+  // 読み（#76）：結界に届く（＝最大半径＋余裕の内側へ入ってくる）飛来弾から方角と属性を読む
+  const predicted = ctx.predicted ?? []
+  const incoming = incomingThreat(predicted, origin, maxR + GP.coverMargin)
+  const sign: 1 | -1 = guardSign(enemy, incoming)
   const free = freeRadiusProfile(origin, ctx.obstacles, maxR, angles)
   // 覆う候補（生存する自陣の味方・近い順）。どの半径でも届かない相手は最初から外す
   const mates = ctx.teammates
@@ -199,7 +222,7 @@ export function planGuardianBarrier(enemy: Enemy, ctx: GuardianContext): EnemyPl
   // 上位が全滅したときの最後の砦として、最も小さい（最も安全な）候補も必ず1本試す。
   const safest = candidates.reduce((lo, c) => (c.meanR < lo.meanR ? c : lo))
   const order = [...ranked.slice(0, GP.rankedVerifyLimit).map((r) => r.c), safest]
-  const threatPhi = threatDirection(enemy, ctx.allies)
+  const threatPhi = threatDirection(enemy, ctx.allies, incoming)
   for (const c of order) {
     const probe: Trajectory = { mode: 'polar', f: c.f, origin, z: uniformGuardZ(sign), fieldR: ctx.fieldR }
     const ring = buildRing(probe)
@@ -210,9 +233,15 @@ export function planGuardianBarrier(enemy: Enemy, ctx: GuardianContext): EnemyPl
       c.f,
       origin,
       enemy.castInitialSpeed,
-      guardZCandidates(sign, threatPhi, tier),
+      enemy.guardZSign || predicted.length === 0
+        ? guardZCandidates(sign, threatPhi, tier)
+        : [
+            ...guardZCandidates(sign, threatPhi, tier),
+            ...guardZCandidates(sign === 1 ? -1 : 1, threatPhi, tier),
+          ],
       threatPhi,
       ctx.fieldR,
+      predicted,
     )
     const traj: Trajectory = {
       mode: 'polar',

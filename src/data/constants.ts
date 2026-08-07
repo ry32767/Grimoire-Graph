@@ -262,6 +262,33 @@ export const ENEMY_ROUTE_PLANNING = {
    * 平滑化そのものではない（暴れる解は後段の本番物理検証が落とす）。
    */
   polyRidge: 1e-6,
+  /**
+   * フィットした式が素材へ食い込んだときの**再フィット（制約投影）回数**（#76）。
+   * 経路そのものは余白つきで安全なのに、有限自由度の式は通過点の**間**で膨らんで壁に触れる。
+   * 触れた x の経路上の正しい y を通過点として足し、その family だけ組み直す、を数回繰り返す
+   * （守護型の外形フィットと同じ手口・guardianPlanner.constrainedFit）。
+   */
+  fitRepairPasses: 3,
+  /** 再フィットの違反検出サンプル数（局所 x を等分して素材に触れる点を探す） */
+  fitRepairSamples: 72,
+  /** 違反点を通過点として足すときの重み（元の通過点＝1。重いほど強く引き戻す） */
+  fitRepairWeight: 3,
+  /**
+   * 読み（#75/#76）で「前ターンと同じ味方弾が飛んでくる」と読んだ弾の**回廊**（＝経路探索で
+   * 避ける仮想の障害物）を作るときの、予測弾サンプルの間引き間隔[ユニット]と半径の上乗せ。
+   * 幾何的な回避はあくまで**経路候補を増やすための当て**で、採否は本番物理（同一ゲーム時刻での
+   * bulletCollision＋resolveParry・foreseeInterception）が決める（AGENTS.md の設計原則）。
+   */
+  threatCorridorStep: 1.2,
+  threatCorridorPad: 0.6,
+  /**
+   * 予測弾の**銃口側**を回廊から外す長さ[ユニット]。術者のすぐ前は弾が t≈0 にしか居ないので、
+   * あとから届く敵弾とはすれ違わない（時刻を見れば危険でない）。ここを塞ぐと術者そのものを
+   * 狙う経路が組めなくなる（ゴールが回廊の内側になる）ため、必ず開けておく。
+   */
+  threatCorridorMuzzleSkip: 3.5,
+  /** 回廊を作る円の上限個数（暴走防止。長い予測弾は間引かれる） */
+  threatCorridorMaxDiscs: 72,
 } as const
 
 /**
@@ -271,6 +298,7 @@ export const ENEMY_ROUTE_PLANNING = {
  *   ① 多項式の次数（1次→2次→3〜5次→7次）
  *   ② |x−h| の折れ点の数（1枚のV字→何枚も重ねた折れ線）
  *   ③ sin/cos/exp を**掛け合わせた**包絡（積の因子）
+ *   ④ **係数そのものの可動域**（ridgeScales・#76）
  * を増やせる＝同じ隙間でも、強い敵ほど経路に密着した軌道を出せる。
  * tiers は minLevel 昇順。enemy.level 以下で最大の minLevel の段が適用される。
  */
@@ -285,6 +313,12 @@ export const ENEMY_FIT_COMPLEXITY = {
       harmonicTerms: 1,
       /** 包絡（積の因子）：expA=x の指数・cosB=余弦の周期。0,0＝積なし（純粋な正弦級数） */
       waveFactors: [{ expA: 0, cosB: 0 }],
+      /**
+       * 係数の可動域（#76）：正則化（リッジ）係数に掛ける倍率。小さいほど係数を 0 へ
+       * 引き戻す力が弱まる＝**より大きな係数まで使える**。複数並べると「なめらかな解」と
+       * 「係数を振り切って通過点へ密着した解」の両方が候補になる。1 だけ＝従来動作。
+       */
+      ridgeScales: [1],
     },
     {
       /** LVL3〜4：3次まで（S字が1回作れる） */
@@ -294,9 +328,10 @@ export const ENEMY_FIT_COMPLEXITY = {
       absFolds: 1,
       harmonicTerms: 2,
       waveFactors: [{ expA: 0, cosB: 0 }],
+      ridgeScales: [1, 0.1],
     },
     {
-      /** LVL5〜6：3〜5次・折れ2枚・指数包絡つきの多重サイン */
+      /** LVL5〜6：3〜5次・折れ2枚・指数包絡つきの多重サイン・係数は従来の 1/50 まで振れる */
       minLevel: 5,
       label: '五次・指数積',
       polyDegrees: [3, 5],
@@ -304,12 +339,13 @@ export const ENEMY_FIT_COMPLEXITY = {
       harmonicTerms: 5,
       waveFactors: [
         { expA: 0, cosB: 0 },
-        { expA: 1.2, cosB: 0 },
-        { expA: -1.2, cosB: 0 },
+        { expA: 2.4, cosB: 0 },
+        { expA: -2.4, cosB: 0 },
       ],
+      ridgeScales: [1, 0.02],
     },
     {
-      /** LVL7（ボス級）：7次まで・折れ4枚・exp×cos×多重サインの積 */
+      /** LVL7（ボス級）：7次まで・折れ4枚・exp×cos×多重サインの積・係数はほぼ無制限 */
       minLevel: 7,
       label: '七次・多重積',
       polyDegrees: [3, 4, 5, 7],
@@ -317,12 +353,13 @@ export const ENEMY_FIT_COMPLEXITY = {
       harmonicTerms: 6,
       waveFactors: [
         { expA: 0, cosB: 0 },
-        { expA: 1.2, cosB: 0 },
-        { expA: -1.2, cosB: 0 },
-        { expA: 0, cosB: 1.5 },
-        { expA: 1.2, cosB: 1.5 },
-        { expA: -1.2, cosB: 0.5 },
+        { expA: 2.4, cosB: 0 },
+        { expA: -2.4, cosB: 0 },
+        { expA: 0, cosB: 2.5 },
+        { expA: 2.4, cosB: 1.5 },
+        { expA: -2.4, cosB: 0.5 },
       ],
+      ridgeScales: [1, 0.02, 0.002],
     },
   ],
 } as const

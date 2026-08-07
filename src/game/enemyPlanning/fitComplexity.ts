@@ -19,6 +19,12 @@ export interface FitComplexity {
   harmonicTerms: number
   /** 多重サインに掛け合わせる包絡の候補（強い敵ほど多くの積を試せる） */
   waveFactors: readonly WaveFactor[]
+  /**
+   * **係数の可動域**（#76）：正則化（リッジ）係数に掛ける倍率の候補。
+   * 小さいほど「係数を 0 へ引き戻す罰則」が弱まり、より大きな係数まで使える＝通過点へ密着できる。
+   * 複数並べると、なめらかな解と振り切った解の両方が候補に載る（採否は本番物理の採点が決める）。
+   */
+  ridgeScales: readonly number[]
 }
 
 /**
@@ -30,6 +36,7 @@ export const DEFAULT_FIT_COMPLEXITY: FitComplexity = {
   absFolds: 1,
   harmonicTerms: RP.harmonicMaxTerms,
   waveFactors: [{ expA: 0, cosB: 0 }],
+  ridgeScales: [1],
 }
 
 /** 段階表の1段（複雑さ＋しきい LVL・表示名）。 */

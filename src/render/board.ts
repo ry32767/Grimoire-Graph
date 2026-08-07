@@ -9,6 +9,8 @@ import { toScreen, scaleOf, type Viewport } from '../game/coords'
 import { attributeOf, strengthOf } from '../game/attribute'
 import { acceleration } from '../game/physics'
 import { COMBAT, FIELD, SAMPLING } from '../data/constants'
+import { COLORS } from './theme'
+import { dot, dotPx, pixelDisc, pixelShockwave, snapAngle, walkPath } from './pixelfx'
 
 /** 射線ローカル軸の長さ（coords.ts の回転サンプリングと同じ規則）。 */
 function rayReach(fieldR: number): number {
@@ -400,23 +402,26 @@ export function drawOrbitRing(
 
   // 帯
   ctx.save()
-  ctx.lineCap = 'round'
-  // 帯の太さ＝当たり判定の厚み（2×orbitBandHalf）をピクセルへ直したもの（#72）。
+  // 帯の太さ＝当たり判定の厚み（2×orbitBandHalf）をピクセルへ直したもの（#72）。**この値は動かさない**
+  // ＝結界に触れる距離そのもの。滑らかな線ではなくこの太さの矩形を並べて描くだけで、
+  // 判定は変えずに弾・軌跡と同じドット絵の粒度に揃う。
   // 速度・強度は太さでなく明るさで語らせる（判定と見た目を必ず一致させる）。
-  ctx.lineWidth = 2 * COMBAT.orbitBandHalf * scaleOf(vp)
-  for (let i = 0; i < n; i++) {
-    const p = ring[i]
-    const q = ring[(i + 1) % n]
-    const sp = p.speed ?? 0
-    const f = Math.max(0, Math.min(1, sp / VM))
-    const P = toScreen(p.pos, vp)
-    const Q = toScreen(q.pos, vp)
-    ctx.strokeStyle = zRgba(p.z, 0.14 + f * 0.72)
-    ctx.beginPath()
-    ctx.moveTo(P.x, P.y)
-    ctx.lineTo(Q.x, Q.y)
-    ctx.stroke()
-  }
+  const bandW = 2 * COMBAT.orbitBandHalf * scaleOf(vp)
+  let bx = NaN
+  let by = NaN
+  walkPath(
+    [...ring, ring[0]],
+    n,
+    (p) => toScreen(p.pos, vp),
+    Math.max(2, dotPx(vp)),
+    (x, y, src) => {
+      if (!Number.isNaN(bx) && Math.hypot(x - bx, y - by) < bandW * 0.8) return
+      bx = x
+      by = y
+      const f = Math.max(0, Math.min(1, (src.speed ?? 0) / VM))
+      dot(ctx, x, y, bandW, zRgba(src.z, 1), 0.14 + f * 0.72)
+    },
+  )
   ctx.restore()
 
   // 流れる粒
@@ -429,44 +434,30 @@ export function drawOrbitRing(
     store[key] = ps
   }
   const dt = 0.033
+  const unit = dotPx(vp)
   ctx.save()
-  ctx.globalCompositeOperation = 'lighter'
   for (let k = 0; k < cnt; k++) {
     const i0 = Math.floor(ps[k]) % n
     const p = ring[i0]
     const sp = p.speed ?? 0
+    // 粒は**その場のリング速度**で進む（遅い区間で詰まり速い区間で伸びる）。
+    // 進め方は render/ringPhase.ts と同じ式＝片方だけ変えないこと。
     ps[k] = (ps[k] + (sp * dt) / segLen) % n
     if (sp <= 0.02) continue
     const P = toScreen(p.pos, vp)
     const at = attributeOf(p.z)
     const st = strengthOf(p.z)
     const f = Math.max(0, Math.min(1, sp / VM))
-    const r = 1.6 + f * 2.2 + (st / FIELD.sMax) * 1.1
-    // 尾（速いほど長い）
+    // 大きさは 1〜3 ドットの段（速度＋強度）。滑らかに膨らませない
+    const tier = 1 + Math.round(f * 1.2 + (st / FIELD.sMax) * 0.8)
+    // 尾（速いほど長い）：帯を引かず、通り過ぎたサンプル位置にドットを落とす
     const back = Math.max(1, Math.round(2 + f * 10))
     for (let b = 1; b <= back; b++) {
       const j = ((i0 - b) % n + n) % n
       const T = toScreen(ring[j].pos, vp)
-      const Tn = toScreen(ring[(j + 1) % n].pos, vp)
-      ctx.strokeStyle = attrRgba(at, (1 - b / back) * 0.3 * (0.3 + f))
-      ctx.lineWidth = r * 0.7
-      ctx.beginPath()
-      ctx.moveTo(T.x, T.y)
-      ctx.lineTo(Tn.x, Tn.y)
-      ctx.stroke()
+      dot(ctx, T.x, T.y, unit * (b < back / 2 ? 2 : 1), attrRgba(at, 1), (1 - b / back) * 0.55)
     }
-    const g = ctx.createRadialGradient(P.x, P.y, 0, P.x, P.y, r * 3.2)
-    g.addColorStop(0, attrRgba(at, 0.95))
-    g.addColorStop(0.45, attrRgba(at, 0.3))
-    g.addColorStop(1, attrRgba(at, 0))
-    ctx.fillStyle = g
-    ctx.beginPath()
-    ctx.arc(P.x, P.y, r * 3.2, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.fillStyle = at === 'light' ? '#fff4d4' : at === 'dark' ? '#e2daff' : '#eef1f9'
-    ctx.beginPath()
-    ctx.arc(P.x, P.y, r, 0, Math.PI * 2)
-    ctx.fill()
+    pixelDisc(ctx, P.x, P.y, tier, unit, attrRgba(at, 1), COLORS.light2)
   }
   ctx.restore()
   if (quiet) return
@@ -633,7 +624,12 @@ export function drawDarkVeil(
 
 // ===== 飛翔中の演出 =====
 
-/** 通ってきた道（属性色・古いほど薄い）＋一定間隔の燐光。 */
+/**
+ * 通ってきた道（ドット絵の軌跡・#74）。連続した帯ではなく、**弧長で等間隔に置いたドット**で描く。
+ * サンプル間隔は速度でばらつくので、弧長で歩き直さないとドットの密度が速度で変わってしまう
+ * （`walkPath` がその歩き直しを担う）。
+ * 濃さは「頭に近いほど濃い」3 段（なめらかにフェードさせない・DESIGN.md §6）。
+ */
 export function drawFlightPath(
   ctx: CanvasRenderingContext2D,
   vp: Viewport,
@@ -643,53 +639,33 @@ export function drawFlightPath(
   sizeFrac: (speed: number, z: number) => number,
 ): void {
   if (upto < 1) return
+  const unit = dotPx(vp)
+  const toPx = (p: PreviewPoint): Vec2 => toScreen(p.pos, vp)
   ctx.save()
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-  // ① 属性色の帯：太さ＝属性強度 |z|（#74）。強い所ほど道が太く残る
-  for (let i = 1; i <= upto; i++) {
-    const A = pts[i - 1]
-    const B = pts[i]
-    if (!A || !B) break
-    const age = 1 - (upto - i) / Math.max(1, upto)
-    const P = toScreen(A.pos, vp)
-    const Q = toScreen(B.pos, vp)
-    ctx.strokeStyle = zRgba(A.z, 0.2 + age * 0.55)
-    ctx.lineWidth = trailWidthPx(A.z, vp)
-    ctx.beginPath()
-    ctx.moveTo(P.x, P.y)
-    ctx.lineTo(Q.x, Q.y)
-    ctx.stroke()
-  }
-  // ② 白熱の芯：太さは一定で、**明るさ＝威力**（速度×強度）。太さ＝強度と役割を分ける（#74）
-  ctx.globalCompositeOperation = 'lighter'
-  for (let i = 1; i <= upto; i++) {
-    const A = pts[i - 1]
-    const B = pts[i]
-    if (!A || !B) break
-    const fr = sizeFrac(A.speed, A.z)
-    if (fr <= 0.04) continue
-    const age = 1 - (upto - i) / Math.max(1, upto)
-    const P = toScreen(A.pos, vp)
-    const Q = toScreen(B.pos, vp)
-    ctx.strokeStyle = `rgba(255,248,225,${(fr * (0.18 + age * 0.5)).toFixed(3)})`
-    ctx.lineWidth = Math.max(0.8, trailWidthPx(A.z, vp) * 0.34)
-    ctx.beginPath()
-    ctx.moveTo(P.x, P.y)
-    ctx.lineTo(Q.x, Q.y)
-    ctx.stroke()
-  }
-  // ③ 道に落ちた燐光（ゆっくり明滅して残る）
+  // ①② 属性色のドット＋白熱の芯を 1 周で打つ。
+  //   大きさ＝属性強度 |z|（#74・trailWidthPx を格子へ量子化したもの）、芯の明るさ＝威力（速度×強度）。
+  //   **ドットの間隔はその場の大きさに合わせる**：歩幅を固定にすると太い所ほど重なりが増えて
+  //   のっぺりした帯に戻ってしまう。大きさの 0.8 倍ずつ進めて、わずかに重ねながら粒を並べる。
+  let lx = NaN
+  let ly = NaN
+  walkPath(pts, upto, toPx, Math.max(2, unit), (x, y, src, _i, head) => {
+    const w = trailWidthPx(src.z, vp)
+    if (!Number.isNaN(lx) && Math.hypot(x - lx, y - ly) < w * 0.8) return
+    lx = x
+    ly = y
+    const a = head > 0.66 ? 0.75 : head > 0.33 ? 0.5 : 0.25
+    dot(ctx, x, y, w, zRgba(src.z, 1), a)
+    const fr = sizeFrac(src.speed, src.z)
+    if (fr > 0.04) dot(ctx, x, y, Math.max(2, unit), COLORS.light2, fr * (0.25 + head * 0.6))
+  })
+  // ③ 道に落ちた燐光（段で明滅して残る）
   for (let i = 6; i <= upto; i += 10) {
     const A = pts[i]
     if (!A) break
     const P = toScreen(A.pos, vp)
     const fr = sizeFrac(A.speed, A.z)
-    const tw = 0.45 + 0.55 * Math.sin(phase * 1.6 + i * 0.7)
-    ctx.fillStyle = zRgba(A.z, 0.16 * tw * (0.4 + fr))
-    ctx.beginPath()
-    ctx.arc(P.x, P.y, 1.2 + fr * 2.6, 0, Math.PI * 2)
-    ctx.fill()
+    const tw = Math.sin(phase * 1.6 + i * 0.7) > 0 ? 1 : 0.45
+    dot(ctx, P.x, P.y, unit * (fr > 0.5 ? 2 : 1), zRgba(A.z, 1), 0.3 * tw * (0.4 + fr))
   }
   ctx.restore()
 }
@@ -750,13 +726,22 @@ const TRAIL_W_MAX = COMBAT.bulletRadiusMin * 1.2
 /**
  * z（属性強度）から軌跡の太さ（画面ピクセル）を引く（#74）。
  * **戦闘アニメとエンドロールが必ず同じ見た目になるよう、太さの規則はここ1か所に置く。**
+ * 値は**ドット格子の整数倍へ丸める**：軌跡もドットで描くので、格子に乗らない太さは
+ * 弾・スプライトと粒度がズレて「にじんだ帯」に見える。丸め幅は 1 ドット（±unit/2）で、
+ * TRAIL_W_MAX（≈1.02 ユニット）に足しても弾の最小直径（2×bulletRadiusMin＝1.7 ユニット）を
+ * 超えない＝「軌跡を当たり判定と読み違えない」規則は保たれる。
  */
 export function trailWidthPx(z: number, vp: Viewport): number {
   const f = Math.min(1, strengthOf(z) / FIELD.sMax)
-  return (TRAIL_W_MIN + (TRAIL_W_MAX - TRAIL_W_MIN) * f) * scaleOf(vp)
+  const raw = (TRAIL_W_MIN + (TRAIL_W_MAX - TRAIL_W_MIN) * f) * scaleOf(vp)
+  const unit = dotPx(vp)
+  return Math.max(unit, Math.round(raw / unit) * unit)
 }
 
-/** 発射の閃光（詠唱の瞬間・術者位置から広がる輪）。progress 0→1。 */
+/**
+ * 発射の閃光（詠唱の瞬間・術者位置から広がる輪）。progress 0→1。
+ * 半径は従来どおり 4→26px で、**進み方だけを 5 段**にして格子へ丸める。
+ */
 export function drawLaunchFlash(
   ctx: CanvasRenderingContext2D,
   vp: Viewport,
@@ -765,13 +750,9 @@ export function drawLaunchFlash(
   progress: number,
 ): void {
   const P = toScreen(pos, vp)
+  const col = zRgba(z, 1)
   ctx.save()
-  ctx.globalCompositeOperation = 'lighter'
-  ctx.strokeStyle = zRgba(z, (1 - progress) * 0.7)
-  ctx.lineWidth = 2.4 * (1 - progress) + 0.6
-  ctx.beginPath()
-  ctx.arc(P.x, P.y, 4 + progress * 22, 0, Math.PI * 2)
-  ctx.stroke()
+  pixelShockwave(ctx, P.x, P.y, 4, 22, progress, 5, dotPx(vp), col, col, 1 - progress)
   ctx.restore()
 }
 
@@ -785,44 +766,114 @@ export function drawSpeedSparks(
   frac: number,
 ): void {
   if (frac <= 0.12) return
+  const unit = dotPx(vp)
   ctx.save()
-  ctx.globalCompositeOperation = 'lighter'
   for (let s = 0; s < 3; s++) {
     const j = Math.max(0, idx - 2 - s * 2)
     const b = pts[j]
     if (!b) break
     const B = toScreen(b.pos, vp)
-    const a = (1 - s / 3) * 0.5 * frac
-    const rr = 1 + frac * 2.2 * (1 - s / 3)
-    const wob = Math.sin(phase * 3 + s * 2.1) * rr * 1.4
-    ctx.fillStyle = zRgba(b.z, a)
-    ctx.beginPath()
-    ctx.arc(B.x + wob, B.y - wob, rr, 0, Math.PI * 2)
-    ctx.fill()
+    const a = (1 - s / 3) * 0.6 * frac
+    const size = unit * (frac > 0.5 && s === 0 ? 2 : 1)
+    // 揺れも 1 ドット刻み（サブピクセルで震えさせない）
+    const wob = (Math.sin(phase * 3 + s * 2.1) > 0 ? 1 : -1) * unit
+    dot(ctx, B.x + wob, B.y - wob, size, zRgba(b.z, 1), a)
   }
   ctx.restore()
 }
 
-/** 着弾の衝撃波（対象の位置から広がる白い輪）。progress 0→1。 */
+/**
+ * ドットの衝撃波（着弾・相殺の共通語彙・#77）。滑らかに広がる輪の代わりに、
+ * **段で広がる**（進行を離散化し、半径をドット格子へ丸める）。段数が威力に比例するので、
+ * 「重い魔法ほど遠くまで」が段の数として読める。
+ * 粒は 1 つおきに白熱と属性色を交互に置く＝ドット絵らしい 2 色のちらつき。
+ *
+ * **半径そのものは元の絶対ピクセル式**（`r0 + span`）を保つ：段数からピクセルを組み立て直すと
+ * 縮尺の小さい盤面で輪が数分の一に縮んでしまう（`pixelfx.pixelShockwave` の注記）。
+ */
+export function drawPixelBurst(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  pos: Vec2,
+  attr: Attribute,
+  powerFrac: number,
+  progress: number,
+  r0: number,
+  span: number,
+): void {
+  if (progress < 0 || progress >= 1) return
+  const P = toScreen(pos, vp)
+  ctx.save()
+  pixelShockwave(
+    ctx,
+    P.x,
+    P.y,
+    r0,
+    span,
+    progress,
+    2 + Math.round(powerFrac * 4),
+    dotPx(vp),
+    COLORS.light2,
+    attrRgba(attr, 1),
+    1 - progress,
+  )
+  ctx.restore()
+}
+
+/** 着弾の衝撃波（対象の位置から広がるドットの輪・半径 6→36px）。progress 0→1。 */
 export function drawImpactShockwave(
   ctx: CanvasRenderingContext2D,
   vp: Viewport,
   pos: Vec2,
   progress: number,
 ): void {
+  drawPixelBurst(ctx, vp, pos, 'neutral', 0.5, progress, 6, 30)
+}
+
+/**
+ * 相殺の火花そのもの（文字なし）。二重の衝撃波＋白熱の核＋光闇の破片。
+ * **エンドロールと本編で必ず同じ見た目になるよう、火花の実体はここ 1 か所に置く**
+ * （かつてエンドロールが同じ絵を独自に書き直していて、片方だけドット絵から取り残された）。
+ */
+export function drawParryFlash(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  pos: Vec2,
+  power: number,
+  progress: number,
+): void {
+  if (progress < 0 || progress >= 1) return
+  const TAU = Math.PI * 2
   const P = toScreen(pos, vp)
+  const pw = Math.min(1, power / 140)
+  const unit = dotPx(vp)
   ctx.save()
-  ctx.globalCompositeOperation = 'lighter'
-  ctx.strokeStyle = `rgba(255,240,210,${((1 - progress) * 0.55).toFixed(3)})`
-  ctx.lineWidth = 3 * (1 - progress) + 0.6
-  ctx.beginPath()
-  ctx.arc(P.x, P.y, 6 + progress * 30, 0, Math.PI * 2)
-  ctx.stroke()
+  // ① 二重の衝撃波：着弾（drawPixelBurst）と同じ段の輪を、光・闇の順に半拍ずらして重ねる。
+  //   半径は従来どおり `9+pw×22 → +44+pw×66`＝**盤面いっぱいに走る大きさ**（相殺は必ず目に入れる）
+  for (let k = 0; k < 2; k++) {
+    const q = Math.min(1, Math.max(0, (progress - k * 0.16) / 0.84))
+    if (q <= 0) continue
+    drawPixelBurst(ctx, vp, pos, k === 0 ? 'light' : 'dark', pw, q, 9 + pw * 22, 44 + pw * 66)
+  }
+  // ② 白熱の核：段で欠けていくドットの円盤（グラデーションで滲ませない）
+  const coreTier = Math.round((2 + pw * 3) * (1 - progress))
+  if (coreTier >= 1) pixelDisc(ctx, P.x, P.y, coreTier, unit, COLORS.light2, '#ffffff', 1 - progress)
+  // ③ 光闇の破片：1 ドットずつ並べた線が外へ伸びる（相殺＝両極が弾け飛ぶ）
+  const n = 12 + Math.round(pw * 10)
+  const w0 = 1 - progress
+  const len = (20 + pw * 52) * Math.pow(progress, 0.55)
+  for (let s = 0; s < n; s++) {
+    const a = snapAngle((s / n) * TAU + pos.x * 0.7 + pos.y * 0.3)
+    const col = attrRgba(s % 2 ? 'light' : 'dark', 1)
+    for (let d = len * 0.32; d <= len; d += unit) {
+      dot(ctx, P.x + Math.cos(a) * d, P.y + Math.sin(a) * d, unit, col, 0.8 * w0)
+    }
+  }
   ctx.restore()
 }
 
 /**
- * 結界と魔法が相殺した瞬間（パリィ）。二重の衝撃波＋光闇の破片＋「相殺」の文字で必ず目に入るようにする。
+ * 結界と魔法が相殺した瞬間（パリィ）。火花（drawParryFlash）＋「相殺」の文字で必ず目に入るようにする。
  * progress 0→1（900ms 相当）。
  */
 export function drawParryBurst(
@@ -833,46 +884,9 @@ export function drawParryBurst(
   progress: number,
 ): void {
   if (progress >= 1) return
-  const TAU = Math.PI * 2
-  const P = toScreen(pos, vp)
-  const pw = Math.min(1, power / 140)
-  ctx.save()
-  ctx.globalCompositeOperation = 'lighter'
-  ctx.lineCap = 'round'
-  for (let k = 0; k < 2; k++) {
-    const q = Math.min(1, Math.max(0, (progress - k * 0.16) / 0.84))
-    if (q <= 0) continue
-    ctx.strokeStyle = `rgba(255,246,224,${((1 - q) * (1 - q) * 0.9).toFixed(3)})`
-    ctx.lineWidth = (5 - k * 2.2) * (1 - q) + 0.8
-    ctx.beginPath()
-    ctx.arc(P.x, P.y, 9 + pw * 22 + q * (44 + pw * 66), 0, TAU)
-    ctx.stroke()
-  }
-  const cr = (15 + pw * 24) * (1 - progress)
-  if (cr > 0) {
-    const g = ctx.createRadialGradient(P.x, P.y, 0, P.x, P.y, cr)
-    g.addColorStop(0, `rgba(255,255,255,${(0.95 * (1 - progress)).toFixed(3)})`)
-    g.addColorStop(0.45, `rgba(255,232,180,${(0.45 * (1 - progress)).toFixed(3)})`)
-    g.addColorStop(1, 'rgba(255,232,180,0)')
-    ctx.fillStyle = g
-    ctx.beginPath()
-    ctx.arc(P.x, P.y, cr, 0, TAU)
-    ctx.fill()
-  }
-  const n = 12 + Math.round(pw * 10)
-  const w0 = 1 - progress
-  for (let s = 0; s < n; s++) {
-    const a = (s / n) * TAU + pos.x * 0.7 + pos.y * 0.3
-    const len = (20 + pw * 52) * Math.pow(progress, 0.55)
-    ctx.strokeStyle = attrRgba(s % 2 ? 'light' : 'dark', 0.8 * w0)
-    ctx.lineWidth = 2.4 * w0 + 0.5
-    ctx.beginPath()
-    ctx.moveTo(P.x + Math.cos(a) * len * 0.32, P.y + Math.sin(a) * len * 0.32)
-    ctx.lineTo(P.x + Math.cos(a) * len, P.y + Math.sin(a) * len)
-    ctx.stroke()
-  }
-  ctx.restore()
+  drawParryFlash(ctx, vp, pos, power, progress)
   if (progress < 0.62) {
+    const P = toScreen(pos, vp)
     ctx.save()
     ctx.globalAlpha = 1 - progress / 0.62
     ctx.textAlign = 'center'

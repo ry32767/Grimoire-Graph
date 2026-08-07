@@ -26,10 +26,11 @@ import { planGuardianBarrier } from './enemyPlanning/guardianPlanner'
 import { buildPlanningEnv, type PlanningEnv } from './enemyPlanning/planningEnv'
 import { findRoute, type Route } from './enemyPlanning/routeSearch'
 import { fitRouteToFamilies } from './enemyPlanning/routeFit'
+import { fitCleanRoute } from './enemyPlanning/routeRepair'
 import { fitComplexityFor } from './enemyPlanning/fitComplexity'
 import { evaluateEnemyShot, compareRank } from './enemyPlanning/evaluate'
 import { planRuptorShot, buildRuptorZField } from './enemyPlanning/ruptorPlanner'
-import { foreseeInterception, type PredictedShot } from './enemyPlanning/foresight'
+import { foreseeInterception, threatCorridorObstacle, type PredictedShot } from './enemyPlanning/foresight'
 
 // 既存の公開 API（テスト・turn.ts が参照）は enemyPlanning/ へ移した実装を再輸出して維持する
 export { AVOIDER_FAMILIES, enemyFlight, planRuptorShot, buildRuptorZField }
@@ -154,18 +155,26 @@ export function planEnemyShots(
 const MANEUVER = 0.9
 
 /**
- * クリーン経路を「広い車線優先」で集める（#69）。
- * 弾は硬い壁に一度触れただけで失速して消えるため、隙間のギリギリを縫う経路は
- * family フィットの誤差でほぼ確実に潰れる。まず余白 wideClearance で探し、
- * 見つからなければ通常の余白でも探して、両方をフィット候補にする。
+ * クリーン経路を複数の空間で集める（#69/#76）。envs は探す順（広い車線 → 通常の余白 →
+ * 予測弾の回廊も避ける空間）。弾は硬い壁に一度触れただけで失速して消えるため、隙間のギリギリを
+ * 縫う経路は family フィットの誤差でほぼ確実に潰れる。**どの空間で見つけた経路かを持ち回る**：
+ * 後段の再フィット（routeRepair）はその空間の余白で「式が壁に触れていないか」を測る。
  */
-function cleanRoutes(env: PlanningEnv, wide: PlanningEnv, from: Vec2, to: Vec2): Route[] {
-  const out: Route[] = []
-  const w = findRoute(wide, from, to, 'clean')
-  if (w) out.push(w)
-  const n = findRoute(env, from, to, 'clean')
-  if (n && (!w || Math.abs(n.length - w.length) > 0.5)) out.push(n)
+function cleanRoutes(envs: PlanningEnv[], from: Vec2, to: Vec2): { route: Route; env: PlanningEnv }[] {
+  const out: { route: Route; env: PlanningEnv }[] = []
+  for (const env of envs) {
+    const r = findRoute(env, from, to, 'clean')
+    if (!r) continue
+    // 同じ道を二度フィットしない（長さと中点が近ければ同一とみなす）
+    if (out.some((o) => Math.abs(o.route.length - r.length) <= 0.5 && dist(midOf(o.route), midOf(r)) <= 1)) continue
+    out.push({ route: r, env })
+  }
   return out
+}
+
+/** 経路の中点（同一経路の判定用）。 */
+function midOf(route: Route): Vec2 {
+  return route.points[Math.floor(route.points.length / 2)] ?? route.points[0]
 }
 
 /**
@@ -194,9 +203,9 @@ export function planEnemyShot(
 
   // 防御ロール：自陣（自分＋近くの味方）を覆う周回結界を張る（#28/#71・05b §5.4）。
   // 素材に触れない外形が組めなければ null＝このターンは張らない（触れる結界は即霧散して無駄）
-  // ※守護型は「経路」でなく外形を組む役なので、読み（#75）は使わない
+  // 守護型も読み（#76）を使う：飛来弾の**方角と属性**に合わせて指向性と極性を決める
   if (enemy.role === 'guardian') {
-    return planGuardianBarrier(enemy, { allies, obstacles, teammates, ownRings, fieldR })
+    return planGuardianBarrier(enemy, { allies, obstacles, teammates, ownRings, predicted, fieldR })
   }
 
   // 崩し手（#42）：狙った対象の近傍で暴発させる専用計画（enemyPlanning/ruptorPlanner）。
@@ -224,6 +233,16 @@ export function planEnemyShot(
   // 広い車線を優先する探索用の環境（#69）。素材から wideClearance だけ離れた経路を探す
   const wideEnv =
     obstacles.length > 0 ? buildPlanningEnv(obstacles, fieldR, ENEMY_ROUTE_PLANNING.wideClearance) : null
+  // 読み（#76）：予測弾の回廊を仮想の障害物として足した環境。ここで探した経路は
+  // 「前ターンと同じ味方弾が来ても、その道では相殺されない」道になる（壁が無い面でも効く）。
+  // 幾何の当てなので、実際に撃ち落とされるかの判定は本番物理（foreseeInterception）に委ねる。
+  // **曲げられる系統を自前で持つ個体だけ**が使う（05b §2）：直進しかしない個体が撃ち返しを
+  // かわすためだけに曲がり出すと系統の個性が壊れ、味方の「撃ち返して止める」対処も効かなくなる。
+  const threatOb = fitFams.length > 0 ? threatCorridorObstacle(predicted, [enemy.pos]) : null
+  const threatEnv = threatOb ? buildPlanningEnv([...obstacles, threatOb], fieldR) : null
+  // 経路を探す空間（広い車線 → 通常の余白）。回廊を避ける空間は**通らないと分かってから**しか
+  // 探さない（A* は1回ごとに重い。普通の道が通るなら読みのための探索は要らない）
+  const routeEnvs = [wideEnv, env].filter((e): e is PlanningEnv => e !== null)
 
   // 採点結果（プロパティ経由＝クロージャ代入でも型の絞り込みが崩れない）
   // blocked＝読み（#75）で「狙いに届く前に撃ち落とされる」と判定された候補
@@ -297,8 +316,12 @@ export function planEnemyShot(
     const woundFocus = 1 + (1 - ally.hp / ally.maxHp) * 0.5
     const lowHpBias = 1 + Math.max(0, (60 - ally.hp) / 60) * 0.25
     const score = baseDmg * killBonus * woundFocus * lowHpBias
+    const cleanKey = breaker ? 0 : matBefore > 0 ? 2 : 0 // clean=0 / wallTunnel=2（§11.3）
     const rank = [
-      breaker ? 0 : matBefore > 0 ? 2 : 0, // clean=0 / wallTunnel=2（§11.3：clean があれば削らない）
+      // 読み（#76）：撃ち落とされる候補は**何より先に**降格する。ここを clean 判定より後ろに置くと
+      // 「壁に触れないが必ず相殺される一撃」が「壁を削って届く一撃」に勝ってしまい、回避が成立しない
+      survive <= 0 ? 1 : 0,
+      cleanKey,
       turnsBefore,
       ringsBefore,
       -score,
@@ -308,7 +331,7 @@ export function planEnemyShot(
       sel.best = { plan: { trajectory: traj, targetId: ally.id, expectedDamage: score }, rank, blocked: survive <= 0 }
     }
     // 撃ち落とされる直進は「クリーン命中」と認めない＝この後の迂回経路探索へ進ませる（#75）
-    return rank[0] === 0 && survive > 0
+    return cleanKey === 0 && survive > 0
   }
 
   // 味方ごとの狙い（見かけ位置・z 候補）を組み、family 候補→（必要なら）クリーン経路候補を評価
@@ -385,22 +408,29 @@ export function planEnemyShot(
       }
     }
     // 壁よけ（§8/§10）：クリーン命中が無ければ、経路探索→family フィットで回り込む。
+    // フィットした式が経路の余白からはみ出して壁に触れるときは、触れた点を通過点に足して
+    // **式を組み直す**（#76・routeRepair）＝「経路は安全なのに式が壁を舐める」取りこぼしを潰す。
     // breaker は壊して進むので使わない（従来どおり）。
-    if (!breaker && env && wideEnv && !cleanHit) {
-      for (const route of cleanRoutes(env, wideEnv, enemy.pos, aimPos)) {
-        for (const fit of fitRouteToFamilies(route.points, enemy.pos, routeFams, fitCx)) {
+    const tryRoutes = (envs: PlanningEnv[]): void => {
+      for (const { route, env: routeEnv } of cleanRoutes(envs, enemy.pos, aimPos)) {
+        for (const fit of fitCleanRoute(route.points, enemy.pos, routeFams, fitCx, routeEnv)) {
           for (const zc of zCands) {
             const traj: Trajectory = { mode: 'rotate', g: fit.g, angle: fit.angle, origin: enemy.pos, z: zc.z, fieldR }
-            consider(traj, ally, aimPos, zc.zVal, MANEUVER, fit.turnXs)
+            if (consider(traj, ally, aimPos, zc.zVal, MANEUVER, fit.turnXs)) cleanHit = true
           }
         }
       }
     }
+    if (!breaker && !cleanHit && routeEnvs.length > 0) tryRoutes(routeEnvs)
+    // 読み（#76）：普通の道がどれも通らない（撃ち落とされる／壁に阻まれる）ときだけ、
+    // 予測弾の回廊も避けた道を探す＝撃ち返しの正面を外して回り込む
+    if (!breaker && !cleanHit && threatEnv) tryRoutes([threatEnv])
   }
 
   // クリーン命中がどの味方にも無いときだけ、直線トンネル（壁削り）の経路を追加で試す（§9.1）。
   // 読み（#75）で撃ち落とされると分かっている候補しか無いときも、道を掘る手を探し直す
-  if (!breaker && env && (!sel.best || sel.best.rank[0] > 0 || sel.best.blocked)) {
+  // （rank[0]=読みで撃ち落とされるか・rank[1]=clean か。壁を削る候補は rank[1]=2）
+  if (!breaker && env && (!sel.best || sel.best.rank[1] > 0 || sel.best.blocked)) {
     for (const { ally, aimPos, zCands } of aims) {
       const route = findRoute(env, enemy.pos, aimPos, 'wallTunnel')
       if (!route) continue
