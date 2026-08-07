@@ -625,10 +625,25 @@ export function drawDarkVeil(
 // ===== 飛翔中の演出 =====
 
 /**
+ * z（属性）と head（0=発射地点／1=弾の頭）から軌跡ドットの濃さを引く。
+ * **戦闘アニメとエンドロールが必ず同じ見た目になるよう、濃さの規則はここ1か所に置く。**
+ * なめらかにフェードさせず段で表現する（DESIGN.md §6・#74）のは光闇とも共通。
+ * - 光＝パッと点く：頭側が早く全点灯に達する。
+ * - 闇＝遅れて滲み出て、尾が長く残る：頭の直近だけ一段暗く、尾の減衰も緩やか。
+ * - 無＝現状どおりの 3 段。
+ */
+export function trailDotAlpha(z: number, head: number): number {
+  const at = attributeOf(z)
+  if (at === 'light') return head > 0.55 ? 0.85 : head > 0.33 ? 0.5 : 0.25
+  if (at === 'dark') return head > 0.92 ? 0.45 : head > 0.62 ? 0.7 : head > 0.3 ? 0.5 : 0.35
+  return head > 0.66 ? 0.75 : head > 0.33 ? 0.5 : 0.25
+}
+
+/**
  * 通ってきた道（ドット絵の軌跡・#74）。連続した帯ではなく、**弧長で等間隔に置いたドット**で描く。
  * サンプル間隔は速度でばらつくので、弧長で歩き直さないとドットの密度が速度で変わってしまう
  * （`walkPath` がその歩き直しを担う）。
- * 濃さは「頭に近いほど濃い」3 段（なめらかにフェードさせない・DESIGN.md §6）。
+ * 濃さは「頭に近いほど濃い」段階（属性ごとの規則は `trailDotAlpha` を参照・なめらかにフェードさせない）。
  */
 export function drawFlightPath(
   ctx: CanvasRenderingContext2D,
@@ -653,7 +668,7 @@ export function drawFlightPath(
     if (!Number.isNaN(lx) && Math.hypot(x - lx, y - ly) < w * 0.8) return
     lx = x
     ly = y
-    const a = head > 0.66 ? 0.75 : head > 0.33 ? 0.5 : 0.25
+    const a = trailDotAlpha(src.z, head)
     dot(ctx, x, y, w, zRgba(src.z, 1), a)
     const fr = sizeFrac(src.speed, src.z)
     if (fr > 0.04) dot(ctx, x, y, Math.max(2, unit), COLORS.light2, fr * (0.25 + head * 0.6))

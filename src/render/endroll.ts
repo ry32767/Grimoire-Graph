@@ -44,6 +44,7 @@ import {
   drawOrbitRing,
   drawParryFlash,
   trailWidthPx,
+  trailDotAlpha,
   type DarkRing,
   type LightRing,
   type RingPhaseStore,
@@ -919,7 +920,7 @@ export function drawEndroll(
       if (!Number.isNaN(lx) && Math.hypot(x - lx, y - ly) < w * 0.8) return
       lx = x
       ly = y
-      dot(ctx, x, y, w, col(attributeOf(src.z), 1), head * head * 0.7 * fade)
+      dot(ctx, x, y, w, col(attributeOf(src.z), 1), trailDotAlpha(src.z, head) * fade)
     })
     ctx.restore()
     if (!done) drawBullet(ctx, b.samples[i].pos, b.zs[i] ?? 0, vp, phase, b.samples[i].speed)

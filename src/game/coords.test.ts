@@ -13,7 +13,7 @@ import {
   visibleBounds,
   type Viewport,
 } from './coords'
-import { FIELD } from '../data/constants'
+import { FIELD, SAMPLING } from '../data/constants'
 import type { Trajectory } from './types'
 
 const vp: Viewport = { width: 600, height: 400, unitsRadius: FIELD.rField }
@@ -119,5 +119,53 @@ describe('極座標サンプリング', () => {
     for (const s of samples.slice(0, 50)) {
       expect(dist(s.pos)).toBeCloseTo(5, 6)
     }
+  })
+})
+
+describe('軌道サンプリングの弦長細分割（#74）', () => {
+  it('急峻な関数 y=x² は隣接サンプルの弦長がほぼ maxChord 以下になる（場内＝実際に描画される範囲で検証）', () => {
+    const parabola: Trajectory = { mode: 'rotate', g: (x) => x * x, angle: 0 }
+    const samples = sampleTrajectory(parabola)
+    // 場外まで x を伸ばすと y=x² の傾きが maxSubdiv では追いつかないほど急峻になるため、
+    // 実際に画面に映る場内区間（inField）で検証する（元バグの実測もこの範囲の話）
+    const valid = samples.filter((s) => s.valid && s.inField)
+    let overCount = 0
+    for (let i = 1; i < valid.length; i++) {
+      const chord = dist(valid[i].pos, valid[i - 1].pos)
+      if (chord > SAMPLING.maxChord * 1.05) overCount++
+    }
+    // maxSubdiv で割り切れない極端な区間（曲率が非常に大きい終端付近）は除外し、大半が閾値以下であることを検証
+    expect(overCount).toBeLessThan(valid.length * 0.05)
+  })
+
+  it('急峻な極座標関数 r=20cos(3θ) も隣接サンプルの弦長が大半 maxChord 以下になる', () => {
+    const rose: Trajectory = { mode: 'polar', f: (t) => 20 * Math.cos(3 * t) }
+    const samples = sampleTrajectory(rose)
+    const valid = samples.filter((s) => s.valid && s.inField)
+    let overCount = 0
+    for (let i = 1; i < valid.length; i++) {
+      const chord = dist(valid[i].pos, valid[i - 1].pos)
+      if (chord > SAMPLING.maxChord * 1.05) overCount++
+    }
+    expect(overCount).toBeLessThan(valid.length * 0.05)
+  })
+
+  it('緩やかな関数 y=0 では既存の点数から増えない（既存挙動を保つ）', () => {
+    const flat: Trajectory = { mode: 'rotate', g: () => 0, angle: 0 }
+    const before = Math.floor(SAMPLING.rotateXMax / SAMPLING.rotateStep) + 1
+    const samples = sampleTrajectory(flat)
+    expect(samples.length).toBeLessThanOrEqual(before + 1) // 端数誤差の余裕を1点だけ持たせる
+  })
+
+  it('既存の格子点（param が rotateStep の倍数）はすべてそのまま残る', () => {
+    const parabola: Trajectory = { mode: 'rotate', g: (x) => x * x, angle: 0 }
+    const samples = sampleTrajectory(parabola)
+    const gridParams = new Set(samples.map((s) => Math.round(s.param / SAMPLING.rotateStep)))
+    const expectedCount = Math.floor(SAMPLING.rotateXMax / SAMPLING.rotateStep) + 1
+    let hit = 0
+    for (let k = 0; k <= expectedCount - 1; k++) {
+      if (gridParams.has(k)) hit++
+    }
+    expect(hit).toBe(expectedCount)
   })
 })

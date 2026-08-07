@@ -127,6 +127,43 @@ function applyZValidity(samples: Sample[], zf?: ZField, origin?: Vec2): void {
   }
 }
 
+/**
+ * 弦長が長い区間（傾きが急な曲線区間）に、本物の曲線を再評価した点を挿入して細分割する（#74）。
+ * 既存の格子点は一切動かさず、両端が valid な区間にだけ点を追加する（単調な上位互換）。
+ * @param out 格子点を積んだ配列（この配列を直接書き換える）
+ * @param makePoint 軌道パラメータ param から Sample を1点作る局所関数（メインループと共用）
+ */
+function refineChords(out: Sample[], makePoint: (param: number) => Sample): void {
+  let i = 1
+  while (i < out.length) {
+    const a = out[i - 1]
+    const b = out[i]
+    if (out.length >= SAMPLING.maxPoints) break
+    if (!a.valid || !b.valid) {
+      i++
+      continue
+    }
+    const chord = dist(a.pos, b.pos)
+    if (chord <= SAMPLING.maxChord) {
+      i++
+      continue
+    }
+    const n = Math.min(SAMPLING.maxSubdiv, Math.ceil(chord / SAMPLING.maxChord) - 1)
+    if (n <= 0) {
+      i++
+      continue
+    }
+    const inserts: Sample[] = []
+    for (let k = 1; k <= n; k++) {
+      if (out.length + inserts.length >= SAMPLING.maxPoints) break
+      const t = k / (n + 1)
+      inserts.push(makePoint(a.param + (b.param - a.param) * t))
+    }
+    out.splice(i, 0, ...inserts)
+    i += inserts.length + 1
+  }
+}
+
 /** 軌道を原点側から外側へサンプリングする（無効点・場外点も含めて返す）。 */
 export function sampleTrajectory(traj: Trajectory): Sample[] {
   const out: Sample[] = []
@@ -140,23 +177,31 @@ export function sampleTrajectory(traj: Trajectory): Sample[] {
     // #14：局所 y を g(0) だけ平行移動し、術者位置 origin を始点にする
     const g0raw = traj.g(0)
     const g0 = Number.isFinite(g0raw) ? g0raw : 0
-    for (let x = 0; x <= rotateXMax + 1e-9; x += SAMPLING.rotateStep) {
+    const makePoint = (x: number): Sample => {
       const y = traj.g(x)
       const valid = Number.isFinite(y)
       const local = valid ? rotate({ x, y: y - g0 }, traj.angle) : { x: NaN, y: NaN }
       const pos = valid ? { x: o.x + local.x, y: o.y + local.y } : { x: NaN, y: NaN }
-      out.push({ param: x, pos, valid, inField: valid && dist(pos) <= fieldR })
+      return { param: x, pos, valid, inField: valid && dist(pos) <= fieldR }
     }
+    for (let x = 0; x <= rotateXMax + 1e-9; x += SAMPLING.rotateStep) {
+      out.push(makePoint(x))
+    }
+    refineChords(out, makePoint)
   } else {
     const o = traj.origin ?? { x: 0, y: 0 }
-    for (let t = 0; t <= SAMPLING.polarThetaMax + 1e-9; t += SAMPLING.polarStep) {
+    const makePoint = (t: number): Sample => {
       const r = traj.f(t)
       const valid = Number.isFinite(r)
       const pos = valid
         ? { x: o.x + r * Math.cos(t), y: o.y + r * Math.sin(t) }
         : { x: NaN, y: NaN }
-      out.push({ param: t, pos, valid, inField: valid && dist(pos) <= fieldR })
+      return { param: t, pos, valid, inField: valid && dist(pos) <= fieldR }
     }
+    for (let t = 0; t <= SAMPLING.polarThetaMax + 1e-9; t += SAMPLING.polarStep) {
+      out.push(makePoint(t))
+    }
+    refineChords(out, makePoint)
   }
   // z 場のエラー点（暴発）を反映：軌道は有効でも z がエラーになる点で打ち切る（#30）。
   // z 場は術者位置 origin を原点に評価する（#52）
