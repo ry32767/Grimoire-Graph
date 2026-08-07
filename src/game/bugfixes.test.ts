@@ -10,15 +10,16 @@ import { firstHit } from './collision'
 import { zfieldAt, strengthOf } from './attribute'
 import { constZField } from './zfields'
 import { isSolidAt } from './obstacle'
-import { simulateFlight } from './physics'
+import { attachRingSpeeds, buildRing } from './orbit'
+import { simulateFlight, timeToArc } from './physics'
 import { parseExpression } from './functions'
 import { recommendCast } from './recommend'
 import { dist } from './coords'
 import { createBattleState, prepareTurn, resolveAllyCasts } from './battle'
 import { STAGES } from '../data/stages'
 import { makeParty } from '../data/party'
-import { FIELD } from '../data/constants'
-import type { Ally, Enemy, Obstacle, Rect, Trajectory } from './types'
+import { COMBAT, FIELD } from '../data/constants'
+import type { ActiveOrbit, Ally, Enemy, Obstacle, Rect, Trajectory } from './types'
 
 const ally = (id: string, pos: { x: number; y: number }, hp = 500, element: Ally['element'] = 'light'): Ally => ({
   id, name: id, pos, hp, maxHp: hp, element, statuses: [],
@@ -499,6 +500,75 @@ describe('壁の見た目すり抜けの根絶（#64：削りの早期打ち切�
 })
 
 describe('blocked の意味論（#64：自然失速＝壁止まりではない）', () => {
+  it('壁で止まる味方弾は、壁より後方の敵結界を霧散させない', () => {
+    // 味方弾は x=0 の破壊不能壁で止まり、敵の持続結界はその後方 x=8 にある。
+    // 修正前は自由飛行で先に結界との接触を解決し、結界を壊した後で弾を壁停止へ短縮していた。
+    const shooter = ally('a', { x: -15, y: 0 }, 100)
+    const enemy = baseEnemy({ id: 'e', pos: { x: 15, y: 15 }, element: 'dark' })
+    const shot: Trajectory = {
+      mode: 'rotate', g: () => 0, angle: 0, origin: shooter.pos, z: constZField(FIELD.zRef),
+    }
+    const ringTraj: Trajectory = {
+      mode: 'polar', f: () => 3, origin: { x: 8, y: 0 }, z: constZField(-FIELD.zRef),
+    }
+    const orbit: ActiveOrbit = {
+      id: 'enemy-ring', ownerId: 'e', owner: 'enemy',
+      ring: attachRingSpeeds(buildRing(ringTraj), 3), ringSpeed: 3,
+    }
+    const wall = rectWall({ x: -2, y: -8, w: 4, h: 16 }, 'unbreakable')
+    const res = resolveTurn({
+      allies: [shooter],
+      casts: [{ allyId: 'a', trajectory: shot, initialSpeed: FIELD.fixedSpeed }],
+      enemies: [enemy],
+      castingEnemyIds: [],
+      obstacles: [wall],
+      mechanics: { obstacles: true, enemyFire: true },
+      activeOrbits: [orbit],
+    })
+    expect(res.allyShots[0].flight?.end).toBe('vanished')
+    expect(res.orbits.some((o) => o.id === orbit.id)).toBe(true)
+    expect(res.log.some((l) => l.kind === 'orbit')).toBe(false)
+  })
+
+  it('敵弾が後方の壁で止まっても、停止点より手前のパリィは成立する', () => {
+    // 敵弾は (0,20) から味方へ進み、横弾と途中で衝突した後、y=-8..0 の壁で止まる。
+    // 修正前は将来の blocked=true を見て敵弾を干渉候補から丸ごと外し、手前の衝突まで消していた。
+    const victim = ally('v', { x: 0, y: -15 }, 40)
+    const enemy: Enemy = {
+      id: 'e', name: 'e', pos: { x: 0, y: 20 }, hp: 100, maxHp: 100, element: 'dark',
+      hitboxRadius: 1, statuses: [], family: 'line',
+      castTrajectory: { mode: 'rotate', g: () => 0, angle: 0 }, castInitialSpeed: 8,
+      castZField: constZField(-FIELD.zRef), castZ: -FIELD.zRef,
+    }
+    const wallRect = { x: -30, y: -8, w: 60, h: 8 }
+    // まず同じ条件で敵弾だけを計画し、壁停止より十分手前のサンプルへ同時到達する横弾を組む。
+    // 敵AIの経路選択が変わっても「実際の経路上で時刻を合わせる」ので構図が壊れない。
+    const planned = resolveTurn({
+      allies: [victim], casts: [], enemies: [enemy], castingEnemyIds: ['e'],
+      obstacles: [rectWall(wallRect)], mechanics: { obstacles: true, enemyFire: true },
+    }).enemyShots[0]
+    const meet = planned.flight.samples[Math.max(1, Math.floor(planned.flight.samples.length * 0.25))]
+    const meetT = timeToArc(planned.flight.samples, meet.arcLen)
+    // 闇の隠蔽で敵AIの標的候補から外し、計画パスを変えずに迎撃弾だけを追加する。
+    const shooter = {
+      ...ally('p', { x: meet.pos.x - FIELD.fixedSpeed * meetT, y: meet.pos.y }, 100),
+      concealed: COMBAT.orbitConcealFull,
+    }
+    const traj: Trajectory = {
+      mode: 'rotate', g: () => 0, angle: 0, origin: shooter.pos, z: constZField(FIELD.zRef),
+    }
+    const res = resolveTurn({
+      allies: [shooter, victim],
+      casts: [{ allyId: 'p', trajectory: traj, initialSpeed: FIELD.fixedSpeed }],
+      enemies: [enemy],
+      castingEnemyIds: ['e'],
+      obstacles: [rectWall(wallRect)],
+      mechanics: { obstacles: true, enemyFire: true },
+    })
+    expect(res.enemyShots[0].blocked).toBe(true)
+    expect(res.log.some((l) => l.kind === 'parry')).toBe(true)
+  })
+
   it('敵弾が味方を通過した後に壁の中で止まっても、停止点までの命中は有効', () => {
     // 仕様決定：壁で止まる弾も「それまで」は当たる（AI 事前評価との乖離解消・spec §9）。
     // 構図：敵(0,20) → 味方(0,5) → 全幅の厚い壁（y -8..0）。弾は味方に命中してから壁で止まる。

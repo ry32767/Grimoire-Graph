@@ -483,6 +483,29 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
     }
   }
 
+  // 味方弾の干渉判定には「現在までのパリィ減速＋障害物」を解いた到達可能な飛行だけを使う。
+  // 実際の障害物はまだ削らず、影コピー上で plans 順に試算する：これにより壁で止まる弾が
+  // 壁の向こうの結界を壊す因果逆転を防ぎつつ、手前のパリィ減速は後続の壁判定へ引き継げる。
+  const playerObstacleFlights = new Map<AllyPlan, Flight>()
+  let playerObstacleFlightsDirty = true
+  const rebuildPlayerObstacleFlights = () => {
+    if (!playerObstacleFlightsDirty) return
+    playerObstacleFlights.clear()
+    const shadowObstacles = obstacles.map((o) => ({ ...o, carves: [...o.carves] }))
+    for (const p of plans) {
+      if (p.kind !== 'projectile' || !p.freeFlight) continue
+      const preview = mechanics.obstacles
+        ? traverseObstacles(p.cast.trajectory, p.cast.initialSpeed, p.freeFlight, shadowObstacles, p.pLosses).flight
+        : p.freeFlight
+      playerObstacleFlights.set(p, preview)
+    }
+    playerObstacleFlightsDirty = false
+  }
+  const playerSamples = (p: AllyPlan): FlightSample[] => {
+    rebuildPlayerObstacleFlights()
+    return playerObstacleFlights.get(p)?.samples ?? []
+  }
+
   // === 3b. 魔法どうし・魔法と結界の干渉を「ゲーム時刻の早い順」に解決する（#64/#72） ===
   // 判定はすべて時間刻み（FIELD.dt）で、当たりは**画面に描かれる大きさ**と一致する：
   //   - 弾×弾   … bulletCollision（互いの半径 bulletRadius の和まで近づいた最初の時刻）
@@ -526,7 +549,10 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
         name: nameOf(enemies, ctx.shot.enemyId),
         samples: () => ctx.shot.flight.samples,
         zAt: (pos) => zfieldAt(ctx.shot.traj, pos),
-        alive: () => !ctx.shot.blocked && ctx.shot.flight.samples.length >= 2,
+        // blocked は「この飛行が壁の中で停止した」結果であり、停止点より手前の履歴まで
+        // 消えたことにはならない。samples は停止点で打ち切られているので、その範囲は
+        // パリィ／結界との時系列干渉へ参加させる（後段の壁停止が過去の衝突を消さない）。
+        alive: () => ctx.shot.flight.samples.length >= 2,
         applyLoss: (arcLen, deltaV) => {
           ctx.losses.push({ arcLen, deltaV })
           ctx.resim()
@@ -540,12 +566,13 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
         id: `P${i}`,
         side: 'player',
         name: nameOf(allies, p.cast.allyId),
-        samples: () => p.freeFlight?.samples ?? [],
+        samples: () => playerSamples(p),
         zAt: (pos) => zfieldAt(p.cast.trajectory, pos),
         alive: () => !!p.freeFlight && p.freeFlight.samples.length >= 2,
         applyLoss: (arcLen, deltaV) => {
           p.pLosses.push({ arcLen, deltaV })
           p.freeFlight = simulateWithLosses(p.cast.trajectory, p.cast.initialSpeed, p.pLosses)
+          playerObstacleFlightsDirty = true
         },
       })
     })
@@ -744,7 +771,10 @@ export function resolveTurn(input: ResolveInput): ResolveResult {
       done.add(ev.key)
       cache.delete(ev.key)
       ev.run()
-      invalidate(...ev.key.split('|'))
+      // 味方弾の減速は、その弾の壁到達だけでなく、同時発射の先行弾が開ける穴を介して
+      // 後続の味方弾の到達可能範囲も変えうる。影の障害物飛行を作り直す場合は全候補を捨てる。
+      if (playerObstacleFlightsDirty) cache.clear()
+      else invalidate(...ev.key.split('|'))
     }
   }
 
