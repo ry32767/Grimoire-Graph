@@ -1072,14 +1072,22 @@ describe('ダメージ表示の発生時刻（#75：エンジンが t を確定�
   })
 
   it('t は全ポップで有限な数になる（命中・暴発・回復すべて）', () => {
-    // 命中・暴発・回復が一通り混ざるよう、暴発する弾と光の周回回復を同時に起こす
+    // 命中・暴発・回復が一通り混ざるよう、命中する弾・暴発する弾・光の周回回復を同時に起こす
+    // g=1/(5-x) は x=5 に極（暴発の原因）を持つ。#74 の弦長細分割により、格子点が
+    // 偶然どちらも場内へ収まって極の飛躍（約50ユニット）を見逃していた潜在バグが直り、
+    // 極の直前の場内点（≒(4.96, 24.8)）で正しく暴発するようになった（misfireCarver 相当）。
+    // その暴発 AoE に確実に入る位置へ e2 を置いて、暴発ポップが混ざることを保証する。
     const res = resolveTurn({
-      allies: [ally('a', { x: 0, y: 0 }), ally('heal', { x: 0, y: -8 }, 'light')],
+      allies: [ally('a', { x: 0, y: 0 }), ally('b', { x: 0, y: 0 }), ally('heal', { x: 0, y: -8 }, 'light')],
       casts: [
         cast('a', { mode: 'rotate', g: (x) => 1 / (5 - x), angle: 0, origin: { x: 0, y: 0 }, z: zLightMid }, 8),
+        cast('b', { mode: 'rotate', g: () => 0, angle: 0, origin: { x: 0, y: 0 }, z: zLightMid }, 8),
         cast('heal', { mode: 'polar', f: () => 3, origin: { x: 0, y: -8 }, z: zLightMid }, 6),
       ],
-      enemies: [enemy('e', { x: 8, y: 0 }, 'dark', 100, 6)],
+      enemies: [
+        enemy('e', { x: 8, y: 0 }, 'dark', 100, 6), // b の直線弾が素直に命中
+        enemy('e2', { x: 4.96, y: 24.8 }, 'dark', 100, 6), // a の暴発 AoE に確実に入る
+      ],
       castingEnemyIds: ['e'],
       obstacles: [],
       mechanics: withFire,
