@@ -87,11 +87,13 @@ export function TitleScreen({
 export function StoryScreen({
   title,
   lines,
+  details,
   onNext,
   nextLabel = '次へ',
 }: {
   title: string
   lines: string[]
+  details?: string[]
   onNext: () => void
   nextLabel?: string
 }) {
@@ -102,6 +104,12 @@ export function StoryScreen({
         {lines.map((l, i) => (
           <p key={i}>{l}</p>
         ))}
+        {details && details.length > 0 && (
+          <details>
+            <summary>遺跡の記録を読む</summary>
+            {details.map((line, i) => <p key={i}>{line}</p>)}
+          </details>
+        )}
       </div>
       <div className="center-actions">
         <button className="btn primary" onClick={onNext}>

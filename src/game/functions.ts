@@ -237,11 +237,13 @@ export function parseExpression(
  */
 export function parseZExpression(expr: string): ZField | null {
   const compiled = compileExpr(expr)
-  if (!compiled || !varsAllowed(compiled.vars, ['x', 'y'])) return null
+  if (!compiled || !varsAllowed(compiled.vars, ['x', 'y', 't'])) return null
   const scope: Record<string, number> = {}
   return (x: number, y: number): number => {
     scope.x = x
     scope.y = y
+    // z 場の t は盤面原点からの半径。sqrt(x^2 + y^2) の省略記法。
+    scope.t = Math.hypot(x, y)
     try {
       const r = compiled.evalWith(scope)
       return typeof r === 'number' && Number.isFinite(r) ? r : NaN

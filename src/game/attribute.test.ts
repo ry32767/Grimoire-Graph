@@ -97,11 +97,12 @@ describe('z 場（属性源・#30）', () => {
       g: () => 0,
       angle: 0,
       origin: { x: 5, y: 5 },
+      zWorld: true,
       z: (_x, y) => y,
     }
-    expect(zfieldAt(traj, { x: 5, y: 8 })).toBeCloseTo(3, 6)
+    expect(zfieldAt(traj, { x: 5, y: 8 })).toBeCloseTo(8, 6)
     // 術者の足元は常に原点 → z=0
-    expect(zfieldAt(traj, { x: 5, y: 5 })).toBeCloseTo(0, 6)
+    expect(zfieldAt(traj, { x: 5, y: 5 })).toBeCloseTo(5, 6)
   })
 
   it('支配属性は経路で強度が最大の点の属性・強度を返す', () => {

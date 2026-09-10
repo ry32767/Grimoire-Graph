@@ -17,7 +17,6 @@ import {
 import type { Readout } from './readout'
 import { elementReadout } from './readout'
 import CoefSliders from './CoefSliders'
-import ZFieldControls from './ZFieldControls'
 
 export type ConsoleFocus = 'y' | 'z'
 
@@ -213,8 +212,8 @@ export default function FunctionPanel(props: Props) {
           onFocus={() => props.onFocusChange('z')}
           spellCheck={false}
           autoComplete="off"
-          placeholder="5*exp(-((t-27)/6)^2)"
-          aria-label="属性場の式 z = g(t)"
+          placeholder="5*sin(x/4)*cos(y/3)"
+          aria-label="属性場の式 z = f(x, y)"
         />
         <span className="el-auto">
           <span className="k">属性 自動</span>
@@ -229,7 +228,6 @@ export default function FunctionPanel(props: Props) {
       </div>
 
       {/* z を編集中：整形（山/段/波/平）とスライダー */}
-      {onZ && <ZFieldControls composer={c} onChange={onChange} rDistance={readout.ray.d} />}
 
       {/* y／r を編集中：式から自動検出した係数スライダー */}
       {!onZ && canFit && (

@@ -824,7 +824,7 @@ export default function BattleCanvas(props: Props) {
         const pts = previewPointsOf(b.samples)
         drawFlightPath(ctx, vp, pts, idx, trailPhase, powerSizeFrac)
         // 発射の閃光（詠唱の瞬間・術者位置から広がる輪）
-        if (elapsed < 260 && pts.length > 0) drawLaunchFlash(ctx, vp, pts[0].pos, z, elapsed / 260)
+        if (elapsed < 260 && pts.length > 0) drawLaunchFlash(ctx, vp, pts[0].pos, pts[0].z, elapsed / 260)
         if (!exploding && !vanishing) {
           const frac = powerSizeFrac(b.samples[idx]?.speed ?? 0, z)
           // 威力はドット絵の煙で語る（#74）。太さ一定の「玉の尻尾」は軌跡を殺すのでやめた
@@ -859,12 +859,26 @@ export default function BattleCanvas(props: Props) {
         }
       })
 
-      // 着弾の衝撃波（#20）：被弾した対象の位置から白い輪が広がる（v3）
-      for (const id in flashStartByTarget) {
-        const dt = elapsed - flashStartByTarget[id]
-        if (dt < 0 || dt >= FLASH_MS) continue
-        const t = props.enemies.find((q) => q.id === id) ?? props.allies.find((q) => q.id === id)
-        if (t) drawImpactShockwave(ctx, vp, t.pos, dt / FLASH_MS)
+      // 一発ごとの着弾時刻・属性・威力で描く。連続命中と見返しでも各衝撃が欠けない。
+      anim.bullets.forEach((b, i) => {
+        for (const im of b.impacts) {
+          const dt = elapsed - msAtArc(i, im.arcLen)
+          if (dt < 0 || dt >= FLASH_MS) continue
+          const target = im.side === 'enemy' ? props.enemies : props.allies
+          const t = target.find((q) => q.id === im.id)
+          const sample = b.samples.find((s) => s.arcLen >= im.arcLen) ?? b.samples[b.samples.length - 1]
+          if (t && sample) drawImpactShockwave(ctx, vp, t.pos, dt / FLASH_MS, sample.z, powerSizeFrac(sample.speed, sample.z))
+        }
+      })
+      const sweepDt = elapsed - 0.55 * flightMs
+      if (sweepDt >= 0 && sweepDt < FLASH_MS) {
+        for (const o of anim.orbits) {
+          const z = o.ring.reduce((sum, p) => sum + p.z, 0) / Math.max(1, o.ring.length)
+          for (const id of o.hitEnemyIds) {
+            const t = props.enemies.find((q) => q.id === id)
+            if (t) drawImpactShockwave(ctx, vp, t.pos, sweepDt / FLASH_MS, z, powerSizeFrac(o.speed ?? 0, z))
+          }
+        }
       }
 
       // パリィ／結界の相殺（#20/#38）：二重の衝撃波＋光闇の破片＋「相殺」の文字（v3）。

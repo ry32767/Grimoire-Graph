@@ -145,20 +145,24 @@ describe('drawBullet（描かれる外縁が当たり半径ちょうどに一致
   const BULLET_CASES = [
     { speed: 0, z: 0 }, // 弱い弾
     { speed: FIELD.maxFlightSpeed, z: FIELD.zPeak }, // 強い弾
+    { speed: FIELD.maxFlightSpeed, z: -FIELD.zPeak },
+    { speed: 0, z: FIELD.zPeak },
+    { speed: 0, z: -FIELD.zPeak },
   ]
   const BULLET_VPS: Viewport[] = [
     { width: 480, height: 480, unitsRadius: FIELD.rField }, // 小さい canvas
     { width: 1600, height: 1000, unitsRadius: FIELD.rField, zoom: 1.6 }, // 大きい canvas
   ]
 
-  it('描かれる全ドットの四隅が当たり半径＋1ドット以内に収まる', () => {
+  it.each([0, 0.7, 1.8, 4.2, 9])('位相 %s の全属性の全ドットが当たり半径＋丸め誤差以内に収まる', (phase) => {
     for (const vp of BULLET_VPS) {
       const unit = dotPx(vp)
       const cx = vp.width / 2
       const cy = vp.height / 2
       for (const c of BULLET_CASES) {
         const { ctx, rects } = fakeCtx()
-        drawBullet(ctx, { x: 0, y: 0 }, c.z, vp, 1.0, c.speed)
+        drawBullet(ctx, { x: 0, y: 0 }, c.z, vp, phase, c.speed)
+        expect(rects.length).toBeGreaterThan(0)
         // tier の丸め（±unit/2）＋ドットの対角オフセット（unit×√2/2）を許容する
         const limit = bulletRadius(c.speed, c.z) * scaleOf(vp) + unit * 1.25
         for (const r of rects) {
@@ -174,6 +178,21 @@ describe('drawBullet（描かれる外縁が当たり半径ちょうどに一致
         }
       }
     }
+  })
+
+  it('見返しで同じ位相に戻れば同じ描画へ戻り、属性ごとに形が異なる', () => {
+    const capture = (z: number, phase: number) => {
+      const { ctx, rects } = fakeCtx()
+      drawBullet(ctx, { x: 0, y: 0 }, z, BULLET_VPS[1], phase, FIELD.maxFlightSpeed)
+      return rects
+    }
+    const light = capture(FIELD.zPeak, 0)
+    const dark = capture(-FIELD.zPeak, 0)
+    expect(dark).not.toEqual(light)
+    expect(capture(FIELD.zPeak, 2)).not.toEqual(light)
+    expect(capture(-FIELD.zPeak, 2)).not.toEqual(dark)
+    expect(capture(FIELD.zPeak, 0)).toEqual(light)
+    expect(capture(-FIELD.zPeak, 0)).toEqual(dark)
   })
 
   it('強い弾ほど描画の外縁が大きい（威力が段で読める）', () => {

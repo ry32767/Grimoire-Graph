@@ -111,6 +111,35 @@ describe('ボス HP フェーズと断末魔（#45）', () => {
 
   const party = [ally('a', { x: -8, y: -14 }), ally('b', { x: 0, y: -14 }), ally('c', { x: 8, y: -14 })]
 
+  it.each([
+    { hp: 252, damage: 2, phase: 1 },
+    { hp: 127, damage: 2, phase: 2 },
+    { hp: 252, damage: 300, phase: 2 },
+  ])('DoTでHP $hp から閾値を跨いだ準備時にフェーズ $phase へ移行する', ({ hp, damage, phase }) => {
+    const st = createBattleState(STAGES[4], 4, party)
+    st.enemies = st.enemies.map((e) => e.boss
+      ? { ...e, hp, statuses: [{ kind: 'burn', magnitude: damage, remainingTurns: 1 }] }
+      : e)
+    st.orbits = [{ id: 'ring', ownerId: party[0].id, owner: 'player', ring: [], ringSpeed: 8 }]
+    const prep = prepareTurn(st)
+    expect(prep.state.bossPhase).toBe(phase)
+    expect(prep.state.rField).toBe(60)
+    expect(prep.state.orbits).toEqual([])
+    expect(prep.state.obstacles).toEqual(STAGES[4].bossPhases![phase - 1].obstacles)
+    const boss = prep.state.enemies.find((e) => e.boss)!
+    expect(prep.castingEnemyIds).toContain(boss.id)
+    if (phase === 2) {
+      expect(boss.castCount).toBe(3)
+      expect(prep.state.enemies.filter((e) => !e.boss).every((e) => e.hp === 0)).toBe(true)
+      expect(prep.castingEnemyIds).toEqual([boss.id])
+    }
+    if (damage > hp) {
+      expect(prep.state.finale).toBe('cast')
+      expect(boss.role).toBe('ruptor')
+      expect(prep.state.outcome).toBe('ongoing')
+    }
+  })
+
   it('HP 66% を下回ると床が崩れ（フェーズ+1）、33% 未満で眷属が間引かれ castCount=3 になる', () => {
     let st = createBattleState(bossStage(), 6, party)
     // ボスを 60% まで削る（外部から直接 HP を操作して境界越えを再現）
