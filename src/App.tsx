@@ -5,7 +5,7 @@ import { planEnemyShots, enemyFlight } from './game/enemyAI'
 import { predictAllyShots } from './game/enemyPlanning/foresight'
 import { zfieldAt } from './game/attribute'
 import { ringAverageAttr } from './game/orbit'
-import { recommendCast } from './game/recommend'
+import { useRecommendation } from './components/useRecommendation'
 import { ROTATE_PRESETS, defaultCoeffs } from './game/functions'
 import { ZFIELD_PRESETS, defaultZCoeffs } from './game/zfields'
 import { STAGES } from './data/stages'
@@ -42,10 +42,10 @@ import {
   zParametricPatch,
   fitSpecOf,
   yTextOf,
-  buildZAt,
   NO_FIT,
 } from './components/composer'
 import { computeReadout, type Readout } from './components/readout'
+import { firstInvalidCaster } from './components/castValidation'
 import { solveAngle } from './components/solveAngle'
 import { buildTestStage } from './components/testStage'
 import ReadoutStrip, { ReadoutStats } from './components/ReadoutStrip'
@@ -53,7 +53,6 @@ import PlaybackBar from './components/PlaybackBar'
 import DraftPad from './components/DraftPad'
 import AnomalyOverlay from './components/AnomalyOverlay'
 import TopRail from './components/TopRail'
-import ZPlot from './components/ZPlot'
 import CasterCards from './components/CasterCards'
 import Endroll from './components/Endroll'
 import type { ConsoleFocus } from './components/FunctionPanel'
@@ -155,8 +154,8 @@ function makeComposer(angle: number, yExpr = '0', zExpr = '0'): ComposerState {
     yText: yExpr,
     zText: zExpr,
     ...NO_FIT,
-    zRadial: true,
-    zPresetId: zPreset.id,
+    zRadial: false,
+    zPresetId: 'const',
     zCoeffs,
     zUseFree: true,
     zFreeExpr: zExpr,
@@ -168,7 +167,7 @@ function makeComposer(angle: number, yExpr = '0', zExpr = '0'): ComposerState {
   return {
     ...base,
     ...parametricPatch(yExpr, 'x'),
-    ...zParametricPatch(zExpr, true),
+    ...zParametricPatch(zExpr, false),
     yText: yExpr,
     zText: zExpr,
   }
@@ -222,6 +221,7 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>(devEditor ? 'editor' : devStage !== null ? 'stageIntro' : 'title')
   const [stageIndex, setStageIndex] = useState(devStage ?? 0)
   const [battle, setBattle] = useState<BattleState | null>(null)
+  const recommendation = useRecommendation(screen, battle)
   const [castingIds, setCastingIds] = useState<string[]>([])
   const [impairedIds, setImpairedIds] = useState<string[]>([])
   const [composers, setComposers] = useState<Record<string, ComposerState>>({})
@@ -333,11 +333,8 @@ export default function App() {
   const activeZField = useMemo(() => {
     const c = composers[activeAllyId]
     if (!c) return null
-    const raw = buildZField(c)
-    const ally = battle?.allies.find((a) => a.id === activeAllyId)
-    if (!ally) return raw
-    return (x: number, y: number) => raw(x - ally.pos.x, y - ally.pos.y)
-  }, [composers, activeAllyId, battle])
+    return buildZField(c)
+  }, [composers, activeAllyId])
   // 持続中の周回結界（#39：作成フェーズでも常時表示し、闇は内側を暗くぼかす）。
   // owner を渡し、敵の闇結界は作成フェーズで視認阻害（ぼかし＋z場/予測経路を隠す・#61）する。
   const standingOrbits = useMemo(
@@ -377,6 +374,7 @@ export default function App() {
   // #49：このターンで「術式を設定/変更した味方」を記録（準備状況の✓・発射確認に使う）
   const markTouched = (id: string) => setTouchedAllies((s) => (s.has(id) ? s : new Set(s).add(id)))
   const onChange = (patch: Partial<ComposerState>) => {
+    recommendation.cancel()
     setConfirmArmed(false) // 式を変えたら確認ゲートを解除（04b §4b.2）
     // 軌道 y↔結界 r を切り替えたら、前の意味で拾った盤面の通過点は捨てる（#68）
     if (patch.mode && patch.mode !== composers[activeAllyId]?.mode) clearFit()
@@ -559,37 +557,27 @@ export default function App() {
     setScreen(testPlayReturn)
   }
 
-  // 1人ぶんのおすすめ術式を作る（#46）。対象は最も近い生存敵。組めなければ null。
-  const recommendFor = (ally: Ally): ComposerState | null => {
-    const enemiesAlive = battle?.enemies.filter((e) => e.hp > 0) ?? []
-    if (enemiesAlive.length === 0) return null
-    const target = enemiesAlive.reduce((best, e) =>
-      Math.hypot(e.pos.x - ally.pos.x, e.pos.y - ally.pos.y) <
-      Math.hypot(best.pos.x - ally.pos.x, best.pos.y - ally.pos.y)
-        ? e
-        : best,
-    )
-    const r = recommendCast(ally.pos, target, battle?.mechanics.obstacles ? battle.obstacles : [], battle?.rField)
-    // z 場は敵の反対極を最強で当てる一定値（#21）。z(t) の自由式（定数）としてそのまま渡す
-    const expr = r.line ? `${r.line.a}*x` : (r.freeExpr ?? '0')
-    return makeComposer(r.angle, expr || '0', `${r.zConst}`)
-  }
-  // #49：一括おまかせ。生存・非ひるみの全味方へ当たる術式を自動設定
+  // #49：探索はWorkerで行い、待っている間も盤面や式を操作できる。
   const recommendAll = () => {
-    if (!battle) return
-    const next: Record<string, ComposerState> = {}
-    const touched = new Set(touchedAllies)
-    for (const a of battle.allies) {
-      if (a.hp <= 0 || impairedIds.includes(a.id)) continue
-      const c = recommendFor(a)
-      if (c) {
-        next[a.id] = c
-        touched.add(a.id)
+    if (!battle || recommendation.pending) return
+    setConfirmArmed(false)
+    recommendation.start({
+      allies: battle.allies.filter((a) => a.hp > 0 && !impairedIds.includes(a.id))
+        .map(({ id, pos }) => ({ id, pos })),
+      enemies: battle.enemies.filter((e) => e.hp > 0)
+        .map(({ id, hp, pos, element, hitboxRadius }) => ({ id, hp, pos, element, hitboxRadius })),
+      obstacles: battle.mechanics.obstacles ? battle.obstacles : [],
+      rField: battle.rField,
+    }, (results) => {
+      const next: Record<string, ComposerState> = {}
+      for (const { allyId, recommendation: r } of results) {
+        const expr = r.line ? `${r.line.a}*x` : (r.freeExpr ?? '0')
+        next[allyId] = makeComposer(r.angle, expr || '0', `${r.zConst}`)
       }
-    }
-    setComposers((m) => ({ ...m, ...next }))
-    setTouchedAllies(touched)
-    vibrate(18)
+      setComposers((m) => ({ ...m, ...next }))
+      setTouchedAllies((touched) => new Set([...touched, ...Object.keys(next)]))
+      vibrate(18)
+    })
   }
 
   // #46：通過点フィット
@@ -599,11 +587,13 @@ export default function App() {
   }
   // #54：点ピックの開始/終了。開始時はスマホでも盤面（全画面）へ移動してそのまま点を打てるようにする
   const toggleFitPick = () => {
-    setFitPickActive((v) => {
-      const next = !v
-      if (next) vibrate(8)
-      return next
-    })
+    const next = !fitPickActive
+    setFitPickActive(next)
+    if (next) {
+      setDraftOpen(false)
+      setReplay(null)
+      vibrate(8)
+    }
   }
   const onFieldClick = (p: Vec2) => {
     if (!fitPickActive) return
@@ -648,7 +638,15 @@ export default function App() {
   }
 
   const fireAll = () => {
-    if (!battle) return
+    if (!battle || recommendation.pending) return
+    const invalidId = firstInvalidCaster(battle.allies, impairedIds, composers)
+    if (invalidId) {
+      switchAlly(invalidId)
+      setConsoleFocus(composers[invalidId]?.freeError ? 'y' : 'z')
+      setReplay(null)
+      setConfirmArmed(false)
+      return
+    }
     clearFit()
     setMenuOpen(false)
     vibrate([18, 40, 18])
@@ -819,7 +817,7 @@ export default function App() {
   const snapshotTime = () => setClearSnapshotMs(performance.now() - (runStartMs ?? performance.now()))
 
   /** 準備済みの次ターン状態を盤面へ反映する（onAnimationDone の後半・DoT撃破演出の後にも再利用）。 */
-  const applyPreparedTurn = (prep: ReturnType<typeof prepareTurn>) => {
+  const applyPreparedTurn = (prep: ReturnType<typeof prepareTurn>, misfires = stageMisfires) => {
     setBattle(prep.state)
     setCastingIds(prep.castingEnemyIds)
     setImpairedIds(prep.impairedAllyIds)
@@ -830,6 +828,8 @@ export default function App() {
       if (firstAlive) setActiveAllyId(firstAlive.id)
     }
     if (prep.state.outcome === 'cleared') {
+      // 継続ダメージでの撃破も、通常の撃破と同じクリア緩和を受ける。
+      setInstability((count) => applyStageClearRelief(count, misfires))
       playSfx('clear')
       snapshotTime()
       // テストプレイ中（#67 §7）は結果画面を出さず、そのままエディタへ戻る
@@ -927,6 +927,14 @@ export default function App() {
       return
     }
     const prep = prepareTurn(after)
+    // 継続ダメージによる崩落・断末魔も、新しい敵予告を操作する前に伝える。
+    if (!overlay && prep.state.finale === 'cast' && after.finale === undefined) {
+      setStoryOverlay({ title: '断末魔 ― 三つの綻び', lines: COLLAPSE_FINAL })
+      setTurnResult(null)
+    } else if (!overlay && (prep.state.bossPhase ?? 0) > (after.bossPhase ?? 0)) {
+      setStoryOverlay({ title: '崩落 ― 下の階層へ', lines: COLLAPSE_PHASE })
+      setTurnResult(null)
+    }
     // DoT（burn）撃破の消滅演出（バグ修正・05c §6.5）：prepareTurn の継続ダメージで hp>0→hp<=0 に
     // なった敵は、通常命中・掃射・暴発と同じく種族別の撃破アニメで消す。位置・種族は撃破前（after）から取る。
     // ボスは断末魔中は崩壊させない（通常撃破と同じ扱い）。演出のみでロジック（hp/勝敗）は不変。
@@ -963,7 +971,7 @@ export default function App() {
       })
       return
     }
-    applyPreparedTurn(prep)
+    applyPreparedTurn(prep, stageMisfires + (ev?.gained ?? 0))
   }
 
   // ===== 全画面（タイトル/物語/結果） =====
@@ -1091,15 +1099,14 @@ export default function App() {
   }
   if (screen === 'stageIntro') {
     const stage = STAGES[stageIndex]
-    // 降下トランジション：刻印（古代人の言葉）→ 背景描写（都市の痕跡）→ 導入（story.md）
-    const lines = [
+    // 攻略の要点を先に示し、刻印と背景は読みたいときだけ開く。
+    const details = [
       `【刻印】 ${INSCRIPTIONS[stageIndex] ?? ''}`,
       SCENERIES[stageIndex] ?? '',
-      ...stage.introText,
     ].filter((l) => l.length > 0)
     return (
       <div className="app">
-        <StoryScreen title={stage.name} lines={lines} onNext={startBattle} nextLabel="戦闘開始" />
+        <StoryScreen title={stage.name} lines={stage.introText} details={details} onNext={startBattle} nextLabel="戦闘開始" />
       </div>
     )
   }
@@ -1180,6 +1187,7 @@ export default function App() {
   const composing = battle.phase === 'compose' && !animation
   const activeComposer = composers[activeAllyId]
   const anyCastable = battle.allies.some((a) => a.hp > 0 && !impairedIds.includes(a.id))
+  const invalidCasterId = firstInvalidCaster(battle.allies, impairedIds, composers)
 
   // 敵の予告（ゴースト）・自分の照準・z 場は、作成フェーズなら最初から全部見せる。
   // 「敵公開 → 術式を構える」の 2 段ゲートは廃止（読み出しストリップが役目を引き継ぐ）。
@@ -1239,7 +1247,6 @@ export default function App() {
   const replayEntry = replay ? (replays.find((r) => r.turn === replay.turn) ?? null) : null
   const canReplay = composing && replays.length > 0
 
-  const activeZAt = activeComposer ? buildZAt(activeComposer) : null
   const railMenu = (
     <div className="menu-wrap">
       <button
@@ -1362,7 +1369,6 @@ export default function App() {
                   misfirePoints={showAimPreview ? misfirePoints : undefined}
                   zField={showAimPreview ? activeZField ?? undefined : undefined}
                   showZField
-                  zOfT={activeZAt}
                   standingOrbits={composing ? standingOrbits : undefined}
                   ghostPaths={composing ? ghostPaths : undefined}
                   ghostMisfires={composing ? ghostMisfires : undefined}
@@ -1404,7 +1410,28 @@ export default function App() {
               </div>
 
               {/* 見返し（プレイバック）：解決済みターンをスクラブして経路・命中・削れを追う */}
-              {canReplay &&
+              {composing && fitPickActive && (
+                <div className="playbar" role="group" aria-label="盤面の通過点を調整">
+                  <div className="draft-pts-row">
+                    <span className="hint">通過点 {fitPoints.length} 個</span>
+                    <button
+                      type="button"
+                      className="btn small primary"
+                      disabled={fitPoints.length === 0 || !activeComposer?.fitParams.length}
+                      onClick={runFit}
+                    >
+                      フィット
+                    </button>
+                    <button type="button" className="btn small" onClick={() => setFitPoints([])}>
+                      クリア
+                    </button>
+                    <button type="button" className="btn small" onClick={clearFit}>
+                      終了
+                    </button>
+                  </div>
+                </div>
+              )}
+              {canReplay && !fitPickActive &&
                 (replay ? (
                   <PlaybackBar
                     turns={replays.map((r) => r.turn)}
@@ -1469,7 +1496,6 @@ export default function App() {
           {/* ===== 右レール：読み取り値・z(t)・術者 ===== */}
           <div className="gm-rail">
             {activeReadout && <ReadoutStats readout={activeReadout} />}
-            <ZPlot zAt={activeZAt} rDistance={activeReadout?.ray.d ?? 0} pole={activeReadout?.pole ?? null} />
             <CasterCards
               allies={battle.allies}
               composers={composers}
@@ -1518,22 +1544,24 @@ export default function App() {
                 <button
                   type="button"
                   className="btn small"
-                  onClick={recommendAll}
+                  onClick={recommendation.pending ? recommendation.cancel : recommendAll}
                   disabled={!anyCastable}
                   title="全員に無難に当たる術式を割り当てる"
                 >
-                  全員おまかせ
+                  {recommendation.pending ? '術式を計算中…（中止）' : '全員おまかせ'}
                 </button>
+                {recommendation.error && <span className="hint" role="alert">{recommendation.error}</span>}
                 <button
                   type="button"
                   className={`fire-btn${confirmArmed ? ' danger' : ''}`}
                   onClick={() => fireAll()}
+                  disabled={recommendation.pending}
                 >
                   <span className="fire-label">
-                    {confirmArmed ? '⚠ それでも発射' : anyCastable ? '詠唱' : '次のターンへ'}
+                    {invalidCasterId ? '式を確認' : confirmArmed ? '⚠ それでも発射' : anyCastable ? '詠唱' : '次のターンへ'}
                   </span>
                   <span className="fire-sub">
-                    {confirmArmed ? '崩壊の危険' : anyCastable ? '3人 同時発射 ▸▸' : '▸▸'}
+                    {invalidCasterId ? '入力エラーの術者へ' : confirmArmed ? '崩壊の危険' : anyCastable ? '3人 同時発射 ▸▸' : '▸▸'}
                   </span>
                 </button>
               </div>

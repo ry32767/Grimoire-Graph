@@ -11,6 +11,7 @@ import { acceleration } from '../game/physics'
 import { COMBAT, FIELD, SAMPLING } from '../data/constants'
 import { COLORS } from './theme'
 import { dot, dotPx, pixelDisc, pixelShockwave, snapAngle, walkPath } from './pixelfx'
+import { drawCastSigil, drawSpellImpact, drawSpellWake } from './spellfx'
 
 /** 射線ローカル軸の長さ（coords.ts の回転サンプリングと同じ規則）。 */
 function rayReach(fieldR: number): number {
@@ -754,8 +755,7 @@ export function trailWidthPx(z: number, vp: Viewport): number {
 }
 
 /**
- * 発射の閃光（詠唱の瞬間・術者位置から広がる輪）。progress 0→1。
- * 半径は従来どおり 4→26px で、**進み方だけを 5 段**にして格子へ丸める。
+ * 発射の魔法陣（術者位置へ収束して解放する二重輪）。progress 0→1。
  */
 export function drawLaunchFlash(
   ctx: CanvasRenderingContext2D,
@@ -764,11 +764,7 @@ export function drawLaunchFlash(
   z: number,
   progress: number,
 ): void {
-  const P = toScreen(pos, vp)
-  const col = zRgba(z, 1)
-  ctx.save()
-  pixelShockwave(ctx, P.x, P.y, 4, 22, progress, 5, dotPx(vp), col, col, 1 - progress)
-  ctx.restore()
+  drawCastSigil(ctx, vp, pos, z, progress)
 }
 
 /** 速度に応じた火花を尾に散らす。 */
@@ -780,21 +776,7 @@ export function drawSpeedSparks(
   phase: number,
   frac: number,
 ): void {
-  if (frac <= 0.12) return
-  const unit = dotPx(vp)
-  ctx.save()
-  for (let s = 0; s < 3; s++) {
-    const j = Math.max(0, idx - 2 - s * 2)
-    const b = pts[j]
-    if (!b) break
-    const B = toScreen(b.pos, vp)
-    const a = (1 - s / 3) * 0.6 * frac
-    const size = unit * (frac > 0.5 && s === 0 ? 2 : 1)
-    // 揺れも 1 ドット刻み（サブピクセルで震えさせない）
-    const wob = (Math.sin(phase * 3 + s * 2.1) > 0 ? 1 : -1) * unit
-    dot(ctx, B.x + wob, B.y - wob, size, zRgba(b.z, 1), a)
-  }
-  ctx.restore()
+  drawSpellWake(ctx, vp, pts, idx, phase, frac)
 }
 
 /**
@@ -835,14 +817,16 @@ export function drawPixelBurst(
   ctx.restore()
 }
 
-/** 着弾の衝撃波（対象の位置から広がるドットの輪・半径 6→36px）。progress 0→1。 */
+/** 着弾の衝撃波（属性破片・白熱芯・威力に応じた二重輪）。progress 0→1。 */
 export function drawImpactShockwave(
   ctx: CanvasRenderingContext2D,
   vp: Viewport,
   pos: Vec2,
   progress: number,
+  z = 0,
+  powerFrac = 0.5,
 ): void {
-  drawPixelBurst(ctx, vp, pos, 'neutral', 0.5, progress, 6, 30)
+  drawSpellImpact(ctx, vp, pos, progress, z, powerFrac)
 }
 
 /**

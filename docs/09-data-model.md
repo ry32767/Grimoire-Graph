@@ -66,6 +66,8 @@ prepareTurn(state)
   ├ castingEnemyIds（発射できる敵）／impairedAllyIds（ひるみ味方）を決定
   │   └ 発射頻度（fireEvery/fireOffset・06b）：該当ターン以外は撃たない
   ├ 交互張り守護型の guardZSign をターン偶奇で設定（奇数=光・05b §5.4）
+  ├ applyBossPhases：継続ダメージで HP しきいを跨いだ場合も崩落を反映、間引いた眷属を発射対象から除外
+  ├ 継続ダメージで死亡した所有者の持続結界を除去（敵味方とも）
   ├ 断末魔（#45）：finale='pending' ならボスを暴発型3連の変異体に置き換え finale='cast'
   └ phase='compose'、outcome 判定
         │   ── 作成フェーズ（プレイヤー操作）──
@@ -230,8 +232,8 @@ src/
   useFree, freeExpr, freeError,   // エンジンへ渡す式（係数検出で整形された形）
   yText, zText,                   // 入力欄に表示する「ユーザーが打った生のテキスト」
   fitTemplate, fitParams, fitValues,      // 式中の数値リテラル→係数スライダー（#46）
-  zRadial: boolean,               // true: z を g(t)（術者からの距離）として読む（既定）
-  zPresetId, zCoeffs,             // zRadial=false の互換経路のみ使う（現行 UI は使わない）
+  zRadial: boolean,               // 旧データ互換用（常に false）。z は f(x,y) として読む
+  zPresetId, zCoeffs,             // プリセット選択状態（自由式と同じ z=f(x,y)）
   zUseFree, zFreeExpr, zFreeError,
   zFitTemplate, zFitParams, zFitValues,
 }
@@ -253,3 +255,7 @@ src/
 > DC プロトタイプ v3 の UI 移植で削除した。役割は 上段レール（合計 HP・膜）／
 > 術者カード（個別 HP・式）／盤面の敵 HP バー／発射列／ターン結果パネル が引き継いでいる。
 > 「未設定の味方がいます」の発射確認も廃止（プロトタイプに無いゲートのため）。
+
+行動可能な味方の軌道・属性に構文エラーがある場合は、発射列を「式を確認」に切り替える。押すと該当術者を選択し、ターンを進めず入力の修正を促す。死亡・ひるみ中の術者の入力は発射を妨げない。以前の有効な式は編集途中のプレビュー用に保持する。
+
+盤面での通過点選択を開始すると作図台を閉じ、盤面の操作列からフィット・クリア・終了できる。作図台を開き直す必要はない。

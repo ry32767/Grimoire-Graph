@@ -85,6 +85,26 @@ describe('勝敗判定（#15）', () => {
 })
 
 describe('状態異常のターン処理', () => {
+  it('DoTで死亡した敵味方の結界だけを準備時に消し、回復効果も残さない', () => {
+    const s = createBattleState(stage([
+      enemy('dead-e', { x: 10, y: 0 }, 1), enemy('live-e', { x: 15, y: 0 }, 100),
+    ]), 0, party(ally('dead-a', { x: -10, y: 0 }, 1), ally('live-a', { x: 0, y: 0 })))
+    s.allies[0].statuses = [{ kind: 'burn', magnitude: 2, remainingTurns: 1 }]
+    s.enemies[0].statuses = [{ kind: 'burn', magnitude: 2, remainingTurns: 1 }]
+    s.allies[1].hp = 50
+    s.orbits = [
+      { id: 'dead-a-ring', owner: 'player', ownerId: 'dead-a', ringSpeed: 8,
+        ring: Array.from({ length: 64 }, (_, i) => ({ pos: { x: 3 * Math.cos(i * Math.PI / 32), y: 3 * Math.sin(i * Math.PI / 32) }, z: 5 })) },
+      { id: 'dead-e-ring', owner: 'enemy', ownerId: 'dead-e', ringSpeed: 8, ring: [] },
+      { id: 'live-a-ring', owner: 'player', ownerId: 'live-a', ringSpeed: 8, ring: [] },
+      { id: 'live-e-ring', owner: 'enemy', ownerId: 'live-e', ringSpeed: 8, ring: [] },
+    ]
+    const prep = prepareTurn(s)
+    expect(prep.state.orbits?.map((o) => o.id)).toEqual(['live-a-ring', 'live-e-ring'])
+    expect(resolveAllyCasts(prep.state, [], []).state.allies[1].hp).toBe(50)
+    expect(s.orbits).toHaveLength(4)
+  })
+
   it('継続ダメージ（DoT）でターン開始時に味方HPが減る', () => {
     let s = createBattleState(stage([enemy('e', { x: 0, y: 8 }, 100)]), 0, party(ally('a', { x: 0, y: 0 })))
     s = { ...s, allies: [{ ...s.allies[0], statuses: [{ kind: 'burn', magnitude: 5, remainingTurns: 2 }] }] }

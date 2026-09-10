@@ -63,6 +63,8 @@ export interface RotateTrajectory {
   origin?: Vec2
   /** 属性の z 場 z=f(x,y)（#30/#21）。未指定は中立(0)。経路上の位置で評価する */
   z?: ZField
+  /** true の z 場は盤面の絶対座標 f(x,y) で評価する。未指定は敵 AI 互換の術者ローカル座標。 */
+  zWorld?: boolean
   /**
    * 場の半径（#49・06b §5.5）。この軌道を評価するときの inField 判定に使う。
    * 面ごと・ボスフェーズごとに可変。未指定は FIELD.rField（既定 30）。
@@ -78,6 +80,8 @@ export interface PolarTrajectory {
   origin?: Vec2
   /** 属性の z 場 z=f(x,y)（#30/#21）。未指定は中立(0）。経路上の位置で評価する */
   z?: ZField
+  /** true の z 場は盤面の絶対座標 f(x,y) で評価する。未指定は敵 AI 互換の術者ローカル座標。 */
+  zWorld?: boolean
   /**
    * 場の半径（#49・06b §5.5）。この軌道を評価するときの inField 判定に使う。
    * 面ごと・ボスフェーズごとに可変。未指定は FIELD.rField（既定 30）。

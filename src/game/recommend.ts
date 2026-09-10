@@ -82,7 +82,7 @@ function closestApproach(samples: FlightSample[], target: Vec2): number {
  * 直接命中する候補が無くても、最も対象へ近づく（＝壁を対象方向へ削る）候補を返す（直線フォールバックを廃止）。
  * fieldR は場の半径（#49・可変フィールド）。inField 判定に使う。未指定は既定 rField。
  */
-export function recommendCast(from: Vec2, target: Enemy, obstacles: Obstacle[], fieldR?: number): RecommendResult {
+export function recommendCast(from: Vec2, target: Pick<Enemy, 'pos' | 'element' | 'hitboxRadius'>, obstacles: Obstacle[], fieldR?: number): RecommendResult {
   // 敵の反対極を突く：光の敵 → 闇(z<0)、闇/中立 → 光(z>0)
   const sign = target.element === 'light' ? -1 : 1
   // 属性の強さ候補（#31）：最強 zPeak は近距離で大威力だが |z|>zRef なので減速して失速する。

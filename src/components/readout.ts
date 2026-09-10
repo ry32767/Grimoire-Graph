@@ -3,8 +3,8 @@
 import type { ActiveOrbit, Ally, Enemy, Obstacle } from '../game/types'
 import { FIELD } from '../data/constants'
 import { buildRing } from '../game/orbit'
-import { attributeOf } from '../game/attribute'
-import { type ComposerState, buildComposerTrajectory, buildZAt } from './composer'
+import { attributeOf, zfieldAt } from '../game/attribute'
+import { type ComposerState, buildComposerTrajectory } from './composer'
 import { type RayInfo, blockingBarrier, poleOf, rayInfo, refAt, type RefAt } from './rayInfo'
 
 export type ReadoutTone = 'error' | 'danger' | 'good' | 'dim' | 'dark'
@@ -58,8 +58,10 @@ export interface ReadoutInput {
 export function computeReadout(input: ReadoutInput): Readout {
   const { ally, composer: c, enemies, obstacles, orbits, rField } = input
   const barrier = c.mode === 'polar'
-  const zAt = buildZAt(c)
   const traj = buildComposerTrajectory(c, ally.pos, rField)
+  const zAt = traj
+    ? (t: number) => zfieldAt(traj, { x: ally.pos.x + Math.cos(c.angle) * t, y: ally.pos.y + Math.sin(c.angle) * t })
+    : null
   const exprError = c.freeError || c.zFreeError || (!traj ? '式が読めません（記号・括弧を確認）' : null)
 
   const ray = rayInfo(ally.pos, c.angle, enemies, obstacles)

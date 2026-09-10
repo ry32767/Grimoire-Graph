@@ -146,6 +146,13 @@ describe('z 場の自由入力（f(x,y)・#30）', () => {
     expect(f!(0, 10)).toBeCloseTo(5, 6)
   })
 
+  it('t is a radial shorthand that can be combined with x and y', () => {
+    const f = parseZExpression('t + x - y')
+    expect(f).not.toBeNull()
+    expect(f!(3, 4)).toBeCloseTo(4, 6) // 5 + 3 - 4
+    expect(f!(0, 0)).toBe(0)
+  })
+
   it('x,y 以外の変数は null', () => {
     expect(parseZExpression('a + x')).toBeNull()
   })

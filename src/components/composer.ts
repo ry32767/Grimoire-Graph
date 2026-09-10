@@ -86,9 +86,9 @@ export function buildZAt(c: ComposerState): ((t: number) => number) | null {
 /** 状態から z 場（属性 z=f(x,y)）を組み立てる（#30）。組み立てられなければ中立(0)。 */
 export function buildZField(c: ComposerState): ZField {
   if (c.zRadial) {
-    const g = parseExpression(c.zFreeExpr, 't')
+    const f = parseZExpression(c.zFreeExpr)
     // 距離場として持ち上げる。origin ぶんのずらしは Trajectory 側（z は術者原点で評価される）
-    if (g) return (x, y) => g(Math.hypot(x, y))
+    if (f) return f
     return () => 0
   }
   if (c.zUseFree) {
@@ -247,7 +247,7 @@ export function applyZFitValuesPatch(
  * z 場の式を係数化（数値リテラル→スライダー）して自由入力 z 場へ入るパッチを作る（#52）。
  * 軌道と同じ仕組みを z 式（x,y の 2 変数）にも適用する。検出/評価不能なら zFreeError のみ返す。
  */
-export function zParametricPatch(expr: string, radial = true): Partial<ComposerState> {
+export function zParametricPatch(expr: string, radial = false): Partial<ComposerState> {
   const d = detectCoeffs(expr)
   if (!d) return { zFreeError: '式が正しくありません' }
   const values = paramDefaults(d.params)
@@ -297,10 +297,10 @@ export function yTextPatch(text: string): Partial<ComposerState> {
 export function zTextPatch(text: string): Partial<ComposerState> {
   const body = normalizeExprInput(text)
   const src = body.trim() === '' ? '0' : body
-  if (!parseExpression(src, 't')) {
+  if (!parseZExpression(src)) {
     return { zText: text, zUseFree: true, zFreeError: 'z の式が読めません（記号・括弧を確認）' }
   }
-  const patch = zParametricPatch(src, true)
+  const patch = zParametricPatch(src, false)
   if (patch.zFreeError) {
     return {
       zText: text,
@@ -329,20 +329,20 @@ export function buildComposerTrajectory(c: ComposerState, origin?: Vec2, fieldR?
     if (c.useFree) {
       const g = parseExpression(c.freeExpr)
       if (!g) return null
-      return { mode: 'rotate', g, angle: c.angle, origin, z, fieldR }
+      return { mode: 'rotate', g, angle: c.angle, origin, z, zWorld: true, fieldR }
     }
     const preset = findPreset(c.presetId)
     if (!preset || preset.category !== 'rotate') return null
-    return { ...buildTrajectory(preset, c.coeffs, c.angle, origin), z, fieldR }
+    return { ...buildTrajectory(preset, c.coeffs, c.angle, origin), z, zWorld: true, fieldR }
   }
   if (c.useFree) {
     const f = parseExpression(c.freeExpr, 't')
     if (!f) return null
-    return { mode: 'polar', f, origin, z, fieldR }
+    return { mode: 'polar', f, origin, z, zWorld: true, fieldR }
   }
   const preset = findPreset(c.presetId)
   if (!preset || preset.category !== 'polar') return null
-  return { ...buildTrajectory(preset, c.coeffs, 0, origin), z, fieldR }
+  return { ...buildTrajectory(preset, c.coeffs, 0, origin), z, zWorld: true, fieldR }
 }
 
 /** 軌道上の1点（描画で z により色分けする） */

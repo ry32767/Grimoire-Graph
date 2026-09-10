@@ -113,7 +113,7 @@ export function prepareTurn(state: BattleState): {
 
   // 敵の状態異常を減衰し、ひるみ中の敵は発射しない。
   // 発射頻度（06b §2）：fireEvery 間隔の敵（暴発型など）は該当ターンのみ発射する。
-  const castingEnemyIds: string[] = []
+  let castingEnemyIds: string[] = []
   const enemies = state.enemies.map((e) => {
     if (e.hp <= 0) return e
     const t = tickStatuses(e.statuses)
@@ -133,6 +133,15 @@ export function prepareTurn(state: BattleState): {
   })
 
   let next: BattleState = { ...state, allies, enemies, phase: 'compose' }
+
+  // DoTによる閾値越えも、次の敵予告より先に床崩落へ反映する。
+  next = applyBossPhases(next, log)
+  const aliveAllyIds = new Set(next.allies.filter((a) => a.hp > 0).map((a) => a.id))
+  const aliveEnemyIds = new Set(next.enemies.filter((e) => e.hp > 0).map((e) => e.id))
+  castingEnemyIds = castingEnemyIds.filter((id) => aliveEnemyIds.has(id))
+  // DoTで術者を失った結界は、作成フェーズや次の回復・迎撃に残さない。
+  next.orbits = (next.orbits ?? []).filter((o) =>
+    (o.owner === 'player' ? aliveAllyIds : aliveEnemyIds).has(o.ownerId))
 
   // DoT でボスが今倒れた場合も断末魔を予約する（#45）
   next = markFinaleIfBossDown(next, log)

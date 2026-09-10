@@ -6,7 +6,6 @@ import { FIELD } from '../data/constants'
 import {
   applyFitValuesPatch,
   barrierBody,
-  buildZAt,
   buildZField,
   recenterCoeffPatch,
   setCoeffPatch,
@@ -52,7 +51,7 @@ function makeComposer(yText: string, zText: string): ComposerState {
     fitTemplate: '',
     fitParams: [],
     fitValues: {},
-    zRadial: true,
+    zRadial: false,
     zPresetId: 'const',
     zCoeffs: {},
     zUseFree: true,
@@ -125,16 +124,12 @@ describe('y 欄の入力（`r=` で結界へ切り替わる）', () => {
 
 describe('z 欄は z=g(t)（t＝術者からの距離）として距離場へ持ち上がる', () => {
   it('山形の頂点 t₀ で |z| が最大になる', () => {
-    const c = makeComposer('0', '5*exp(-((t - 20)/6)^2)')
-    const g = buildZAt(c)
-    expect(g).not.toBeNull()
-    expect(g!(20)).toBeCloseTo(5, 3)
-    expect(Math.abs(g!(0))).toBeLessThan(0.2)
+    const c = makeComposer('0', '5*exp(-((x - 20)/6)^2)*cos(y/4)')
     // 場としては術者を中心とした同心円（θ に依らない）
     const field = buildZField(c)
     expect(field(20, 0)).toBeCloseTo(5, 3)
-    expect(field(0, 20)).toBeCloseTo(5, 3)
-    expect(field(20 / Math.SQRT2, 20 / Math.SQRT2)).toBeCloseTo(5, 3)
+    expect(field(20, Math.PI * 4)).toBeCloseTo(-5, 3)
+    expect(Math.abs(field(0, 0))).toBeLessThan(0.2)
   })
 
   it('定数式（おまかせが作る z）はどこでも同じ値', () => {
@@ -142,6 +137,13 @@ describe('z 欄は z=g(t)（t＝術者からの距離）として距離場へ持
     const field = buildZField(c)
     expect(field(3, 4)).toBe(-5)
     expect(field(-11, 2)).toBe(-5)
+  })
+
+  it('generated z templates accept t as radial shorthand', () => {
+    const c = makeComposer('0', genZShape('gauss', 5, 5, 2))
+    const field = buildZField(c)
+    expect(field(3, 4)).toBeCloseTo(5, 6)
+    expect(field(0, 0)).toBeLessThan(0.1)
   })
 })
 
@@ -170,11 +172,11 @@ describe('z の整形（正準形の解析と生成）', () => {
   })
 
   it('生成した式はそのまま z(t) として評価できる', () => {
-    const c = makeComposer('0', genZShape('step', 5, 24, 4))
-    const g = buildZAt(c)!
-    expect(g(24)).toBeCloseTo(0, 6)
-    expect(g(40)).toBeGreaterThan(4)
-    expect(g(8)).toBeLessThan(-4)
+    const c = makeComposer('0', '5*(x - 24)/sqrt(4^2 + (x - 24)^2) + y/100')
+    const field = buildZField(c)
+    expect(field(24, 0)).toBeCloseTo(0, 6)
+    expect(field(40, 0)).toBeGreaterThan(4)
+    expect(field(8, 0)).toBeLessThan(-4)
   })
 })
 
@@ -253,7 +255,7 @@ describe('読み出しストリップの出し分け', () => {
   const ctx = { enemies: [makeEnemy(0, 15)], obstacles: [], orbits: [], rField: FIELD.rField }
 
   it('命中予測：射線上の敵までの r と「当たれば」を出す', () => {
-    const composer = makeComposer('0', genZShape('gauss', 5, 12, 6))
+    const composer = makeComposer('0', '5*exp(-((y - 12)/6)^2)')
     const r = computeReadout({ ally, composer, ...ctx })
     expect(r.tone).toBe('good')
     expect(r.title).toContain('石像の番人 まで r =')
@@ -261,7 +263,7 @@ describe('読み出しストリップの出し分け', () => {
   })
 
   it('z が的の手前で発散すると暴発予告になる', () => {
-    const composer = makeComposer('0', '1/(t - 6)')
+    const composer = makeComposer('0', '1/(y - 6)')
     const r = computeReadout({ ally, composer, ...ctx })
     expect(r.tone).toBe('danger')
     expect(r.title).toContain('発散')

@@ -12,7 +12,7 @@ import { FIELD, AFFINITY } from '../data/constants'
 export function zfieldAt(traj: Trajectory, pos: Vec2): number {
   if (!traj.z) return 0
   const o = traj.origin ?? { x: 0, y: 0 }
-  const z = traj.z(pos.x - o.x, pos.y - o.y)
+  const z = traj.zWorld ? traj.z(pos.x, pos.y) : traj.z(pos.x - o.x, pos.y - o.y)
   return Number.isFinite(z) ? z : 0
 }
 

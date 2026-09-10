@@ -1643,13 +1643,11 @@ export function bulletColorOf(z: number): string {
 export const powerSizeFrac = powerFraction
 
 /**
- * 飛行中の弾（ドット絵の核＋離散ハロー＋16 方位スナップの棘・#11/#21/#74）。
- * 属性で色、強度(|z|→V付近で最大)で棘の本数とハローが増える。
+ * 飛行中の弾：光は結晶、闇は中空の渦、中立は銀色の核。位相だけで内部を回す。
  *
  * **外縁（＝一番外側のドット）が当たり半径ちょうどに一致する**（#72：見えている大きさ＝ぶつかる大きさ）。
  * `bulletDotTier` が `bulletRadius × scale ÷ ドット幅` を丸めた値＝外縁の上限で、これを超えて
- * ドットを置かない：芯（③）は `tier-2` ドットへ縮め、棘（②）は `tier-1〜tier` の間だけに留め、
- * ハロー（①）は `tier+1.5`／`tier+3` の外側リングをやめて `tier` ドットの1本に統合する。
+ * ドットを置かない。属性の違いは上限内の層・明暗・回転方向で表す。
  * 威力・脈動は大きさではなく**リングの明るさ／アルファの段**（`quantAlpha`）で語る。
  */
 export function drawBullet(
@@ -1665,22 +1663,40 @@ export function drawBullet(
   const sFrac = Math.min(1, strengthOf(z) / FIELD.sMax) // 0..1
   const unit = dotPx(vp)
   const tier = bulletDotTier(speed, z, vp)
-  // 強いほど棘が多い（#21：形が z で変わる）
-  const spikes = 4 + Math.round(sFrac * 4)
-  ctx.save()
-  // ② 回転スパーク：16 方位にスナップしてカクカク回す（tier-1〜tier の間だけ＝外縁を超えない）
-  for (let i = 0; i < spikes; i++) {
-    const a = snapAngle(phase * 0.5 + (i * Math.PI * 2) / spikes)
-    for (let d = Math.max(0, tier - 1); d <= tier; d++) {
-      dot(ctx, c.x + Math.cos(a) * d * unit, c.y + Math.sin(a) * d * unit, unit, color, 0.75)
-    }
-  }
-  // ③ 本体：ドットの円盤。芯は白熱（COLORS.light2）。外縁 tier より内側（tier-2）に縮める
-  pixelDisc(ctx, c.x, c.y, Math.max(1, tier - 2), unit, color, COLORS.light2)
-  // ① ハロー＋④ 縁の明滅：外縁 tier ドットに1本の輪へ統合。威力は明るさの段、脈動はアルファ2段
+  const attr = attributeOf(z)
   const bright = Math.sin(phase * 1.7) > 0
   const haloAlpha = quantAlpha(0.3 + sFrac * 0.4)
-  pixelRing(ctx, c.x, c.y, tier * unit, 8 + spikes, unit, bright ? COLORS.light2 : color, bright ? 0.9 : haloAlpha)
+  ctx.save()
+  // 外縁は全属性で同じ当たり半径。脈動で大きさは変えない。
+  pixelRing(ctx, c.x, c.y, tier * unit, 16, unit, color, haloAlpha)
+  if (attr === 'light') {
+    pixelDisc(ctx, c.x, c.y, Math.max(0, tier - 2), unit, color, COLORS.light2)
+    // 十字の結晶と、逆向きに回る四つの刻み。
+    for (let i = 0; i < 4; i++) {
+      const a = snapAngle(phase * 0.35 + i * Math.PI / 2)
+      for (let d = 1; d < tier; d++) {
+        dot(ctx, c.x + Math.cos(a) * d * unit, c.y + Math.sin(a) * d * unit, unit, COLORS.light2)
+      }
+      const edge = snapAngle(-phase * 0.5 + i * Math.PI / 2)
+      dot(ctx, c.x + Math.cos(edge) * tier * unit, c.y + Math.sin(edge) * tier * unit, unit, COLORS.text, bright ? 1 : 0.75)
+    }
+    pixelDisc(ctx, c.x, c.y, Math.floor(tier * 0.25), unit, COLORS.text)
+  } else if (attr === 'dark') {
+    pixelDisc(ctx, c.x, c.y, Math.max(0, tier - 1), unit, COLORS.dark2)
+    // 半周ずらした二つの渦片。内側から外側へ巻き上がる。
+    for (let arm = 0; arm < 2; arm++) {
+      for (let j = 0; j < 5; j++) {
+        const a = snapAngle(-phase * 0.65 + arm * Math.PI + j * Math.PI / 8)
+        const r = tier * unit * (0.45 + j * 0.11)
+        dot(ctx, c.x + Math.cos(a) * r, c.y + Math.sin(a) * r, unit, j === 4 ? COLORS.text : color, 0.5 + j / 8)
+      }
+    }
+    pixelDisc(ctx, c.x, c.y, Math.floor(tier * 0.3), unit, COLORS.bg)
+  } else {
+    pixelDisc(ctx, c.x, c.y, Math.max(0, tier - 2), unit, color)
+    pixelDisc(ctx, c.x, c.y, Math.floor(tier * 0.3), unit, COLORS.text)
+    dot(ctx, c.x, c.y - Math.max(0, tier - 1) * unit, unit, COLORS.text, bright ? 1 : 0.5)
+  }
   ctx.restore()
 }
 
